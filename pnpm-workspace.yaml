@@ -1,0 +1,5 @@
+packages:
+  - docs
+  - frontend
+  - backend
+  - packages
