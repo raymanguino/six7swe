@@ -1,0 +1,28 @@
+{
+  "name": "root",
+  "private": true,
+
+  "workspaces": [
+    "backend"
+  ],
+  "scripts": {
+    "lint": "eslint . --ext .ts,.tsx",
+    "lint:fix": "eslint . --ext .ts,.tsx --fix",
+    "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md}\"",
+    "build": "pnpm --filter @six7swe/backend build",
+    "start": "pnpm --filter @six7swe/backend start",
+    "dev": "pnpm --filter @six7swe/backend dev",
+    "debug": "pnpm --filter @six7swe/backend debug",
+    "test": "pnpm --filter @six7swe/backend test",
+    "test:watch": "pnpm --filter @six7swe/backend test:watch",
+    "test:coverage": "pnpm --filter @six7swe/backend test:coverage"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "@typescript-eslint/eslint-plugin": "^8.54.0",
+    "@typescript-eslint/parser": "^8.54.0",
+    "eslint": "^9.39.2",
+    "lerna": "^9.0.3"
+  }
+}
