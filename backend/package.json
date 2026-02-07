@@ -40,8 +40,10 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "@fastify/cors": "^11.0.0",
     "@fastify/postgres": "^6.0.2",
     "@fastify/request-context": "^6.2.1",
+    "@fastify/static": "^9.0.0",
     "@openai/agents": "^0.1.9",
     "@types/puppeteer": "^7.0.4",
     "dotenv": "^17.2.3",

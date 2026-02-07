@@ -2,12 +2,15 @@ import 'dotenv/config';
 
 import fastifyRequestContext, { requestContext } from '@fastify/request-context';
 import fastifyPostgres from '@fastify/postgres';
+import fastifyCors from '@fastify/cors';
+import fastifyStatic from '@fastify/static';
 import { FastifyReply, FastifyRequest } from 'fastify';
 import { UnauthenticatedUser } from './constants';
 import { ContextUser } from './types';
 import * as plugins from './plugins';
 import routes from './routes';
 import { decodeBase64 } from './util';
+import path from 'path';
 
 const Fastify = require('fastify');
 const fastify = Fastify({ logger: true });
@@ -28,6 +31,18 @@ if (!DATABASE_URL) {
 
 fastify.register(fastifyPostgres, {
   connectionString: DATABASE_URL,
+});
+
+// Register CORS
+fastify.register(fastifyCors, {
+  origin: true, // Allow all origins in development, configure for production
+  credentials: true,
+});
+
+// Register static file serving for resume PDF
+fastify.register(fastifyStatic, {
+  root: path.join(__dirname, '../../public'),
+  prefix: '/public/',
 });
 
 // Register Fastify Request Context plugin
@@ -53,12 +68,20 @@ fastify.addHook('onRequest', async (req: FastifyRequest, reply: FastifyReply) =>
 });
 
 // Register service authentication preHandler
-// TODO: Replace with real authentication middleware
+// Public routes don't require authentication (portfolio routes)
+const publicRoutes = ['/chat', '/job-match', '/contact', '/jobs', '/'];
 fastify.addHook('preHandler', async (req: FastifyRequest, reply: FastifyReply) => {
-  const user = requestContext.get('user');
-  if (user == UnauthenticatedUser) {
-    reply.code(401);
-    return reply.send({ error: 'Unauthorized' });
+  const url = req.url.split('?')[0]; // Remove query params
+  const isPublicRoute = publicRoutes.some(route => 
+    url === route || url.startsWith(route + '/') || url.startsWith('/public/')
+  );
+  
+  if (!isPublicRoute) {
+    const user = requestContext.get('user');
+    if (user == UnauthenticatedUser) {
+      reply.code(401);
+      return reply.send({ error: 'Unauthorized' });
+    }
   }
 });
 
