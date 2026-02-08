@@ -1,6 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { Agent, run } from '@openai/agents';
-import { resumeData } from '../../data/resume';
+import { getChatContext } from '../../data/chatContext';
 
 const chatAgent = new Agent({
   name: 'Professional Background Assistant',
@@ -21,7 +21,7 @@ const chatAgent = new Agent({
     '',
     'If asked about something outside your scope, politely redirect to professional topics.',
     'Be concise, accurate, and professional in your responses.',
-    'Use the resume data provided to answer questions accurately.',
+    'Use the resume and additional context provided to answer questions accurately.',
   ].join('\n'),
 });
 
@@ -33,12 +33,8 @@ export async function chatHandler(request: FastifyRequest, reply: FastifyReply) 
       return reply.code(400).send({ error: 'Message is required' });
     }
 
-    const context = [
-      `Resume Information:`,
-      resumeData.fullResumeText,
-      '',
-      `User Question: ${message}`,
-    ].join('\n');
+    const baseContext = getChatContext();
+    const context = [baseContext, '', `User Question: ${message}`].join('\n');
 
     const result = await run(chatAgent, context);
     const response = (result.finalOutput as string | undefined) || 'I apologize, but I couldn\'t generate a response. Please try again.';

@@ -6,14 +6,21 @@ interface Message {
   content: string;
 }
 
+const EXAMPLE_QUESTIONS = [
+  "Would this person be good for a Series B startup with a messy API and data infrastructure?",
+  "How did they save $20M per year in lost revenue? Was it technical or political?",
+  "Tell me about their biggest failure.",
+  "What kind of leadership experience do they have?",
+];
+
+const GREEN_DOT_STYLE = {
+  boxShadow:
+    '0 0 6px 2px rgba(52, 211, 153, 0.5), 0 0 12px 4px rgba(52, 211, 153, 0.25), inset 0 0 4px 1px rgba(255, 255, 255, 0.4)',
+};
+
 export default function ChatAssistant() {
   const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: 'assistant',
-      content: "Hello! I'm here to answer questions about Ray's professional background, skills, and experience. How can I help you?",
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -26,10 +33,10 @@ export default function ChatAssistant() {
     scrollToBottom();
   }, [messages]);
 
-  const handleSend = async () => {
-    if (!input.trim() || isLoading) return;
+  const sendMessage = async (text: string) => {
+    if (!text.trim() || isLoading) return;
 
-    const userMessage = input.trim();
+    const userMessage = text.trim();
     setInput('');
     setMessages((prev) => [...prev, { role: 'user', content: userMessage }]);
     setIsLoading(true);
@@ -53,12 +60,17 @@ export default function ChatAssistant() {
     }
   };
 
+  const handleSend = () => sendMessage(input);
+  const handleExampleClick = (question: string) => sendMessage(question);
+
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
   };
+
+  const hasUserMessages = messages.some((m) => m.role === 'user');
 
   return (
     <>
@@ -94,15 +106,43 @@ export default function ChatAssistant() {
 
       {/* Chat Window */}
       {isOpen && (
-        <div className="fixed bottom-24 right-6 w-80 h-[420px] max-h-[calc(100vh-8rem)] bg-white rounded-lg shadow-2xl flex flex-col z-50 border border-gray-200">
+        <div className="fixed bottom-24 right-6 w-[480px] h-[420px] max-h-[calc(100vh-8rem)] bg-white rounded-lg shadow-2xl flex flex-col z-50 border border-gray-200">
           {/* Chat Header */}
           <div className="bg-primary-600 text-white p-4 rounded-t-lg">
-            <h3 className="font-semibold">Ask about Ray's Background</h3>
-            <p className="text-sm text-primary-100">Professional questions only</p>
+            <h3 className="font-semibold">Ask AI about Ray</h3>
+            <p className="text-sm text-primary-100 flex items-center gap-2 mt-0.5">
+              <span
+                className="relative inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 shrink-0"
+                style={GREEN_DOT_STYLE}
+                aria-hidden
+              />
+              Ready to answer your questions
+            </p>
           </div>
 
           {/* Messages */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {!hasUserMessages && (
+              <div className="space-y-3">
+                <h4 className="font-medium text-gray-800 text-center">What would you like to know?</h4>
+                <p className="text-sm text-gray-600 text-center">
+                  Ask specific questions about Ray&apos;s experience, skills, or fit for your role. Get honest, detailed answers.
+                </p>
+                <div className="flex flex-col gap-2 pt-1">
+                  {EXAMPLE_QUESTIONS.map((q, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => handleExampleClick(q)}
+                      disabled={isLoading}
+                      className="text-left text-sm px-3 py-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 hover:border-primary-300 text-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             {messages.map((msg, idx) => (
               <div
                 key={idx}
@@ -140,7 +180,7 @@ export default function ChatAssistant() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyPress={handleKeyPress}
-                placeholder="Ask about skills, experience, projects..."
+                placeholder="Ask about experience, skills, or fit…"
                 className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary-500"
                 rows={2}
               />
