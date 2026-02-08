@@ -1,0 +1,411 @@
+About
+Big tech ? startup
+
+Working for big tech was exciting at first, but over time my impact felt small. The work became rinse + repeat, and the nostalgia wore off.
+
+So I jumped into startup land. Turns out my love for fast pace and working with founders clicked right away at my first private company.
+
+I got to build scalable APIs and infrastructure from scratch, help founders and tech teams make sense of their engineering needs, and help streamline workflows for cross functional teams.
+
+I am now looking for opportunities to bridge my domain expertise with emerging challenges in new problem spaces, with the aim of designing and scaling solutions that deliver [measurable] value to larger audiences.
+
+If you’re looking to scale your existing solution to reach a broader audience, my line is open. DM me or email ray.manguino@gmail.com
+General Role Descriptions
+Tanium
+Led the design and development of new external GraphQL APIs to modernize customer workflows and replace fragmented REST endpoints. Partnered with internal users to identify high-impact use cases, designed unified query models, and introduced a new filtering system that simplified deployments and reduced customer support load.
+• Collaborated with product and platform teams to modernize GraphQL APIs, streamline automation workflows, and improved deployment stability, resulting in 50% reduced support call volumes.
+• Drove cross-functional alignment on long-term API strategy, including documentation standards, schema governance, and monitoring practices adopted across several engineering teams.
+
+Built and optimized monitoring and alerting systems, cutting response times by 50% and reducing noise volume by 70% to improve reliability.
+
+Tuned Postgres queries and refactored backend services, improving query response times by 40% and reducing page load times.
+Nacelle
+Architected and led delivery of a distributed GraphQL schema registry service that enabled customer-specific dynamic APIs.
+• Defined technical direction, coordinated delivery across backend and QA teams, and aligned with stakeholders on milestones and success metrics.
+• Designed a high-throughput schema ingestion pipeline capable of handling bursty workloads with consistent latency, ensuring reliable synchronization and scalability across customer environments.
+• Delivered measurable improvements in API reliability and request latency, reducing schema-related errors and allowing customers to scale usage without dedicated engineering support.
+
+Built developer tooling — including a CLI utility to populate local databases — that reduced environment setup time from hours to minutes and was later adopted across multiple engineering teams.
+Capital One
+On-boarded Canada to new cloud based credit-card management application that launches new products to customers.
+• Architected pathway to on-board Canadian credit card solicitations onto existing US based platform.
+• Contributed to architecture design for modernizing solicitation workflows.
+• Implemented Golang backend logic to map and integrate Canadian business intent to custom targeted customer profiles.
+• Led development of React front end component library.
+
+Built CI/CD pipelines, observability tools, and testing frameworks, strengthening reliability of customer-facing systems.
+IBM
+Full-stack Engineer in supporting and leading several projects to deliver new features and enhancements to the core business management application, e.g.:
+- Leading design and development of data ETL functions for importing heterogenous data from other databases
+- Leading design and development of adding REST API endpoints to expose backend features
+- Various enhancements to web UI report generation tooling
+
+Tech stack: C#, JavaScript, HTML, CSS, SQL Server
+Common Questions
+Tell Me About Yourself
+I’m a backend-focused developer with several years of experience designing and maintaining distributed systems, with my most recent work related to scaling APIs.
+
+Most recently at Tanium, I designed and shipped greenfield GraphQL APIs which stabilized workflow automations leading to a 50% overall reduction in deployment errors. Additionally, I implemented new team workflows to manage security/vulnerability initiatives for multiple teams, leading to 20% increase in sprint deliverables across them.
+
+Before that, at Nacelle, I led the delivery of core API layer services that enabled customer defined APIs, leading to improved website stability, performance, and also unlocked the ability to scale their APIs.
+
+Earlier at Capital One, I led cloud migrations and onboarded Canada to a new customer acquisition platform, securing $20m/year in lost revenue.
+My strength is backend development using Go, Node.js, Java, Postgres, and AWS. I also have experience with leading front end initiatives and building component libraries using React.
+[I also like to keep up to date with current trends. In my spare time I work on side projects to help me get more exposure to AI. It finds and filters open jobs from popular job boards and feeds them to an agent that ranks the job match according to my personal preferences, emailing me with the results. It uses custom tools for database operations and sending emails and currently turning it into an MCP service. This has freed up hours of my day allowing me to work on other important things.]
+I am in the middle of transitioning between roles and am now looking for opportunities to bridge my skills and expertise with emerging challenges in new problem spaces, continuing to deliver measurable value to customers - at scale.
+What are you looking for in your next role? 
+Initial (short, ~1m)
+Honestly, I’m looking for a role where I can take everything I’ve learned building scalable backend systems and apply it in a fast-moving environment - one that’s building something new and innovative, where I can help drive direction and shape both the architecture and the product in a small, fast-moving team.
+I’ve also been investing in my own AI skills recently, and I’d like to join a company that embraces that mindset and looks for opportunities to make engineering work more efficient.
+I am now looking for opportunities to bridge my domain expertise with emerging challenges in new problem spaces, with the aim of designing and scaling solutions that deliver [measurable] value to larger audiences.
+Technical Experience
+Tanium
+New GraphQL APIs
+Headline
+I led the design and rollout of a new set of GraphQL APIs at Tanium that replaced a fragmented REST ecosystem and dramatically streamlined customer workflows while improving stability and support outcomes.
+Effect
+This was critical because customers were struggling with the legacy APIs: poor documentation, unclear behavior that translated directly into higher support volume, brittle customer automation, and slower product adoption. Internally, support teams were overwhelmed, and my team was constantly looking into API-related questions and bug reports. The new APIs aimed to reduce friction, simplify common workflows, and give customers a far more predictable, performant interface.
+Rationale
+The core challenge was identifying what customers actually needed, not just what the existing APIs exposed. Early on, it looked like a straightforward redesign—but deeper conversations revealed a major mismatch between the “best practice” in deployment workflows versus how customers actually used them. 
+Options:
+- Update existing APIs
+- Unify them
+Operations
+I drove the effort end-to-end:
+? Discovery: Held recurring working sessions with internal users to uncover their real workflows and pain points. I validated that the filtering mismatch—not the shape of the data—was the root cause of most confusion.
+
+? Systems evaluation: Met with platform and data teams to understand existing pipeline capabilities and roadmap dependencies.
+
+? API design: Created a new unified “patch filtering object” that supported both filter criteria and reusable filter IDs. Updated all affected APIs to accept the new abstraction while keeping changes non-breaking.
+
+? Implementation: Built the GraphQL layer using TypeScript (Node.js) and Go in a hybrid backend, ensuring low-latency resolvers and efficient Postgres queries.
+
+? Documentation & rollout: Updated customer-facing docs, provided examples, and worked closely with support teams to ensure they could guide customers through the transition.
+
+? Results: Support teams reported a significant drop in API-related confusion, and customers saw simpler workflows and better performance due to the elimination of multiple chained calls.
+This project showcased my ability to dig beneath surface-level requirements, partner closely with users, design APIs that reduce cognitive load, and deliver high-impact improvements that pay dividends across engineering, support, and customer experience.
+Other Notes
+Focus on how effective communication revealed true root cause
+Emphasize number of customer impacted
+
+Context
+? Existing REST APIs were poorly made with users expressing frustration:
+? Poor documentation
+? Difficult to figure out which API to use
+? Difficult to figure out how to craft the queries and understand the responses
+? Poor API design
+? Multiple API calls to get needed info
+? Confusing responses with unrelated payloads
+? The result is inefficient API usage for customers leading to excessive customer support usage.
+I was tasked with designing new APIs from the ground up with the goal of solving the issues above with priority given to the most common use cases.
+
+Action
+? Determine the most common use cases
+? Ongoing meetings with internal users that would benefit most to understand usage, paint points, areas of improvement
+? Determine if any other existing APIs meet their needs
+? Worked with data platform teams to understand what platform APIs exist or on the roadmap
+? Determine new APIs to design
+? The product was centered around deploying patches to machines, and these patches can be represented in two ways: as multiple patch objects (A) or as a single object containing multiple patches (B), where option B is considered ‘best practice’
+? Discovered that users built solutions around option A for their customers because it was simpler to understand and create.
+? Discovered that the filters they used for option A were not a 1-1 match with filtering for option B
+? Not only lack of understanding but also technical blocker
+? Created new patch filtering object
+? Supply either filter criteria or filter ID
+? Updated existing APIs to use the new filtering object -> non-breaking change
+? Updated documentation
+
+Result
+? Well received from support teams as more streamlined workflows in terms of understanding and execution resulted in simpler and more performant deployment configurations for customers and less interactions with customer support for the support team.
+
+Change or Learnings
+? I’ve learned that asking the right questions and understanding the full details of what the end goals are, how APIs are being used to achieve them, and actually going through working sessions on how the same goals can be achieved with new API ideas is key to identifying gaps in API design.
+
+If I had not made the time to go through the working session I likely would have missed that the filtering object was the key to making the whole transition work, extending the project timeline further.
+Security Detection and Response
+Context
+? Unplanned and critical security issues often came to the team, causing sprint deliverables to be missed or downsized midway through the sprint, leading to stress for team members taking on the extra load and/or managing stake-holder expectations, respectively. It was a lose-lose situation:
+
+For team members, someone would have to either volunteer their time to proactively go into the ticket tracking system and look for security vulnerabilities assigned to the team and raise awareness, or someone from the security team would have to reach out to the team instead. 
+
+For stakeholders, they would have to constantly manage customer expectations, creating a negative reputation for the company.
+
+I was responsible for a team of two to implement formal processes that will help teams in balancing their security detection and response deliverables along with the rest of their own, as well as minimizing developer burn-out at the end of each sprint in the process.
+
+Action
+? Understand the existing intake and response process across the teams, which all used custom tagging in the tickets, which I used to capture active and unresolved security issues into various JIRA dashboards for each team:
+? ordered by due dates and priority
+? Participated in discussions with security teams:
+? Ensure correct issues were assigned to the teams
+? Ensure false positives were filtered out
+? Preliminary investigations for gathering context and existing solutions if any
+? Created JIRA dashboards:
+? For individual teams to quickly find new issues and prioritize them into their sprints
+? For stakeholders to quickly get an overall status of feature deliverables owned by multiple teams
+? Constant communication with affected teams:
+? Organized daily sync-ups with own team to discuss new or ongoing issues
+? Split the work own team across the supported teams
+? Raise awareness of new ticket intake and updates
+? Work with the affected teams to resolve the issues
+? Fine tuned the dashboards over time and created documentation for it
+? Added/removed/updated JIRA variables
+? Documentation of workflows, JIRA variable definitions, and guidance on how to triage different types of issues
+Result
+? Streamlined vulnerability and remediation management leading to
+? Increase in what was delivered vs what was planned
+? Decrease in developer burnout 
+? Easy onboarding for new team members
+
+Change or Learnings
+? After successfully streamlining the detection and response the only other bottleneck was actually fixing the issues. Most issues involved dependencies that had been solved before but time had to be spent to find it, but in some cases it was something new that involved lengthy discussions with other teams to agree on a solution, or an exception if one was not found.
+
+My takeaway from this experience was to make more effort in scrutinizing PRs that either add new dependencies or update existing ones to try and gauge if the dependency is really needed or if another one might be better suited, including a home-grown one. 
+Nacelle
+GraphQL Schema Registry
+Headline
+I led the design and delivery of a distributed GraphQL schema registry at Nacelle that significantly reduced request latency and errors for major customers.
+Effect
+This mattered because our customers were experiencing real performance issues—slow queries, timeouts, and complex workarounds to deal with schema inconsistencies. Internally, developers were struggling with the workflow to support customer-specific API variations, which slowed down feature delivery and created ongoing firefighting. By building a registry that could ingest large customer-defined schemas and generate custom APIs reliably, we improved the customer experience, eliminated brittle solutions, and enabled the platform to scale.
+Rationale
+The biggest challenge was the level of unknowns. We didn’t know how large schemas would be, how frequently they’d change, or how to handle type conflicts across customers. We debated whether to build a fully asynchronous event-driven system upfront—using Kafka, background workers, and persistence layers—or start with a simpler synchronous design.
+I evaluated both paths. The async approach offered future-proofing but introduced significant upfront complexity without evidence it was needed. The synchronous approach let us deliver value faster if we validated some assumptions—like payload size, update frequency, and ingestion constraints. I ran a small investigation, pulling real schemas from affected customers and generating custom variants. That revealed the payloads were small, rarely updated, and fit easily within a single request. Based on that data, I proposed starting with synchronous ingestion and adding monitoring to detect when scaling interventions would actually be necessary. This balanced customer needs, team capacity, delivery speed, and risk.
+Operations
+I led the backend delivery across the entire lifecycle:
+? Prototyping: I built a proof of concept during a hackathon to validate the idea—taking customer schemas, applying transformation logic, and producing custom GraphQL APIs. This confirmed the approach was technically feasible.
+
+? Architecture & Planning: I wrote a design doc outlining ingestion flow, conflict-resolution strategies, and operational patterns. For naming conflicts, I evaluated three options—do nothing, prefixing, or merging types—and chose merging because it struck the right balance between correctness and a fast delivery timeline.
+ I then created a roadmap, broke it into epics and tickets, and aligned with stakeholders on sequencing and milestones.
+
+? Implementation Leadership: I worked with a team of four engineers, refining tickets, unblocking teammates, and handling the most ambiguous backend components myself. I oversaw schema ingestion logic, metadata persistence, and API generation.
+
+? Testing & Observability: I collaborated with QA to prioritize areas most vulnerable to breaking changes. I also created dashboards for the schema service and for request-level tracing, which became essential during rollout.
+
+? Cross-functional communication: I represented the backend team in broader engineering discussions, providing updates, managing expectations, and explaining design trade-offs to both technical and non-technical partners.
+
+? Rollout & Results: After launch, affected customers saw significantly faster responses and fewer timeouts. Errors dropped because the generated schemas were now consistent, validated, and centrally managed. The engineering team also eliminated an entire class of custom one-off solutions, reducing maintenance overhead and accelerating future development.
+
+Through this project, I demonstrated my ability to navigate ambiguity, make data-driven trade-offs, guide cross-functional teams, and deliver a high-impact system that improved performance, reliability, and developer productivity across the platform.
+Follow up: How was reliability and security ensured?
+When we built the schema registry at Nacelle, one of the hardest parts was finding the right balance between flexibility, correctness, and performance — because we were effectively letting every customer define their own API surface dynamically.
+The first key decision was around synchrony vs. asynchrony. Some engineers wanted to jump straight to a Kafka-based event ingestion pipeline, but I wanted to validate whether that complexity was justified. I added observability around schema payload sizes, update frequency, and ingestion duration — and the data showed that updates were relatively small, infrequent, and bursty only during onboarding. So we started with a synchronous design backed by Postgres and Redis caching. It let us ship faster, keep data consistency simple, and build in monitoring from day one.
+For reliability, we made every schema ingestion idempotent — schemas were versioned and stored with metadata about source, timestamp, and validation state. That allowed safe retries without duplication and made it easy to roll back if validation failed.
+On consistency, we chose a single source of truth (the registry DB) with a Redis cache for low-latency reads. We implemented a lightweight invalidation mechanism triggered by schema version changes, ensuring caches never served stale schemas longer than a few seconds.
+Finally, we built detailed trace dashboards that correlated registry events with GraphQL request traces. That gave us visibility into latency and helped catch early scaling bottlenecks before they hit production.
+In the end, this approach gave us a system that was simple enough to evolve and performant enough for our scale — with strong correctness guarantees and observability baked in.
+The takeaway for me was that designing reliable distributed systems often means starting with the smallest correct design, collecting data, and then layering in complexity only when the metrics demand it. That mindset — iterative, data-driven, and correctness-first — is how I’d approach identity infrastructure at Keycard as well.
+Follow up: How do you approach designing secure systems or identity primitives
+For me, it starts with understanding trust boundaries — who or what needs to be trusted, what data they can access, and how that trust flows through the system. From there, I focus on keeping things simple and explicit. Small, well-defined APIs with clear authorization logic are much easier to secure and reason about.
+At Nacelle, for example, I found that admin users were being denied access because our OAuth2 tokens only listed explicit space IDs. I fixed it by adding user roles to the token itself, so every service could evaluate access consistently. It was a small change, but it eliminated a whole class of security bugs.
+I also pair every security design with strong observability — logging and tracing are as important as the controls themselves. That’s how you build systems people can trust.
+What excites me about Keycard is taking that same approach to agent-native identity — designing primitives that make trust between humans and AI agents secure, fast, and verifiable in real time.
+Additional Notes
+Nacelle, led backend delivery of customer-specific external APIs
+- Context
+- Existing solution
+- Customer complaints about request latency, time-outs, errors
+- Developer complaints about workflow efficiency
+- Discussions around providing custom APIs depending on the client
+- Several unknowns
+- How to generate an API given a schema?
+- How big is this schema payload?
+- How to handle type naming conflicts?
+- Action
+- Hackathon, created a POC showing custom APIs generation
+- Schema payload size unknown
+- Reasonable assumptions:
+- Schema rarely updated
+- Initial findings:
+- Looked at payloads from several affected customers and generated custom schemas from them
+- Determined payload fits in a request body
+- Designed for simplicity
+- Payload within request
+- Synchronous request
+- Created a write-up on different approaches to type naming conflict resolution strategies
+- Option 1: do nothing
+- Option 2: merge types
+- Option 3: add prefix
+- Landed on Option 2 for good balance of speed of delivery with correctness of results
+- Created a road-map
+- Worked with stakeholders to align on delivery and dates
+- Broke it down to major milestones -> JIRA epics -> tickets
+- Worked with the team in refining and distributing tickets
+- Oversaw design, implementation, testing, monitoring
+- Created architecture design to handle ingestion of schemas
+- Represented the team in backend development discussions with broader group
+- Progress reports
+- Answering questions
+- Worked with QA to focus testing efforts on specific areas
+- Created dashboards
+- For schema service
+- For overall request tracing
+- Result
+- Well received by affected customers
+- Improved request latency and reduction in errors leading to better user experiences 
+- Elimination of custom solution leading to ease of scaling their APIs
+- Admins now able to synchronize custom components without Engineering support
+- Learning
+- Be more proactive with taking on projects outside my normal scope
+- Make data-driven design decisions that validate or invalidate initial assumptions
+- Make decisions that balance trade-offs between customer needs with development capacity
+Developer Tooling
+Headline
+I built a CLI tool that reduced local database setup time from hours to minutes and became widely adopted across engineering, eventually gaining contributions and even VS Code integration.
+Effect
+This mattered because engineers were wasting enormous amounts of time trying to reproduce production issues locally. Setting up a representative local database required manual steps, tribal knowledge, and inconsistent data snapshots. This slowed down debugging, reduced developer velocity, and created frustration across teams. Improving this workflow had a direct impact on productivity, onboarding, and the turnaround time for customer-facing fixes.
+Rationale
+We had a few options:
+? Stand up a shared staging database for everyone,
+? Maintain a library of SQL dumps and document the setup process better, or
+? Automate the entire setup procedure through tooling.
+A shared staging DB brought data integrity risks and wouldn’t help with reproducibility. SQL dumps were brittle and required constant maintenance. Automating the workflow into a CLI tool was clearly the most resilient and scalable long-term solution.
+Operations
+I took ownership and delivered the solution:
+? Pain point analysis: Interviewed engineers to understand workflows, failure points, and what “ideal setup” looked like.
+
+? Scope definition: Identified all required datasets, configs, and relationships needed to reproduce key classes of bugs.
+
+? Implementation:
+? Built a CLI that populated a local Postgres instance with a minimal but realistic dataset.
+? Automated schema loading, seeded core entities, and included flags for advanced scenarios.
+? Focused on simplicity—one command to reach a fully working local environment.
+
+? Internal rollout:
+? Socialized the tool with other teams, wrote documentation, and provided demos during engineering syncs.
+? Gathered feedback and iterated quickly on improvements.
+
+? Adoption & outcomes:
+? Engineers across multiple teams began using it regularly.
+? Other developers contributed features, including custom seeds and a VS Code extension.
+? Onboarding time dropped, productivity improved, and reproducing bugs became far more reliable.
+
+This project highlighted my ability to spot systemic inefficiencies, build tools that scale developer impact, and lead improvements that quietly but meaningfully elevate the entire engineering organization.
+Capital One
+New Credit Card Product
+Headline
+I led the engineering effort to deliver a new credit card launch platform for the Canadian business by inner-sourcing changes into a U.S.-owned system under strict regulatory deadlines.
+Effect
+This project mattered because missing the regulatory deadline would have resulted in severe business consequences, including the inability to offer a new card that accounted for approximately $20 million in annual revenue. The challenge was that the system responsible for managing these launches was owned by U.S. teams who were fully allocated to a major migration effort. Without inner-sourcing, our team had no path to deliver on time.
+Rationale
+We had two choices:
+? Wait for U.S. teams to finish their migration work and then request support, which would cause us to miss the deadline, or
+
+? Inner-source the work ourselves, embedding directly with U.S. engineering, gaining access to their codebase and processes, and taking ownership of the Canadian-specific changes.
+
+The second option was the only viable path, but it required building strong relationships, aligning with leadership across countries, and navigating unfamiliar systems and organizational boundaries.
+Operations
+I led both the planning and execution:
+? Deep discovery: I worked closely with U.S. SMEs to understand the current and target architectures, the ongoing migration effort, and the exact integration points required for Canadian intent.
+
+? Executive alignment:
+? Built architectural diagrams, roadmaps, and risk analyses.
+? Presented the proposal to U.S. leadership to secure approval for inner-sourcing contributions.
+
+? Team leadership:
+? Led 3 process managers and collaborated across multiple engineering groups.
+? Joined the U.S. scrum teams, ran sprint planning for our workstream, and created all supporting tickets.
+
+? Hands-on engineering:
+? During a hackathon, I helped build a POC UI using React and TypeScript—this prototype ultimately evolved into the actual product UI.
+? Then moved to backend development using Go and AWS, contributing all Canadian-specific logic and helping U.S. engineers complete core backend components.
+
+? Delivery:
+? Coordinated cross-team QA, validated the system’s integration points, and ensured all regulatory requirements were met.
+? Successfully delivered the platform in time for the regulatory launch window.
+
+This project demonstrated my ability to operate under tight deadlines, drive cross-organizational initiatives, work across unfamiliar systems, and guide teams through complex, high-stakes technical delivery. It also reinforced the value of clear communication, diplomacy, and proactive leadership in large, distributed organizations.
+Additional Notes
+One example that stands out was during my time at Capital One, when we needed to launch a new credit card product in Canada under a tight regulatory deadline.
+The challenge was that the system used to manage credit card launches was owned by US teams — and at the time, all of their engineers were focused on migrating their systems to the new platform. Canada was considered low priority, but we couldn’t delay — the new card had to go live to meet compliance requirements.
+I took ownership of the engineering effort on the Canadian side. That started with building relationships with the US leadership and engineering teams to gain access to their system, understand the migration details, and earn their cooperation. I then led a team of three engineers and two process managers through planning and delivery.
+I mapped out the technical changes needed on both the frontend and backend, created architecture diagrams and a delivery roadmap, and presented it to US leadership to get approval. Once we got the green light, I joined their daily scrums to coordinate work across both teams.
+We built a proof of concept during a hackathon that later became the production UI, and I led both frontend development in React and TypeScript and contributed to backend changes in Go and AWS.
+In the end, we launched on time, met all compliance deadlines, and unlocked around $20 million in annual revenue. But what I’m most proud of was how we built cross-team trust — transforming what started as a low-priority initiative into a collaborative, successful delivery.
+Describe a time you identified and fixed a security vulnerability in a production system. What was the flaw, and how did you address it?
+At Nacelle, I was responsible for tackling a ticket where admin users of the system could not access certain customer spaces (environments) where they should have access. The system already had OAuth2 in place for authorizing which spaces the user had access to and was specified as a list of space IDs embedded in the access token. A user (admin or not) could be granted explicit access to a space, in which case the space ID would be added to their OAuth2 token, or they could be an admin and have implicit access to all spaces, in which case space IDs are not added. Triage revealed the root cause to be services checking for explicit space IDs in the token and would incorrectly reject access in the case of admins.
+
+I addressed the issue by adding the user's role to the OAuth2 token, so that validation can be specific to what role the user has. I then documented the changes and communicated them to the entire Engineering org so that any affected services could update their validation logic with the new changes. I ensured that everyone was on the same page of how the new role property would look like and how validation should be updated to properly grant/deny access.
+Behavioral
+Conflict
+Tanium: Code refactor with junior Engineer
+Context
+- Edge case in retrieving data from some function
+- Lots of repeated code for what data is retrieved depending on the type of client making the request
+- Boiler plate code cleaned up
+- If this type then give this else give that
+- Written once for each type of client
+- Managed with a hard-coded registry
+- Easy to read/understand, change, and maintain, but extending would mean updating the registry
+Action
+- Needed further changes to remove registry
+- Explained pitfalls of approach, worked together on another
+- Landed on an object hierarchy where base classes would handle boiler-plate and resolve data dependencies polymorphically
+Result
+- Engineer was able to come up with a solution that was much easier to extend and maintain
+- Code base significantly cleaned up and feature implemented using best practices
+Learning
+- Being able to navigate around giving tough PR feedback, and tough conversations in general as I think that’s a very useful skill to have as I progress in my career
+Nacelle: Architecture with other Senior Engineers
+Context
+- Conflict with broader engineering team members about synchronous design with intent to hand off later on
+- Unknown payload size and scale
+- I wanted to start off simple that would auto-scale and build up
+- Team was divided between wanting it future proofed and just use Kafka
+Action
+- No data to back up either claim, so Implement monitoring, and
+Result
+- Based on results no immediate improvements were needed but I provided follow up tickets to address unforeseen scaling issues
+- 1: Each schema was small and number of schemas to support was small and rarely updated
+- No need for partitioning 
+- All could fit in a Redis cache
+- 2: Bursty events leading to 500 errors discovered in QA
+- For small number of occurrences just retry
+- If it starts to become an issue then use event queue Kafka
+- Team was happy with research done and accepted.
+Learning
+- Be more mindful of QA testing in designs
+
+Perseverance
+Nacelle: Product Recommendation POC
+Context
+- Responsible for delivering a POC for a service that will return product recommendations based on previous purchases, with demo in QA env
+Action
+- Decided to use new tech stack (Python + Sqlite3)
+- Python for strength in data heavy operations
+- Sqlite because its a built-in Python module
+- Confirmed support of new tech stack with Devops
+- Spent days working with Devops trying to get the service up and running
+- Communicated updates to team regularly
+- Impacted delivery of project
+- Decided to remove db for the demo (stateful -> stateless)
+- Quick fix
+- Explained during demo of temporary state
+Result
+-	Delivered POC by deadline
+-	Greatly received
+Learning
+-	Learned to recognize and tackle technical dependencies as early as possible and try not to commit to deliverables beforehand
+Past Mistake
+Nacelle: Refactor leading to production incident
+Context
+- Intermittent slow queries in auth service
+Action
+- Investigated and determined due to middle ware making inefficient queries similar to n+1.
+- Refactored the code so queries use joins.
+- Refactor caused a high severity incident that prevented admins from accessing their space. It wasn’t covered in any of the unit or integration testing, so it was added.
+- Started conversations with broader Engineering groups about use of Sequelize, and all had negative views
+- Got agreement from team to slowly phase out Sequelize in favour of manual query writing
+- PRs moving forward would remove any reference to sequelize in updated files
+Result
+- Removed unneeded Sequelize cognitive overhead for Engineers
+- Less dependency leading to improved stability
+Learning
+- Be more cautious of simply reusing tools without fully understanding them, even if it's just a refactor.
+Strengths and improvement
+Strengths
+- Technical: List all languages and frameworks proficient at
+- Non-technical: 
+- Taking initiative e.g. refactoring code, exploring projects worth exploring, setting up meetings to disambiguate details of a feature/project
+- Eliminating ambiguity ie diving deep, asking questions, making sure people are on the same page (including stakeholders, ux designers, dependent teams, etc)
+- Assuming the non-coding, non-sexy aspects of a project that needs to be done e.g. making sure all inter-dependent services are aligned and not going to have issues when they launch, making sure launch requirements have been met, qa testing
+Improvement
+- Presenting to large audiences
+
