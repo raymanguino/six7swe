@@ -10,13 +10,6 @@ const ABOUT_SKILLS = [
   { label: 'API & Data Security', percent: 100 },
 ];
 
-const TODO_ACCORDION = {
-  situation: 'todo',
-  approach: 'todo',
-  technicalWork: 'todo',
-  lessonsLearned: 'todo',
-} as const;
-
 type AccordionContent = {
   situation: string;
   approach: string;
@@ -46,7 +39,12 @@ const EXPERIENCE: Array<{
       },
       {
         summary: 'Built and optimized monitoring and alerting systems, cutting response times by 50% and reducing noise volume by 70%.',
-        accordion: TODO_ACCORDION,
+        accordion: {
+          situation: 'Support and operations were dealing with slow incident response and alert fatigue—too much noise made it hard to focus on real issues, and delayed response times impacted customer-facing stability.',
+          approach: 'Analyzed alert sources and response workflows to identify root causes of latency and noise. Drove cross-functional alignment on long-term API strategy, documentation standards, schema governance, and monitoring.',
+          technicalWork: 'Built and optimized monitoring and alerting systems: 50% faster response and 70% reduction in noise volume. Aligned with stakeholders on monitoring standards and ensured observability was part of the API and deployment strategy.',
+          lessonsLearned: 'Investing in observability pays off in both incident response and team focus; reducing noise means real issues get attention and customers benefit from faster resolution.',
+        },
       },
     ],
   },
@@ -57,11 +55,21 @@ const EXPERIENCE: Array<{
     points: [
       {
         summary: 'Architected and delivered API layer services to provide dynamically generated GraphQL endpoints for improved user experiences.',
-        accordion: TODO_ACCORDION,
+        accordion: {
+          situation: 'Customers needed dynamically generated, customer-specific GraphQL APIs to scale without dedicated engineering support; existing APIs and data infrastructure were inconsistent and did not support that model.',
+          approach: 'Defined technical direction for the GraphQL schema registry. Evaluated sync vs async design based on data and delivery constraints; coordinated delivery across backend and QA teams.',
+          technicalWork: 'Architected and led delivery of the distributed GraphQL schema registry for customer-specific dynamic APIs. Implemented high-throughput schema ingestion pipeline and API generation. Shipped synchronous design first with monitoring to scale later; used data to show the simpler design was sufficient, with follow-up tickets for future scaling.',
+          lessonsLearned: 'Not every system needs Kafka from day one. Implementing monitoring and using data to validate the simpler sync design avoided over-engineering and accelerated delivery while keeping a path to scale.',
+        },
       },
       {
         summary: 'Created internal developer tooling that cut environment setup time from hours to seconds.',
-        accordion: TODO_ACCORDION,
+        accordion: {
+          situation: 'Environment setup took hours, slowing onboarding and day-to-day iteration for engineers; local database and dependency setup was a major bottleneck.',
+          approach: 'Focused on local developer experience and identified the critical path: getting a consistent local DB and dependencies in place so engineers could run and test the stack quickly.',
+          technicalWork: 'Built a CLI for local database setup that was adopted across teams. Cut environment setup time from hours to minutes (and in practice to seconds for repeat runs). Improved reliability and consistency of local dev environments.',
+          lessonsLearned: 'Developer tooling multiplies team velocity. Investing in local experience and reducing setup time pays off in faster iteration and easier onboarding.',
+        },
       },
     ],
   },
@@ -72,11 +80,21 @@ const EXPERIENCE: Array<{
     points: [
       {
         summary: 'Onboarded Canada to a new customer acquisitions platform, securing $20mil/year in lost revenue.',
-        accordion: TODO_ACCORDION,
+        accordion: {
+          situation: 'Capital One needed to launch a new credit card for the Canadian business by inner-sourcing into a U.S.-owned system under strict regulatory deadlines. Missing the deadline would have meant inability to offer a card accounting for approximately $20 million in annual revenue. The system was owned by U.S. teams who were fully allocated to a major migration; Canada was low priority.',
+          approach: 'Took ownership on the Canadian side: built relationships with U.S. leadership and engineering, gained access to their codebase and processes, and led a team of three engineers and two process managers through planning and delivery. Joined U.S. scrums and aligned on executive and inner-sourcing approval.',
+          technicalWork: 'Architected the pathway to onboard Canadian credit card solicitations onto the existing U.S. platform. Modernized solicitation workflows, implemented Golang backend logic to map Canadian business intent to customer profiles, and led development of the React front-end component library (a hackathon POC became the production UI). Delivered CI/CD, observability, and testing. The platform launched on time, met compliance deadlines, and unlocked around $20 million in annual revenue.',
+          lessonsLearned: 'Delivering under regulatory and cross-team constraints requires both strong technical execution and relationship-building; inner-sourcing and cross-country alignment are as critical as the code.',
+        },
       },
       {
         summary: 'Led cloud migrations for capitalone.ca from on-prem to AWS platform.',
-        accordion: TODO_ACCORDION,
+        accordion: {
+          situation: 'capitalone.ca ran on-prem; the business needed to move to the cloud-based platform for consistency, scalability, and reliability while keeping customer-facing systems stable.',
+          approach: 'Led the migration initiative with a focus on CI/CD, observability, and testing so that customer-facing systems remained reliable during and after the move to AWS.',
+          technicalWork: 'Led cloud migrations for capitalone.ca from on-prem to the AWS platform. Built and maintained CI/CD pipelines, observability, and testing for customer-facing systems so that the migration could be executed without degrading reliability.',
+          lessonsLearned: 'Cloud migrations succeed when CI/CD and observability are in place from the start; they are not afterthoughts but prerequisites for a safe transition.',
+        },
       },
     ],
   },
@@ -85,43 +103,70 @@ const EXPERIENCE: Array<{
 type ProjectTile = {
   id: string;
   title: string;
+  briefDescription?: string;
   techLabels: string[];
   overview: string;
   keyChallenges: string[];
   liveSiteUrl: string | null;
+  liveSiteDisabled?: boolean;
 };
 
 const PROJECT_TILES: ProjectTile[] = [
   {
     id: 'greenfield-apis',
-    title: 'New Greenfield APIs - Patch GraphQL APIs',
+    title: 'GraphQL APIs (Tanium)',
+    briefDescription:
+      "External GraphQL API gateway that replaced fragmented REST endpoints for Tanium's endpoint management platform. Enables programmatic access to IT/security operations data via streamlined queries, reducing troubleshooting time from hours to minutes for 1,500+ customers.",
     techLabels: ['TypeScript', 'Node.js', 'Golang', 'GraphQL', 'Security', 'gRPC'],
-    overview: 'todo',
-    keyChallenges: ['todo', 'todo', 'todo'],
+    overview: 'Designed and delivered new external GraphQL APIs at Tanium that replaced fragmented REST endpoints, adopted by 1,500 customers. Reduced support call volumes by 50% and improved deployment stability by giving customers a clear migration path and up-to-date documentation.',
+    keyChallenges: [
+      'Creating a migration path from legacy REST to modern GraphQL without breaking existing workflows.',
+      'Driving cross-functional alignment on API strategy, documentation standards, and schema governance.',
+      'Balancing backward compatibility with clean schema design and filtering capabilities.',
+    ],
     liveSiteUrl: 'https://help.tanium.com/bundle/ug_gateway_cloud/page/gateway/overview.html',
   },
   {
-    id: 'project-two',
-    title: 'Project Two',
-    techLabels: ['todo'],
-    overview: 'todo',
-    keyChallenges: ['todo', 'todo', 'todo'],
-    liveSiteUrl: null,
+    id: 'job-hunter',
+    title: 'Job Hunter',
+    briefDescription:
+      'Job application management platform with AI-powered job matching, automated job fetching from popular boards, and an agent that ranks matches by personal preferences. Custom tools, database ops, and email integration; evolving into an MCP service.',
+    techLabels: ['React', 'TypeScript', 'Node.js', 'PostgreSQL', 'OpenAI'],
+    overview: 'Job application management platform with AI-powered job matching, automated job fetching from popular boards, and an agent that ranks matches by personal preferences. Custom tools, database ops, and email integration; evolving into an MCP service.',
+    keyChallenges: [
+      'Integrating multiple job boards and normalizing data for consistent matching.',
+      'Designing an agent that ranks jobs by personal preferences with explainable results.',
+      'Evolving custom tools and workflows into a reusable MCP service for AI agents.',
+    ],
+    liveSiteUrl: '#',
+    liveSiteDisabled: true,
   },
   {
-    id: 'project-three',
-    title: 'Project Three',
-    techLabels: ['todo'],
-    overview: 'todo',
-    keyChallenges: ['todo', 'todo', 'todo'],
-    liveSiteUrl: null,
+    id: 'schema-registry',
+    title: 'GraphQL Schema Registry (Nacelle)',
+    briefDescription:
+      "Nacelle's GraphQL APIs enable streamlined and expressive data queries and resource mutations while optimizing network efficiency. The schema registry delivers customer-specific dynamic APIs—Storefront GraphQL for normalized e-commerce data and Admin GraphQL for management—so merchants scale without dedicated engineering support.",
+    techLabels: ['GraphQL', 'Node.js', 'TypeScript', 'CLI', 'Data pipelines'],
+    overview: 'Architected and led delivery of a distributed GraphQL schema registry for customer-specific dynamic APIs at Nacelle. High-throughput schema ingestion pipeline and developer tooling enabled customers to scale without dedicated engineering support.',
+    keyChallenges: [
+      'Choosing sync vs async design: used data and monitoring to ship synchronous first with a path to scale later.',
+      'Building a high-throughput schema ingestion pipeline that stayed reliable under load.',
+      'Coordinating delivery across backend and QA teams while defining technical direction for the registry.',
+    ],
+    liveSiteUrl: 'https://docs.nacelle.com/reference/api-reference',
   },
   {
-    id: 'project-four',
-    title: 'Project Four',
-    techLabels: ['todo'],
-    overview: 'todo',
-    keyChallenges: ['todo', 'todo', 'todo'],
+    id: 'canada-platform',
+    title: 'Canadian Credit Card Platform (Capital One)',
+    briefDescription:
+      'Internal tooling to onboard Canada to a new cloud-based credit card acquisition platform by inner-sourcing into a U.S.-owned system. Secured ~$20M/year in revenue, met regulatory deadlines, and modernized solicitation workflows with Golang backend and React component library.',
+    techLabels: ['Golang', 'React', 'CI/CD', 'Observability', 'AWS'],
+    overview: 'Led the engineering effort to onboard Canada to a new cloud-based credit card management platform by inner-sourcing into a U.S.-owned system. Met strict regulatory deadlines and secured approximately $20M/year in revenue. Architected the pathway, built Golang backend for Canadian business intent, and led the React front-end component library.',
+    keyChallenges: [
+      'Gaining alignment and inner-sourcing approval with U.S. teams who were fully allocated to a major migration.',
+      'Mapping Canadian business intent to customer profiles and existing U.S. platform with Go backend and React UI.',
+      'Delivering on a fixed regulatory deadline with cross-country coordination and a small Canadian-side team.',
+    ],
     liveSiteUrl: null,
   },
 ];
@@ -276,6 +321,9 @@ function ProjectTileCard({
   return (
     <div className="card border border-transparent hover:border-primary-200 transition-shadow hover:shadow-lg">
       <h3 className="text-xl font-semibold text-gray-900 mb-3">{project.title}</h3>
+      {project.briefDescription && (
+        <p className="text-gray-600 text-sm mb-4">{project.briefDescription}</p>
+      )}
       <div className="flex flex-wrap gap-2 mb-4">
         {project.techLabels.map((label) => (
           <span
@@ -334,20 +382,29 @@ function ProjectTileCard({
                   ))}
                 </div>
               </div>
+              {project.liveSiteDisabled ? (
+                <button
+                  type="button"
+                  disabled
+                  aria-disabled
+                  className="inline-block mt-3 btn-primary text-center opacity-50 cursor-not-allowed"
+                >
+                  Visit Live Site (Coming soon)
+                </button>
+              ) : project.liveSiteUrl ? (
+                <a
+                  href={project.liveSiteUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-block mt-3 btn-primary text-center"
+                >
+                  Visit Live Site
+                </a>
+              ) : null}
             </div>
           )}
         </div>
       </div>
-      {project.liveSiteUrl && (
-        <a
-          href={project.liveSiteUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-block mt-4 btn-primary text-center"
-        >
-          Visit Live Site
-        </a>
-      )}
     </div>
   );
 }
