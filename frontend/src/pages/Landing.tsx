@@ -198,7 +198,7 @@ export default function Landing({ onSectionChange }: LandingProps) {
   }, [updateActiveSection]);
 
   return (
-    <div className="container mx-auto px-4 py-12 max-w-6xl">
+    <div className="container mx-auto px-12 md:px-24 py-12 max-w-6xl">
       {/* Welcome.init() */}
       <section
         id="home"

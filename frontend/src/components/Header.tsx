@@ -33,8 +33,8 @@ export default function Header({ activeSection }: HeaderProps) {
   };
 
   return (
-    <header className="fixed top-0 left-0 right-0 bg-white shadow-md z-50">
-      <nav className="container mx-auto px-4 py-4">
+    <header className="fixed top-0 left-0 right-0 bg-white shadow-md z-50 font-mono">
+      <nav className="container mx-auto max-w-screen-2xl pl-6 pr-0 py-4">
         <div className="flex flex-col items-start gap-2">
           <div
             className={`overflow-hidden transition-all duration-300 ease-in-out ${
@@ -46,7 +46,7 @@ export default function Header({ activeSection }: HeaderProps) {
               onClick={(e) => handleNavClick(e, 'home')}
               className="text-2xl font-bold text-primary-600 hover:text-primary-700 block"
             >
-              Ray Manguino
+              {'>_ raymanguino.sh ~ main'}
             </a>
           </div>
           <div className="flex flex-wrap gap-2 justify-start">
