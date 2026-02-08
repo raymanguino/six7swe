@@ -10,14 +10,44 @@ const ABOUT_SKILLS = [
   { label: 'API & Data Security', percent: 100 },
 ];
 
-const EXPERIENCE = [
+const TODO_ACCORDION = {
+  situation: 'todo',
+  approach: 'todo',
+  technicalWork: 'todo',
+  lessonsLearned: 'todo',
+} as const;
+
+type AccordionContent = {
+  situation: string;
+  approach: string;
+  technicalWork: string;
+  lessonsLearned: string;
+};
+
+const EXPERIENCE: Array<{
+  title: string;
+  company: string;
+  period: string;
+  points: Array<{ summary: string; accordion: AccordionContent }>;
+}> = [
   {
     title: 'Senior Software Engineer',
     company: 'Tanium',
     period: 'Previous',
     points: [
-      'Designed and delivered new GraphQL APIs adopted by 1,500 customers, replacing fragmented REST calls and cutting troubleshooting time from ~1 hour to minutes.',
-      'Built and optimized monitoring and alerting systems, cutting response times by 50% and reducing noise volume by 70%.',
+      {
+        summary: 'Designed and delivered new GraphQL APIs adopted by 1,500 customers, replacing fragmented REST calls and cutting troubleshooting time from ~1 hour to minutes.',
+        accordion: {
+          situation: 'Customers using legacy APIs mounting complaints about instability and state inconsistencies/errors in workflows even though modern APIs exist, leading to increased support call volumes and degraded user experiences.',
+          approach: 'Worked directly with support teams and customers using the APIs to fully understand intent and areas of concern with current workflows. Discovered technical limitations preventing customers from migrating to the modern APIs and root causes.',
+          technicalWork: 'Updated modern APIs with extended filtering capabilities that would unblock customers from migrating to them. Created detailed migration plans to guide customers to the modern APIs with minimum friction. Updated documentation to clearly communicate API usage and migration plans.',
+          lessonsLearned: 'Sometimes technical problems are disguised as communication problems. Maintaining clear and up to date documentation gives customers the best chance at resolving issues on their own and not have to rely on costly engineering resources.',
+        },
+      },
+      {
+        summary: 'Built and optimized monitoring and alerting systems, cutting response times by 50% and reducing noise volume by 70%.',
+        accordion: TODO_ACCORDION,
+      },
     ],
   },
   {
@@ -25,8 +55,14 @@ const EXPERIENCE = [
     company: 'Nacelle',
     period: 'Previous',
     points: [
-      'Architected and delivered API layer services to provide dynamically generated GraphQL endpoints for improved user experiences.',
-      'Created internal developer tooling that cut environment setup time from hours to seconds.',
+      {
+        summary: 'Architected and delivered API layer services to provide dynamically generated GraphQL endpoints for improved user experiences.',
+        accordion: TODO_ACCORDION,
+      },
+      {
+        summary: 'Created internal developer tooling that cut environment setup time from hours to seconds.',
+        accordion: TODO_ACCORDION,
+      },
     ],
   },
   {
@@ -34,15 +70,60 @@ const EXPERIENCE = [
     company: 'Capital One',
     period: 'Previous',
     points: [
-      'Onboarded Canada to a new customer acquisitions platform, securing $20mil/year in lost revenue.',
-      'Led cloud migrations for capitalone.ca from on-prem to AWS platform.',
+      {
+        summary: 'Onboarded Canada to a new customer acquisitions platform, securing $20mil/year in lost revenue.',
+        accordion: TODO_ACCORDION,
+      },
+      {
+        summary: 'Led cloud migrations for capitalone.ca from on-prem to AWS platform.',
+        accordion: TODO_ACCORDION,
+      },
     ],
   },
 ];
 
-const PROJECTS = [
-  { title: 'Job Application Platform', description: 'Build a comprehensive job tracking and matching system.', path: '/#work' },
-  { title: 'Open Source Contributions', description: 'Active contributor to open source projects.', path: 'https://github.com/raymanguino' },
+type ProjectTile = {
+  id: string;
+  title: string;
+  techLabels: string[];
+  overview: string;
+  keyChallenges: string[];
+  liveSiteUrl: string | null;
+};
+
+const PROJECT_TILES: ProjectTile[] = [
+  {
+    id: 'greenfield-apis',
+    title: 'New Greenfield APIs - Patch GraphQL APIs',
+    techLabels: ['TypeScript', 'Node.js', 'Golang', 'GraphQL', 'Security', 'gRPC'],
+    overview: 'todo',
+    keyChallenges: ['todo', 'todo', 'todo'],
+    liveSiteUrl: 'https://help.tanium.com/bundle/ug_gateway_cloud/page/gateway/overview.html',
+  },
+  {
+    id: 'project-two',
+    title: 'Project Two',
+    techLabels: ['todo'],
+    overview: 'todo',
+    keyChallenges: ['todo', 'todo', 'todo'],
+    liveSiteUrl: null,
+  },
+  {
+    id: 'project-three',
+    title: 'Project Three',
+    techLabels: ['todo'],
+    overview: 'todo',
+    keyChallenges: ['todo', 'todo', 'todo'],
+    liveSiteUrl: null,
+  },
+  {
+    id: 'project-four',
+    title: 'Project Four',
+    techLabels: ['todo'],
+    overview: 'todo',
+    keyChallenges: ['todo', 'todo', 'todo'],
+    liveSiteUrl: null,
+  },
 ];
 
 const SKILLS_GROUPS = [
@@ -116,10 +197,167 @@ interface LandingProps {
   onSectionChange: (section: SectionId) => void;
 }
 
+function ExperienceAccordion({
+  jobKey,
+  pointIndex,
+  summary,
+  accordion,
+  isExpanded,
+  onToggle,
+}: {
+  jobKey: string;
+  pointIndex: number;
+  summary: string;
+  accordion: AccordionContent;
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
+  const id = `${jobKey}-${pointIndex}`;
+  return (
+    <li className="list-none">
+      <div className="flex flex-col gap-1">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={isExpanded}
+          aria-controls={`accordion-content-${id}`}
+          id={`accordion-trigger-${id}`}
+          className="text-left font-medium text-gray-700 hover:text-primary-600 flex items-start gap-2 group"
+        >
+          <span className="flex-shrink-0 mt-0.5 w-4 h-4 rounded-full bg-gray-300 group-hover:bg-primary-400 flex items-center justify-center text-white text-xs">
+            {isExpanded ? '−' : '+'}
+          </span>
+          <span>{summary}</span>
+        </button>
+        <div
+          id={`accordion-content-${id}`}
+          role="region"
+          aria-labelledby={`accordion-trigger-${id}`}
+          hidden={!isExpanded}
+          className="overflow-hidden"
+        >
+          {isExpanded && (
+            <div className="ml-6 pl-2 border-l-2 border-primary-200 space-y-3 text-sm text-gray-600">
+              <div>
+                <span className="font-semibold text-gray-800 block mb-0.5">Situation</span>
+                <p>{accordion.situation}</p>
+              </div>
+              <div>
+                <span className="font-semibold text-gray-800 block mb-0.5">Approach</span>
+                <p>{accordion.approach}</p>
+              </div>
+              <div>
+                <span className="font-semibold text-gray-800 block mb-0.5">Technical work</span>
+                <p>{accordion.technicalWork}</p>
+              </div>
+              <div>
+                <span className="font-semibold text-gray-800 block mb-0.5">Lessons learned</span>
+                <p>{accordion.lessonsLearned}</p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </li>
+  );
+}
+
+function ProjectTileCard({
+  project,
+  isExpanded,
+  onToggle,
+}: {
+  project: ProjectTile;
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
+  const accordionId = `project-accordion-${project.id}`;
+  const contentId = `project-content-${project.id}`;
+  return (
+    <div className="card border border-transparent hover:border-primary-200 transition-shadow hover:shadow-lg">
+      <h3 className="text-xl font-semibold text-gray-900 mb-3">{project.title}</h3>
+      <div className="flex flex-wrap gap-2 mb-4">
+        {project.techLabels.map((label) => (
+          <span
+            key={label}
+            className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800"
+          >
+            {label}
+          </span>
+        ))}
+      </div>
+      <div className="flex flex-col gap-2">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={isExpanded}
+          aria-controls={contentId}
+          id={accordionId}
+          className="text-left font-medium text-gray-700 hover:text-primary-600 flex items-center gap-2 group"
+        >
+          <span className="flex-shrink-0 w-4 h-4 rounded-full bg-gray-300 group-hover:bg-primary-400 flex items-center justify-center text-white text-xs">
+            {isExpanded ? '−' : '+'}
+          </span>
+          <span>View Details</span>
+        </button>
+        <div
+          id={contentId}
+          role="region"
+          aria-labelledby={accordionId}
+          hidden={!isExpanded}
+          className="overflow-hidden"
+        >
+          {isExpanded && (
+            <div className="ml-6 pl-2 border-l-2 border-primary-200 space-y-3 text-sm text-gray-600">
+              <div>
+                <span className="font-semibold text-gray-800 block mb-0.5">Project Overview</span>
+                <p>{project.overview}</p>
+              </div>
+              <div>
+                <span className="font-semibold text-gray-800 block mb-0.5">Key Challenges</span>
+                <ul className="list-disc list-inside space-y-1">
+                  {project.keyChallenges.map((challenge, i) => (
+                    <li key={i}>{challenge}</li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <span className="font-semibold text-gray-800 block mb-0.5">Technologies Used</span>
+                <div className="flex flex-wrap gap-2 mt-1">
+                  {project.techLabels.map((label) => (
+                    <span
+                      key={label}
+                      className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800"
+                    >
+                      {label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+      {project.liveSiteUrl && (
+        <a
+          href={project.liveSiteUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-block mt-4 btn-primary text-center"
+        >
+          Visit Live Site
+        </a>
+      )}
+    </div>
+  );
+}
+
 export default function Landing({ onSectionChange }: LandingProps) {
   const [formData, setFormData] = useState({ name: '', email: '', message: '' });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitStatus, setSubmitStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [expandedAccordion, setExpandedAccordion] = useState<string | null>(null);
+  const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
 
   const sectionRefs = useRef<Record<SectionId, HTMLElement | null>>({
     home: null,
@@ -248,10 +486,21 @@ export default function Landing({ onSectionChange }: LandingProps) {
             <div key={`${job.company}-${job.title}`} className="card">
               <h4 className="text-lg font-semibold text-gray-900">{job.title}</h4>
               <p className="text-primary-600 font-medium">{job.company} — {job.period}</p>
-              <ul className="mt-3 space-y-2 list-disc list-inside text-gray-700">
-                {job.points.map((point, i) => (
-                  <li key={i}>{point}</li>
-                ))}
+              <ul className="mt-3 space-y-4 text-gray-700">
+                {job.points.map((point, i) => {
+                  const accordionKey = `${job.company}-${i}`;
+                  return (
+                    <ExperienceAccordion
+                      key={accordionKey}
+                      jobKey={accordionKey}
+                      pointIndex={i}
+                      summary={point.summary}
+                      accordion={point.accordion}
+                      isExpanded={expandedAccordion === accordionKey}
+                      onToggle={() => setExpandedAccordion((prev) => (prev === accordionKey ? null : accordionKey))}
+                    />
+                  );
+                })}
               </ul>
             </div>
           ))}
@@ -266,18 +515,13 @@ export default function Landing({ onSectionChange }: LandingProps) {
       >
         <h2 className="text-2xl font-semibold text-gray-800 mb-8 text-center">Latest Projects</h2>
         <div className="grid md:grid-cols-2 gap-6">
-          {PROJECTS.map((project) => (
-            <a
-              key={project.title}
-              href={project.path}
-              target={project.path.startsWith('http') ? '_blank' : undefined}
-              rel={project.path.startsWith('http') ? 'noopener noreferrer' : undefined}
-              className="card block hover:shadow-lg transition-shadow border border-transparent hover:border-primary-200"
-            >
-              <h3 className="text-xl font-semibold text-gray-900 mb-2">{project.title}</h3>
-              <p className="text-gray-600">{project.description}</p>
-              <span className="inline-block mt-3 text-primary-600 text-sm font-medium">View →</span>
-            </a>
+          {PROJECT_TILES.map((project) => (
+            <ProjectTileCard
+              key={project.id}
+              project={project}
+              isExpanded={expandedProjectId === project.id}
+              onToggle={() => setExpandedProjectId((prev) => (prev === project.id ? null : project.id))}
+            />
           ))}
         </div>
       </section>

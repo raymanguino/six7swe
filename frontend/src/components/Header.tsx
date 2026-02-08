@@ -49,7 +49,7 @@ export default function Header({ activeSection }: HeaderProps) {
               {'>_ raymanguino.sh ~ main'}
             </a>
             <div className="flex items-center gap-2 text-sm text-gray-600 shrink-0">
-              <span>open for business</span>
+              <span>Open to Senior+ roles at Series A-D companies</span>
               <span
                 className="relative inline-block w-2.5 h-2.5 rounded-full bg-emerald-400"
                 style={{
