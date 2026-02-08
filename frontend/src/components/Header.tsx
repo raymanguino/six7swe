@@ -7,6 +7,7 @@ const SECTIONS: { id: SectionId; label: string }[] = [
   { id: 'projects', label: 'Projects.ai' },
   { id: 'skills', label: 'Skills.js' },
   { id: 'hobbies', label: 'Hobbies.fun' },
+  { id: 'fitcheck', label: 'FitCheck.dll' },
   { id: 'contacts', label: 'Contact.json' },
 ];
 

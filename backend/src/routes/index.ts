@@ -5,6 +5,7 @@ import * as profileJobHandlers from './handlers/profileJobHandlers';
 import * as userHandlers from './handlers/userHandlers';
 import * as chatHandlers from './handlers/chatHandlers';
 import * as jobMatchHandlers from './handlers/jobMatchHandlers';
+import * as fitcheckHandlers from './handlers/fitcheckHandlers';
 import * as contactHandlers from './handlers/contactHandlers';
 
 export * from './currentUser'
@@ -21,6 +22,7 @@ export default async function registerRoutes(service: FastifyInstance) {
   // Public portfolio routes
   service.post('/chat', chatHandlers.chatHandler);
   service.post('/job-match', jobMatchHandlers.jobMatchHandler);
+  service.post('/fitcheck', fitcheckHandlers.fitcheckHandler);
   service.post('/contact', contactHandlers.contactHandler);
   
   // Existing job routes (public for portfolio)

@@ -69,7 +69,7 @@ fastify.addHook('onRequest', async (req: FastifyRequest, reply: FastifyReply) =>
 
 // Register service authentication preHandler
 // Public routes don't require authentication (portfolio routes)
-const publicRoutes = ['/chat', '/job-match', '/contact', '/jobs', '/'];
+const publicRoutes = ['/chat', '/job-match', '/fitcheck', '/contact', '/jobs', '/'];
 fastify.addHook('preHandler', async (req: FastifyRequest, reply: FastifyReply) => {
   const url = req.url.split('?')[0]; // Remove query params
   const isPublicRoute = publicRoutes.some(route => 
