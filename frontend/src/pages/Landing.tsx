@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { apiRequest } from '../utils/api';
 
-export type SectionId = 'home' | 'about' | 'projects' | 'skills' | 'hobbies' | 'contacts';
+export type SectionId = 'home' | 'about' | 'projects' | 'skills' | 'hobbies' | 'fitcheck' | 'contacts';
 
 const ABOUT_SKILLS = [
   { label: 'AI & MCP Systems', percent: 75 },
@@ -409,12 +410,25 @@ function ProjectTileCard({
   );
 }
 
+type FitCheckResult = {
+  verdict: 'strong' | 'weak';
+  whereIMatch?: Array<{ heading: string; details: string }>;
+  gapsToNote?: Array<{ heading: string; details: string }>;
+  whereIDontFit?: Array<{ heading: string; details: string }>;
+  whatDoesTransfer?: string;
+  recommendation: string;
+};
+
 export default function Landing({ onSectionChange }: LandingProps) {
   const [formData, setFormData] = useState({ name: '', email: '', message: '' });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitStatus, setSubmitStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [expandedAccordion, setExpandedAccordion] = useState<string | null>(null);
   const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
+  const [fitcheckJobDescription, setFitcheckJobDescription] = useState('');
+  const [fitcheckLoading, setFitcheckLoading] = useState(false);
+  const [fitcheckResult, setFitcheckResult] = useState<FitCheckResult | null>(null);
+  const [fitcheckError, setFitcheckError] = useState<string | null>(null);
 
   const sectionRefs = useRef<Record<SectionId, HTMLElement | null>>({
     home: null,
@@ -422,10 +436,11 @@ export default function Landing({ onSectionChange }: LandingProps) {
     projects: null,
     skills: null,
     hobbies: null,
+    fitcheck: null,
     contacts: null,
   });
 
-  const allSectionIds: SectionId[] = ['home', 'about', 'projects', 'skills', 'hobbies', 'contacts'];
+  const allSectionIds: SectionId[] = ['home', 'about', 'projects', 'skills', 'hobbies', 'fitcheck', 'contacts'];
 
   useEffect(() => {
     const hash = window.location.hash.slice(1) as SectionId | '';
@@ -434,6 +449,25 @@ export default function Landing({ onSectionChange }: LandingProps) {
       if (el) requestAnimationFrame(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }));
     }
   }, []);
+
+  const handleFitcheckSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!fitcheckJobDescription.trim()) return;
+    setFitcheckLoading(true);
+    setFitcheckError(null);
+    setFitcheckResult(null);
+    try {
+      const data = await apiRequest('/fitcheck', {
+        method: 'POST',
+        body: JSON.stringify({ jobDescription: fitcheckJobDescription.trim() }),
+      }) as FitCheckResult;
+      setFitcheckResult(data);
+    } catch {
+      setFitcheckError('Failed to analyze job fit. Please try again.');
+    } finally {
+      setFitcheckLoading(false);
+    }
+  };
 
   const handleContactSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -630,6 +664,115 @@ export default function Landing({ onSectionChange }: LandingProps) {
             </div>
           ))}
         </div>
+      </section>
+
+      {/* FitCheck.dll */}
+      <section
+        id="fitcheck"
+        ref={(el) => { sectionRefs.current.fitcheck = el; }}
+        className="scroll-mt-24 mb-24"
+      >
+        <h2 className="text-2xl font-semibold text-gray-800 mb-4 text-center">Honest Fit Assessment</h2>
+        <p className="text-center text-gray-600 mb-8 max-w-2xl mx-auto">
+          Paste a job description and I&apos;ll give you an honest assessment of how Ray&apos;s experience aligns—or doesn&apos;t.
+        </p>
+
+        <form onSubmit={handleFitcheckSubmit} className="max-w-3xl mx-auto mb-8">
+          <label htmlFor="fitcheck-job" className="block text-sm font-medium text-gray-700 mb-2">
+            Job Description
+          </label>
+          <textarea
+            id="fitcheck-job"
+            value={fitcheckJobDescription}
+            onChange={(e) => setFitcheckJobDescription(e.target.value)}
+            placeholder="Paste the full job description here..."
+            rows={8}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500 resize-y mb-4"
+            disabled={fitcheckLoading}
+          />
+          <button
+            type="submit"
+            disabled={fitcheckLoading || !fitcheckJobDescription.trim()}
+            className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {fitcheckLoading ? 'Analyzing...' : 'Check Fit'}
+          </button>
+        </form>
+
+        {fitcheckError && (
+          <div className="max-w-3xl mx-auto mb-8 p-4 bg-red-50 border border-red-200 rounded-lg">
+            <p className="text-red-800 text-sm">{fitcheckError}</p>
+          </div>
+        )}
+
+        {fitcheckResult && (
+          <div className="max-w-3xl mx-auto space-y-6">
+            {fitcheckResult.verdict === 'strong' ? (
+              <div className="card border-primary-200 bg-primary-50/30">
+                <h3 className="text-xl font-bold text-primary-800 mb-2">Strong Fit - Let&apos;s Talk</h3>
+                <p className="font-medium text-gray-800 mb-6">Your requirements align well with my experience. Here&apos;s the specific evidence:</p>
+                {fitcheckResult.whereIMatch && fitcheckResult.whereIMatch.length > 0 && (
+                  <div className="mb-6">
+                    <h4 className="font-semibold text-gray-900 mb-3">Where I Match</h4>
+                    <ul className="space-y-3">
+                      {fitcheckResult.whereIMatch.map((item, i) => (
+                        <li key={i} className="pl-2 border-l-2 border-primary-400">
+                          <span className="font-medium text-gray-800">{item.heading}</span>
+                          <p className="text-gray-700 text-sm mt-1">{item.details}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {fitcheckResult.gapsToNote && fitcheckResult.gapsToNote.length > 0 && (
+                  <div className="mb-6">
+                    <h4 className="font-semibold text-gray-900 mb-3">Gaps To Note</h4>
+                    <ul className="space-y-3">
+                      {fitcheckResult.gapsToNote.map((item, i) => (
+                        <li key={i} className="pl-2 border-l-2 border-amber-400">
+                          <span className="font-medium text-gray-800">{item.heading}</span>
+                          <p className="text-gray-700 text-sm mt-1">{item.details}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                <div>
+                  <h4 className="font-semibold text-gray-900 mb-2">My Recommendation</h4>
+                  <p className="text-gray-700">{fitcheckResult.recommendation}</p>
+                </div>
+              </div>
+            ) : (
+              <div className="card border-amber-200 bg-amber-50/30">
+                <h3 className="text-xl font-bold text-amber-800 mb-2">Honest Assessment - Probably Not Your Person</h3>
+                <p className="font-medium text-gray-800 mb-6">I want to be direct with you. Here&apos;s why this might not be the right fit:</p>
+                {fitcheckResult.whereIDontFit && fitcheckResult.whereIDontFit.length > 0 && (
+                  <div className="mb-6">
+                    <h4 className="font-semibold text-gray-900 mb-3">Where I Don&apos;t Fit</h4>
+                    <ul className="space-y-3">
+                      {fitcheckResult.whereIDontFit.map((item, i) => (
+                        <li key={i} className="pl-2 border-l-2 border-amber-400">
+                          <span className="font-medium text-gray-800">{item.heading}</span>
+                          <p className="text-gray-700 text-sm mt-1">{item.details}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {fitcheckResult.whatDoesTransfer && (
+                  <div className="mb-6">
+                    <h4 className="font-semibold text-gray-900 mb-2">What Does Transfer</h4>
+                    <p className="text-gray-700">{fitcheckResult.whatDoesTransfer}</p>
+                  </div>
+                )}
+                <div>
+                  <h4 className="font-semibold text-gray-900 mb-2">My Recommendation</h4>
+                  <p className="text-gray-700">{fitcheckResult.recommendation}</p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </section>
 
       {/* Contact.json */}
