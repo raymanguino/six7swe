@@ -207,7 +207,7 @@ const SKILLS_GROUPS = [
     items: [
       { name: 'Node.js', percent: 95, level: 'expert' as SkillLevel },
       { name: 'PostgreSQL', percent: 88, level: 'advanced' as SkillLevel },
-      { name: 'Go', percent: 80, level: 'advanced' as SkillLevel },
+      { name: 'Go', percent: 83, level: 'advanced' as SkillLevel },
       { name: 'Python', percent: 70, level: 'intermediate' as SkillLevel },
     ],
   },
