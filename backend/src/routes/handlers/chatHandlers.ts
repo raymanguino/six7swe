@@ -1,6 +1,7 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { Agent, run } from '@openai/agents';
 import { getChatContext } from '../../data/chatContext';
+import { INPUT_LIMITS } from '../../constants';
 
 const chatAgent = new Agent({
   name: 'Professional Background Assistant',
@@ -32,9 +33,13 @@ export async function chatHandler(request: FastifyRequest, reply: FastifyReply) 
     if (!message || typeof message !== 'string' || !message.trim()) {
       return reply.code(400).send({ error: 'Message is required' });
     }
+    const trimmed = message.trim();
+    if (trimmed.length > INPUT_LIMITS.chatMessage) {
+      return reply.code(400).send({ error: `Message must be at most ${INPUT_LIMITS.chatMessage} characters` });
+    }
 
     const baseContext = getChatContext();
-    const context = [baseContext, '', `User Question: ${message}`].join('\n');
+    const context = [baseContext, '', `User Question: ${trimmed}`].join('\n');
 
     const result = await run(chatAgent, context);
     const response = (result.finalOutput as string | undefined) || 'I apologize, but I couldn\'t generate a response. Please try again.';

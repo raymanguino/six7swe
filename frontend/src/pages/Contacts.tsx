@@ -1,5 +1,5 @@
 import { useState } from 'react';
-// import { apiRequest } from '../utils/api';
+import { INPUT_LIMITS } from '../constants';
 
 export default function Contacts() {
   const [formData, setFormData] = useState({
@@ -40,58 +40,63 @@ export default function Contacts() {
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value,
-    });
+    const { name, value } = e.target;
+    const limits: Record<string, number> = {
+      name: INPUT_LIMITS.name,
+      email: INPUT_LIMITS.email,
+      company: INPUT_LIMITS.company,
+      message: INPUT_LIMITS.message,
+    };
+    const maxLen = limits[name] ?? 5000;
+    setFormData({ ...formData, [name]: value.slice(0, maxLen) });
   };
 
   return (
     <div className="container mx-auto px-4 py-12 max-w-4xl">
-      <h1 className="text-4xl font-bold text-gray-900 mb-8 text-center">
+      <h1 className="text-4xl font-bold text-gray-900 dark:text-white mb-8 text-center">
         Get In Touch
       </h1>
 
       <div className="grid md:grid-cols-2 gap-8">
         {/* Contact Information */}
         <div className="card">
-          <h2 className="text-2xl font-bold text-gray-900 mb-6">Contact Information</h2>
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">Contact Information</h2>
           <div className="space-y-4">
             <div>
-              <h3 className="text-sm font-semibold text-gray-700 mb-1">Email</h3>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">Email</h3>
               <a
                 href="mailto:ray@example.com"
-                className="text-primary-600 hover:underline"
+                className="text-primary-600 dark:text-primary-400 hover:underline"
               >
                 ray@example.com
               </a>
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-gray-700 mb-1">LinkedIn</h3>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">LinkedIn</h3>
               <a
                 href="https://linkedin.com/in/raymanguino"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-primary-600 hover:underline"
+                className="text-primary-600 dark:text-primary-400 hover:underline"
               >
                 linkedin.com/in/raymanguino
               </a>
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-gray-700 mb-1">GitHub</h3>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">GitHub</h3>
               <a
                 href="https://github.com/raymanguino"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-primary-600 hover:underline"
+                className="text-primary-600 dark:text-primary-400 hover:underline"
               >
                 github.com/raymanguino
               </a>
             </div>
           </div>
 
-          <div className="mt-8 pt-6 border-t border-gray-200">
-            <h3 className="text-sm font-semibold text-gray-700 mb-3">Resume</h3>
+          <div className="mt-8 pt-6 border-t border-gray-200 dark:border-gray-600">
+            <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Resume</h3>
             <a
               href={`${import.meta.env.VITE_API_URL || '/api'}/public/resume.pdf`}
               download
@@ -117,10 +122,10 @@ export default function Contacts() {
 
         {/* Contact Form */}
         <div className="card">
-          <h2 className="text-2xl font-bold text-gray-900 mb-6">Send a Message</h2>
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">Send a Message</h2>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="name" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Name *
               </label>
               <input
@@ -130,12 +135,14 @@ export default function Contacts() {
                 value={formData.name}
                 onChange={handleChange}
                 required
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                maxLength={INPUT_LIMITS.name}
+                autoComplete="name"
+                className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
               />
             </div>
 
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="email" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Email *
               </label>
               <input
@@ -145,12 +152,14 @@ export default function Contacts() {
                 value={formData.email}
                 onChange={handleChange}
                 required
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                maxLength={INPUT_LIMITS.email}
+                autoComplete="email"
+                className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
               />
             </div>
 
             <div>
-              <label htmlFor="company" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="company" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Company
               </label>
               <input
@@ -159,12 +168,14 @@ export default function Contacts() {
                 name="company"
                 value={formData.company}
                 onChange={handleChange}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                maxLength={INPUT_LIMITS.company}
+                autoComplete="organization"
+                className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
               />
             </div>
 
             <div>
-              <label htmlFor="message" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="message" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Message *
               </label>
               <textarea
@@ -174,7 +185,8 @@ export default function Contacts() {
                 onChange={handleChange}
                 required
                 rows={5}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-primary-500"
+                maxLength={INPUT_LIMITS.message}
+                className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-primary-500"
               />
             </div>
 

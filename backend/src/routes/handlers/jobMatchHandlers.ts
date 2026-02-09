@@ -1,6 +1,7 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { Agent, run } from '@openai/agents';
 import { z } from 'zod';
+import { INPUT_LIMITS } from '../../constants';
 import { resumeData } from '../../data/resume';
 
 const jobMatchAgent = new Agent({
@@ -34,6 +35,10 @@ export async function jobMatchHandler(request: FastifyRequest, reply: FastifyRep
     if (!jobDescription || typeof jobDescription !== 'string' || !jobDescription.trim()) {
       return reply.code(400).send({ error: 'Job description is required' });
     }
+    const trimmed = jobDescription.trim();
+    if (trimmed.length > INPUT_LIMITS.jobDescription) {
+      return reply.code(400).send({ error: `Job description must be at most ${INPUT_LIMITS.jobDescription} characters` });
+    }
 
     const context = [
       `Candidate Profile:`,
@@ -44,7 +49,7 @@ export async function jobMatchHandler(request: FastifyRequest, reply: FastifyRep
       `Full Resume: ${resumeData.fullResumeText}`,
       '',
       `Job Description:`,
-      jobDescription,
+      trimmed,
     ].join('\n');
 
     const result = await run(jobMatchAgent, context);
