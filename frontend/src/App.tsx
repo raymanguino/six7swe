@@ -12,7 +12,7 @@ function App() {
 
   return (
     <div className={theme === 'dark' ? 'dark' : ''} suppressHydrationWarning>
-      <div className="min-h-screen flex flex-col bg-gray-50 dark:bg-gray-900">
+      <div className="min-h-screen flex flex-col bg-gradient-to-r from-gray-50 to-gray-200/70 dark:from-gray-800/90 dark:to-gray-900">
         <Header activeSection={activeSection} />
         <main className="flex-1 pt-16">
           <Routes>
