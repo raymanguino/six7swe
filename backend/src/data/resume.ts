@@ -6,7 +6,7 @@ export const resumeData = {
   linkedin: 'https://linkedin.com/in/raymanguino',
   github: 'https://github.com/raymanguino',
 
-  summary: `Backend-focused full stack engineer specializing in APIs and integrations for web applications, with extensive hands-on experience building public interfaces and designing scalable systems in IT/security, e-commerce, and finance. Security-first approach; growing interest in AI, MCP architectures, and intelligent agents. Background spans backend and frontend with a consistent focus on user-friendly, robust interfaces and data security.`,
+  summary: `Backend-focused full-stack engineer specializing in APIs and integrations for web applications, with extensive hands-on experience building public interfaces and designing scalable systems in IT/security, e-commerce, and finance. Security-first approach; growing interest in AI, MCP architectures, and intelligent agents. Background spans backend and frontend with a consistent focus on user-friendly, robust interfaces and data security.`,
 
   skills: [
     'Backend: Go, Node.js, Java, TypeScript',
@@ -57,7 +57,7 @@ export const resumeData = {
 Ray Manguino - API Specialist & Backend-focused Full-Stack Web Developer
 
 SUMMARY
-Backend-focused full stack engineer specializing in APIs and integrations for web applications. Extensive experience building public interfaces and designing scalable systems in IT/security, e-commerce, and finance. Security-first approach; growing interest in AI, MCP architectures, and intelligent agents. Background spans backend and frontend with focus on robust interfaces and data security.
+Backend-focused full-stack engineer specializing in APIs and integrations for web applications. Extensive experience building public interfaces and designing scalable systems in IT/security, e-commerce, and finance. Security-first approach; growing interest in AI, MCP architectures, and intelligent agents. Background spans backend and frontend with focus on robust interfaces and data security.
 
 SKILLS
 - Backend: Go, Node.js, Java, TypeScript

@@ -4,7 +4,7 @@
 
 **Title:** API Specialist & Backend-focused Full-Stack Web Developer
 
-Ray is a backend-focused full stack engineer specializing in APIs and integrations for web applications, with extensive hands-on experience in building public interfaces and designing scalable systems in various domains including IT/security, e-commerce, and finance. He has a growing interest in AI and is working towards building expertise around MCP architectures and intelligent agents. His background spans both backend and frontend development, with a consistent focus on user-friendly, robust interfaces and data security as a primary concern.
+Ray is a backend-focused full-stack engineer specializing in APIs and integrations for web applications, with extensive hands-on experience in building public interfaces and designing scalable systems in various domains including IT/security, e-commerce, and finance. He has a growing interest in AI and is working towards building expertise around MCP architectures and intelligent agents. His background spans both backend and frontend development, with a consistent focus on user-friendly, robust interfaces and data security as a primary concern.
 
 ## Reasons for leaving previous roles
 

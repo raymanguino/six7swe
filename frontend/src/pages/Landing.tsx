@@ -5,11 +5,10 @@ import { INPUT_LIMITS } from '../constants';
 export type SectionId = 'home' | 'about' | 'projects' | 'skills' | 'hobbies' | 'fitcheck' | 'contacts';
 
 const ABOUT_SKILLS = [
-  { label: 'AI & MCP Systems', percent: 75 },
-  { label: 'Backend Development', percent: 100 },
-  { label: 'Frontend Development', percent: 75 },
-  { label: 'Team Leadership', percent: 85 },
   { label: 'API & Data Security', percent: 100 },
+  { label: 'Full-Stack Development', percent: 100 },
+  { label: 'Team Leadership', percent: 85 },
+  { label: 'AI & MCP Integrations', percent: 75 },
 ];
 
 type AccordionContent = {
@@ -564,10 +563,10 @@ export default function Landing({ onSectionChange }: LandingProps) {
       >
         <h2 className="text-2xl font-semibold text-gray-800 dark:text-gray-200 mb-2 text-center">About Me</h2>
         <p className="text-center text-gray-600 dark:text-gray-400 mb-2 max-w-2xl mx-auto">
-          Architecting intelligent systems with security-first approach
+          Architecting scalable and intelligent systems with security-first approach
         </p>
         <p className="text-gray-700 dark:text-gray-300 leading-relaxed mb-10 max-w-3xl mx-auto">
-          I am a backend-focused full stack engineer specializing in APIs and integrations for web applications, with extensive hands-on experience in building public interfaces and designing scalable systems in various domains including IT/security, e-commerce, and finance. I have a growing interest in AI and am working towards building expertise around MCP architectures and intelligent agents. My background spans both backend and frontend development, with a consistent focus on user-friendly, robust interfaces and data security as a primary concern.
+          I am a backend-focused full-stack engineer specializing in APIs and integrations for web applications, with extensive hands-on experience in building public interfaces and designing scalable systems in various domains including IT/security, e-commerce, and finance. I have a growing interest in AI and am working towards building expertise around MCP architectures and intelligent agents. My background spans both backend and frontend development, with a consistent focus on user-friendly, robust interfaces and data security as a primary concern.
         </p>
 
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-12">
@@ -699,7 +698,17 @@ export default function Landing({ onSectionChange }: LandingProps) {
 
         <form onSubmit={handleFitcheckSubmit} className="max-w-3xl mx-auto mb-8">
           <label htmlFor="fitcheck-job" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-            Job Description
+            <span className="inline-flex items-center gap-2">
+              <span
+                className="relative inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 shrink-0"
+                style={{
+                  boxShadow:
+                    '0 0 3px 1px rgba(52, 211, 153, 0.5), 0 0 6px 2px rgba(52, 211, 153, 0.25), inset 0 0 2px 0 rgba(255, 255, 255, 0.4)',
+                }}
+                aria-hidden
+              />
+              Ready to assess job fit
+            </span>
           </label>
           <textarea
             id="fitcheck-job"
