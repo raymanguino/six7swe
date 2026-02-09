@@ -23,6 +23,9 @@ export default defineConfig({
   preview: {
     port: 4173,
     host: true,
-    allowedHosts: ['six7swe.up.railway.app'],
+    allowedHosts: [
+      'ray-manguino.dev',
+      'six7swe.up.railway.app'
+    ],
   },
 });
