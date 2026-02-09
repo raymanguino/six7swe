@@ -804,6 +804,16 @@ export default function Landing({ onSectionChange }: LandingProps) {
                 <a href="https://linkedin.com/in/raymanguino" target="_blank" rel="noopener noreferrer" className="text-primary-600 hover:underline">LinkedIn</a>
               </div>
             </div>
+            <div className="card">
+              <h3 className="text-lg font-bold text-gray-900 mb-4">Resume</h3>
+              <a
+                href={`${import.meta.env.VITE_API_URL || '/api'}/resume`}
+                download="ray.manguino.pdf"
+                className="text-primary-600 hover:underline inline-flex items-center gap-2"
+              >
+                Download Ray&apos;s resume
+              </a>
+            </div>
           </div>
           <div className="card">
             <h3 className="text-lg font-bold text-gray-900 mb-4">Send Message</h3>
@@ -865,6 +875,10 @@ export default function Landing({ onSectionChange }: LandingProps) {
           </div>
         </div>
       </section>
+
+      <footer className="mt-24 pt-8 border-t border-gray-200 text-center text-sm text-gray-500">
+        © 2026 Ray Manguino | All rights reserved.
+      </footer>
     </div>
   );
 }

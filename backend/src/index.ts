@@ -11,6 +11,7 @@ import * as plugins from './plugins';
 import routes from './routes';
 import { decodeBase64 } from './util';
 import path from 'path';
+import fs from 'fs';
 
 const Fastify = require('fastify');
 const fastify = Fastify({ logger: true });
@@ -69,7 +70,7 @@ fastify.addHook('onRequest', async (req: FastifyRequest, reply: FastifyReply) =>
 
 // Register service authentication preHandler
 // Public routes don't require authentication (portfolio routes)
-const publicRoutes = ['/chat', '/job-match', '/fitcheck', '/contact', '/jobs', '/'];
+const publicRoutes = ['/chat', '/job-match', '/fitcheck', '/contact', '/jobs', '/', '/resume'];
 fastify.addHook('preHandler', async (req: FastifyRequest, reply: FastifyReply) => {
   const url = req.url.split('?')[0]; // Remove query params
   const isPublicRoute = publicRoutes.some(route => 
@@ -83,6 +84,17 @@ fastify.addHook('preHandler', async (req: FastifyRequest, reply: FastifyReply) =
       return reply.send({ error: 'Unauthorized' });
     }
   }
+});
+
+// Resume download route (sends PDF with Content-Disposition: attachment)
+const resumePath = path.join(__dirname, '../../public/ray.manguino.pdf');
+fastify.get('/resume', async (req: FastifyRequest, reply: FastifyReply) => {
+  if (!fs.existsSync(resumePath)) {
+    reply.code(404);
+    return reply.send({ error: 'Resume not found' });
+  }
+  reply.header('Content-Disposition', 'attachment; filename="ray.manguino.pdf"');
+  return reply.send(fs.createReadStream(resumePath));
 });
 
 // Register routes
