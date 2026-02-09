@@ -41,8 +41,9 @@ fastify.register(fastifyCors, {
 });
 
 // Register static file serving for resume PDF
+// Use ../public (relative to dist/ or src/) so it works in both dev and production
 fastify.register(fastifyStatic, {
-  root: path.join(__dirname, '../../public'),
+  root: path.join(__dirname, '../public'),
   prefix: '/public/',
 });
 
@@ -87,7 +88,8 @@ fastify.addHook('preHandler', async (req: FastifyRequest, reply: FastifyReply) =
 });
 
 // Resume download route (sends PDF with Content-Disposition: attachment)
-const resumePath = path.join(__dirname, '../../public/ray.manguino.pdf');
+// Use ../public (relative to dist/ or src/) so it works in both dev and production
+const resumePath = path.join(__dirname, '../public/ray.manguino.pdf');
 fastify.get('/resume', async (req: FastifyRequest, reply: FastifyReply) => {
   if (!fs.existsSync(resumePath)) {
     reply.code(404);
