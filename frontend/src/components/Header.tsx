@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTheme } from '../contexts/ThemeContext';
 import type { SectionId } from '../pages/Landing';
 
 const SECTIONS: { id: SectionId; label: string }[] = [
@@ -19,6 +20,7 @@ const SCROLL_THRESHOLD = 20;
 
 export default function Header({ activeSection }: HeaderProps) {
   const [atTop, setAtTop] = useState(true);
+  const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
     const handleScroll = () => setAtTop(window.scrollY < SCROLL_THRESHOLD);
@@ -34,7 +36,7 @@ export default function Header({ activeSection }: HeaderProps) {
   };
 
   return (
-    <header className="fixed top-0 left-0 right-0 bg-white shadow-md z-50 font-mono">
+    <header className="fixed top-0 left-0 right-0 bg-white dark:bg-gray-800 shadow-md z-50 font-mono">
       <nav className="container mx-auto max-w-screen-2xl pl-6 pr-6 py-4">
         <div className="flex flex-col items-start gap-2">
           <div
@@ -45,11 +47,11 @@ export default function Header({ activeSection }: HeaderProps) {
             <a
               href="#home"
               onClick={(e) => handleNavClick(e, 'home')}
-              className="text-2xl font-bold text-primary-600 hover:text-primary-700 shrink-0"
+              className="text-2xl font-bold text-primary-600 hover:text-primary-700 dark:text-primary-300 dark:hover:text-primary-200 shrink-0"
             >
-              {'>_ raymanguino.sh ~ main'}
+              {'>_ raymanguino.dev ~ main'}
             </a>
-            <div className="flex items-center gap-2 text-sm text-gray-600 shrink-0">
+            <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300 shrink-0">
               <span>Open to Senior+ roles at Series A-D companies</span>
               <span
                 className="relative inline-block w-2.5 h-2.5 rounded-full bg-emerald-400"
@@ -69,13 +71,33 @@ export default function Header({ activeSection }: HeaderProps) {
                 onClick={(e) => handleNavClick(e, id)}
                 className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
                   activeSection === id
-                    ? 'text-primary-600 bg-primary-50'
-                    : 'text-gray-700 hover:text-primary-600 hover:bg-gray-100'
+                    ? 'text-primary-600 bg-primary-50 dark:text-primary-200 dark:bg-primary-900/50'
+                    : 'text-gray-700 hover:text-primary-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:text-primary-300 dark:hover:bg-gray-700'
                 }`}
               >
                 {label}
               </a>
             ))}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                toggleTheme();
+              }}
+              aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              className="ml-2 p-2 rounded-md text-gray-600 hover:text-primary-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:text-primary-300 dark:hover:bg-gray-700 transition-colors"
+            >
+              {theme === 'dark' ? (
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                </svg>
+              ) : (
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                </svg>
+              )}
+            </button>
           </div>
         </div>
       </nav>
