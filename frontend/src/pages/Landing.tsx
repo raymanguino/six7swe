@@ -114,12 +114,12 @@ type ProjectTile = {
 
 const PROJECT_TILES: ProjectTile[] = [
   {
-    id: 'job-hunter',
-    title: '67 SWE (Personal project)',
+    id: '67-swe-project',
+    title: '67 SWE (Personal Project)',
     briefDescription:
-      'Job application management platform with AI-powered job matching, automated job fetching from popular boards, and an agent that ranks matches by personal preferences. Custom tools, database ops, and email integration; evolving into an MCP service.',
+      'Job application management platform with AI-powered job matching, automated job fetching from popular boards, and an AI agent that ranks matches by personal preferences. Custom tools, database ops, and email integration; evolving into an MCP service.',
     techLabels: ['React', 'TypeScript', 'Node.js', 'PostgreSQL', 'OpenAI'],
-    overview: 'Job application management platform with AI-powered job matching, automated job fetching from popular boards, and an agent that ranks matches by personal preferences. Custom tools, database ops, and email integration; evolving into an MCP service.',
+    overview: 'Custom web scraper to fetch jobs from popular boards and an AI agent to rank them by personal preferences. MCP services for DB access to store and query jobs, and email integration to send job matches to candidates.',
     keyChallenges: [
       'Integrating multiple job boards and normalizing data for consistent matching.',
       'Designing an agent that ranks jobs by personal preferences with explainable results.',
@@ -221,17 +221,17 @@ const HOBBIES = [
   {
     title: 'Car Enthusiast',
     summary: 'High-performance automotive engineering inspires my approach to software optimization - precision, speed, and cutting-edge innovation.',
-    detail: 'Performance optimization in automotive engineering directly influences my approach to writing efficient code.',
+    detail: 'Tuning my car and refining my driving skills require research, experimentation, and iterative improvement, shaping how I approach problem-solving in fast-moving environments.',
   },
   {
     title: 'Food Lover',
-    summary: 'Complex ingredients meets strategic cooking techniques to deliver dishes that meet the demands of sophisticated palates and children alike.',
-    detail: 'Choosing the right ingredients, learning new cooking techniques, and continuous improvement from consumer (family) feedback enhances my ability to plan, design, and improve systems at a high level.',
+    summary: 'Ingredients planning and logistics combined with strategic cooking techniques to deliver dishes that meet the demands of various palates and dietary needs.',
+    detail: 'Planning meals under real-world constraints—cost, time, and whether either kid will actually eat it—strengthens my system-level design skills.',
   },
   {
-    title: 'DIY',
-    summary: 'Building rather than buying ready-made solutions unlocks new capabilities and skills that pay dividends in the long-run.',
-    detail: 'Fixing car engine failures, dishwasher motors, electrical outlet gremlins, mysterious water leaks keeps my analytical and problem solving skills sharp for coding challenges.',
+    title: 'DIY Champion',
+    summary: 'Building rather than buying ready-made solutions unlocks new capabilities and skills that pay dividends in the long-run. Plus, it\'s cheaper!',
+    detail: 'Hands-on problem solving builds transferable skills I apply to software development, balancing short-term needs with long-term results.',
   },
 ];
 

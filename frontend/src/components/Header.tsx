@@ -71,7 +71,7 @@ export default function Header({ activeSection }: HeaderProps) {
                   </svg>
                 )}
               </button>
-              <span className="truncate min-w-0">Open to Senior+ roles at Series A-D companies</span>
+              <span className="truncate min-w-0">Open to Senior+ roles (Series A–D)</span>
               <span
                 className="relative inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 shrink-0"
                 style={{
@@ -83,14 +83,14 @@ export default function Header({ activeSection }: HeaderProps) {
             </div>
           </div>
           <div
-            className={`flex flex-nowrap gap-2 justify-start items-center min-w-0 overflow-hidden ${mobileMenuOpen ? 'flex' : 'hidden'} md:flex`}
+            className={`flex flex-col md:flex-row flex-nowrap gap-2 justify-start items-stretch md:items-center min-w-0 overflow-visible md:overflow-hidden ${mobileMenuOpen ? 'flex' : 'hidden'} md:flex`}
           >
             {SECTIONS.map(({ id, label }) => (
               <a
                 key={id}
                 href={`#${id}`}
                 onClick={(e) => handleNavClick(e, id)}
-                className={`px-3 py-2 rounded-md text-sm font-medium transition-colors min-w-0 truncate ${
+                className={`px-3 py-2 rounded-md text-sm font-medium transition-colors min-w-0 md:truncate ${
                   activeSection === id
                     ? 'text-primary-600 bg-primary-50 dark:text-primary-200 dark:bg-primary-900/50'
                     : 'text-gray-700 hover:text-primary-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:text-primary-300 dark:hover:bg-gray-700'

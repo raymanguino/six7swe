@@ -5,18 +5,39 @@ import { INPUT_LIMITS } from '../constants';
 interface Message {
   role: 'user' | 'assistant';
   content: string;
+  timestamp: Date;
 }
 
 const EXAMPLE_QUESTIONS = [
-  "Would this person be good for a Series B startup with a messy API and data infrastructure?",
-  "How did they save $20M per year in lost revenue? Was it technical or political?",
-  "Tell me about their biggest failure.",
-  "What kind of leadership experience do they have?",
+  "What technologies do you work with daily?",
+  "Can you describe a challenging project you worked on?",
+  "How do you ensure code quality and security?",
+  "What's your experience with team collaboration?",
 ];
 
 const GREEN_DOT_STYLE = {
   boxShadow:
     '0 0 3px 1px rgba(52, 211, 153, 0.5), 0 0 6px 2px rgba(52, 211, 153, 0.25), inset 0 0 2px 0 rgba(255, 255, 255, 0.4)',
+};
+
+const formatTimestamp = (date: Date): string => {
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
+
+  // For older messages, show date and time
+  const hours = date.getHours().toString().padStart(2, '0');
+  const minutes = date.getMinutes().toString().padStart(2, '0');
+  const month = (date.getMonth() + 1).toString().padStart(2, '0');
+  const day = date.getDate().toString().padStart(2, '0');
+  return `${month}/${day} ${hours}:${minutes}`;
 };
 
 export default function ChatAssistant() {
@@ -39,7 +60,7 @@ export default function ChatAssistant() {
 
     const userMessage = text.trim();
     setInput('');
-    setMessages((prev) => [...prev, { role: 'user', content: userMessage }]);
+    setMessages((prev) => [...prev, { role: 'user', content: userMessage, timestamp: new Date() }]);
     setIsLoading(true);
 
     try {
@@ -47,13 +68,14 @@ export default function ChatAssistant() {
         method: 'POST',
         body: JSON.stringify({ message: userMessage }),
       });
-      setMessages((prev) => [...prev, { role: 'assistant', content: data.response }]);
+      setMessages((prev) => [...prev, { role: 'assistant', content: data.response, timestamp: new Date() }]);
     } catch (error) {
       setMessages((prev) => [
         ...prev,
         {
           role: 'assistant',
           content: 'Sorry, I encountered an error. Please try again later.',
+          timestamp: new Date(),
         },
       ]);
     } finally {
@@ -110,14 +132,14 @@ export default function ChatAssistant() {
         <div className="fixed bottom-24 left-3 right-3 sm:left-auto sm:right-6 sm:w-[480px] h-[420px] max-h-[min(420px,calc(100vh-7rem))] sm:max-h-[calc(100vh-8rem)] bg-white dark:bg-gray-800 rounded-lg shadow-2xl flex flex-col z-50 border border-gray-200 dark:border-gray-600">
           {/* Chat Header */}
           <div className="bg-primary-600 dark:bg-primary-700 text-white p-4 rounded-t-lg">
-            <h3 className="font-semibold">Ask AI about Ray</h3>
+            <h3 className="font-semibold">Chat with Ray</h3>
             <p className="text-sm text-primary-100 flex items-center gap-2 mt-0.5">
               <span
                 className="relative inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 shrink-0"
                 style={GREEN_DOT_STYLE}
                 aria-hidden
               />
-              Ready to answer your questions
+              Online now
             </p>
           </div>
 
@@ -127,7 +149,7 @@ export default function ChatAssistant() {
               <div className="space-y-3">
                 <h4 className="font-medium text-gray-800 dark:text-gray-200 text-center">What would you like to know?</h4>
                 <p className="text-sm text-gray-600 dark:text-gray-400 text-center">
-                  Ask specific questions about Ray&apos;s experience, skills, or fit for your role. Get honest, detailed answers.
+                  Ask me about my experience, skills, or how I might fit your role. I&apos;ll give you honest, detailed answers.
                 </p>
                 <div className="flex flex-col gap-2 pt-1">
                   {EXAMPLE_QUESTIONS.map((q, i) => (
@@ -147,7 +169,7 @@ export default function ChatAssistant() {
             {messages.map((msg, idx) => (
               <div
                 key={idx}
-                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
               >
                 <div
                   className={`max-w-[80%] rounded-lg p-3 ${
@@ -158,6 +180,15 @@ export default function ChatAssistant() {
                 >
                   <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
                 </div>
+                <span
+                  className={`text-xs mt-1 px-1 ${
+                    msg.role === 'user'
+                      ? 'text-gray-500 dark:text-gray-400'
+                      : 'text-gray-500 dark:text-gray-400'
+                  }`}
+                >
+                  {formatTimestamp(msg.timestamp)}
+                </span>
               </div>
             ))}
             {isLoading && (
@@ -181,7 +212,7 @@ export default function ChatAssistant() {
                 value={input}
                 onChange={(e) => setInput(e.target.value.slice(0, INPUT_LIMITS.chatMessage))}
                 onKeyPress={handleKeyPress}
-                placeholder="Ask about experience, skills, or fit…"
+                placeholder="Ask me anything about my experience, skills, or background…"
                 maxLength={INPUT_LIMITS.chatMessage}
                 className="flex-1 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary-500"
                 rows={2}
