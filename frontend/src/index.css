@@ -19,7 +19,7 @@
 
 @layer base {
   body {
-    @apply bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-white;
+    @apply bg-gradient-to-r from-gray-50 to-gray-200/70 text-gray-900 dark:from-gray-800/90 dark:to-gray-900 dark:text-white;
   }
 }
 
