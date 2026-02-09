@@ -4,11 +4,32 @@ import { INPUT_LIMITS } from '../constants';
 
 export type SectionId = 'home' | 'about' | 'projects' | 'skills' | 'hobbies' | 'fitcheck' | 'contacts';
 
-const ABOUT_SKILLS = [
-  { label: 'API & Data Security', percent: 100 },
-  { label: 'Full-Stack Development', percent: 100 },
-  { label: 'Team Leadership', percent: 85 },
-  { label: 'AI & MCP Integrations', percent: 75 },
+const ABOUT_STRENGTH_COLUMNS = [
+  {
+    title: 'Strong',
+    icon: 'check',
+    iconClass: 'text-green-500',
+    items: [
+      'Platform/Infrastructure',
+      'API Design & Versioning',
+      'Technical Strategy',
+      'Developer Experience',
+      'Cross-functional Leadership',
+      'Technical Debt Cleanup',
+    ],
+  },
+  {
+    title: 'Moderate',
+    icon: 'circle',
+    iconClass: 'border-yellow-500',
+    items: ['AI & MCP Architectures', 'Security & Compliance', 'Team Building'],
+  },
+  {
+    title: 'Gaps',
+    icon: 'x',
+    iconClass: 'text-orange-500',
+    items: ['RAG Systems', 'Mobile Development', 'Growth/Experimentation'],
+  },
 ];
 
 type AccordionContent = {
@@ -187,16 +208,14 @@ const SKILLS_GROUPS = [
       { name: 'Node.js', percent: 95, level: 'expert' as SkillLevel },
       { name: 'Go', percent: 80, level: 'advanced' as SkillLevel },
       { name: 'Java', percent: 75, level: 'intermediate' as SkillLevel },
-      { name: 'Python', percent: 75, level: 'intermediate' as SkillLevel },
+      { name: 'Python', percent: 70, level: 'intermediate' as SkillLevel },
     ],
   },
   {
-    name: 'Frontend',
+    name: 'AI',
     items: [
-      { name: 'React', percent: 80, level: 'advanced' as SkillLevel },
-      { name: 'JavaScript/ES6', percent: 95, level: 'expert' as SkillLevel },
-      { name: 'TypeScript', percent: 90, level: 'expert' as SkillLevel },
-      { name: 'CSS/SCSS', percent: 70, level: 'intermediate' as SkillLevel },
+      { name: 'LangChain', percent: 75, level: 'intermediate' as SkillLevel },
+      { name: 'MCP Services', percent: 70, level: 'intermediate' as SkillLevel },
     ],
   },
   {
@@ -209,10 +228,12 @@ const SKILLS_GROUPS = [
     ],
   },
   {
-    name: 'AI',
+    name: 'Frontend',
     items: [
-      { name: 'MCP Services', percent: 70, level: 'intermediate' as SkillLevel },
-      { name: 'Langchain', percent: 75, level: 'intermediate' as SkillLevel },
+      { name: 'JavaScript/ES6', percent: 95, level: 'expert' as SkillLevel },
+      { name: 'TypeScript', percent: 90, level: 'expert' as SkillLevel },
+      { name: 'React', percent: 80, level: 'advanced' as SkillLevel },
+      { name: 'CSS/SCSS', percent: 70, level: 'intermediate' as SkillLevel },
     ],
   },
 ];
@@ -569,12 +590,36 @@ export default function Landing({ onSectionChange }: LandingProps) {
           I am a backend-focused full-stack engineer specializing in APIs and integrations for web applications, with extensive hands-on experience in building public interfaces and designing scalable systems in various domains including IT/security, e-commerce, and finance. I have a growing interest in AI and am working towards building expertise around MCP architectures and intelligent agents. My background spans both backend and frontend development, with a consistent focus on user-friendly, robust interfaces and data security as a primary concern.
         </p>
 
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-12">
-          {ABOUT_SKILLS.map((item) => (
-            <div key={item.label} className="card">
-              <h3 className="font-semibold text-gray-900 dark:text-white mb-2">{item.label}</h3>
-              <ProgressBar percent={item.percent} />
-              <span className="text-sm text-gray-600 dark:text-gray-400 mt-1 block">{item.percent}%</span>
+        <div className="grid sm:grid-cols-3 gap-6 mb-12">
+          {ABOUT_STRENGTH_COLUMNS.map((col) => (
+            <div key={col.title} className="card">
+              <h3 className="font-semibold text-gray-900 dark:text-white mb-4 border-b border-gray-200 dark:border-gray-600 pb-2">
+                {col.title}
+              </h3>
+              <ul className="space-y-3">
+                {col.items.map((item) => (
+                  <li key={item} className="flex items-center gap-2 text-gray-700 dark:text-gray-300">
+                    {col.icon === 'check' && (
+                      <span className={`flex-shrink-0 ${col.iconClass}`} aria-hidden>
+                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                        </svg>
+                      </span>
+                    )}
+                    {col.icon === 'circle' && (
+                      <span className={`flex-shrink-0 w-5 h-5 rounded-full border-2 bg-transparent ${col.iconClass}`} aria-hidden />
+                    )}
+                    {col.icon === 'x' && (
+                      <span className={`flex-shrink-0 ${col.iconClass}`} aria-hidden>
+                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                        </svg>
+                      </span>
+                    )}
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
           ))}
         </div>

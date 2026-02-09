@@ -51,7 +51,7 @@ export default function Header({ activeSection }: HeaderProps) {
               onClick={(e) => handleNavClick(e, 'home')}
               className="text-2xl font-bold text-primary-600 hover:text-primary-700 dark:text-primary-300 dark:hover:text-primary-200 min-w-0 truncate"
             >
-              {'>'}<span className="cursor-blink inline-block">_</span>{' raymanguino.dev ~ main'}
+              {'>'}<span className="cursor-blink inline-block">_</span>{' ray-manguino.dev ~ main'}
             </a>
             <div className="flex flex-nowrap items-center gap-2 text-sm text-gray-600 dark:text-gray-300 min-w-0 overflow-hidden">
               <button
