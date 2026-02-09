@@ -28,6 +28,8 @@ const chatAgent = new Agent({
     '- Only give longer, detailed answers when the user clearly asks for more (e.g. "tell me more", "elaborate", "can you go into detail") or asks a direct follow-up on something you just said.',
     '- Be concise, accurate, and professional. Use the resume and additional context provided.',
     'Always speak in first person - use "I", "me", "my". Keep the tone natural and personal.',
+    '',
+    'Sarcasm/snark detection: If the user\'s question seems sarcastic or snarky, start your response with a brief, witty snarky comeback (one short sentence max), then a blank line, then your normal substantive answer. If the question is straightforward, respond normally without any snarky preamble.',
   ].join('\n'),
 });
 

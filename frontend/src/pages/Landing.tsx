@@ -48,7 +48,7 @@ const EXPERIENCE: Array<{
   {
     title: 'Senior Software Engineer',
     company: 'Tanium',
-    period: 'Previous',
+    period: '2024 - 2025',
     points: [
       {
         summary: 'Designed and delivered new GraphQL APIs adopted by 1,500 customers, replacing fragmented REST calls and cutting troubleshooting time from ~1 hour to minutes.',
@@ -73,7 +73,7 @@ const EXPERIENCE: Array<{
   {
     title: 'Senior Software Engineer',
     company: 'Nacelle',
-    period: 'Previous',
+    period: '2022 - 2023',
     points: [
       {
         summary: 'Architected and delivered API layer services to provide dynamically generated GraphQL endpoints for improved user experiences.',
@@ -98,7 +98,7 @@ const EXPERIENCE: Array<{
   {
     title: 'Senior Software Engineer',
     company: 'Capital One',
-    period: 'Previous',
+    period: '2017 - 2021',
     points: [
       {
         summary: 'Onboarded Canada to a new customer acquisitions platform, securing $20M/year in lost revenue.',
@@ -440,6 +440,7 @@ function ProjectTileCard({
 }
 
 type FitCheckResult = {
+  snarkyPreamble?: string | null;
   verdict: 'strong' | 'weak';
   whereIMatch?: Array<{ heading: string; details: string }>;
   gapsToNote?: Array<{ heading: string; details: string }>;
@@ -628,8 +629,11 @@ export default function Landing({ onSectionChange }: LandingProps) {
         <div className="space-y-6">
           {EXPERIENCE.map((job) => (
             <div key={`${job.company}-${job.title}`} className="card">
-              <h4 className="text-lg font-semibold text-gray-900 dark:text-white">{job.title}</h4>
-              <p className="text-primary-600 dark:text-primary-400 font-medium">{job.company} — {job.period}</p>
+              <div className="flex justify-between items-baseline gap-4">
+                <h4 className="text-lg font-semibold text-gray-900 dark:text-white">{job.title}</h4>
+                <span className="text-gray-600 dark:text-gray-400 text-sm shrink-0">{job.period}</span>
+              </div>
+              <p className="text-primary-600 dark:text-primary-400 font-medium">{job.company}</p>
               <ul className="mt-3 space-y-4 text-gray-700 dark:text-gray-300">
                 {job.points.map((point, i) => {
                   const accordionKey = `${job.company}-${i}`;
@@ -782,6 +786,11 @@ export default function Landing({ onSectionChange }: LandingProps) {
 
         {fitcheckResult && (
           <div className="max-w-3xl mx-auto space-y-6">
+            {fitcheckResult.snarkyPreamble && (
+              <p className="text-amber-700 dark:text-amber-300 italic font-medium border-l-4 border-amber-400 dark:border-amber-500 pl-4 py-2 bg-amber-50/50 dark:bg-amber-900/20 rounded-r">
+                {fitcheckResult.snarkyPreamble}
+              </p>
+            )}
             {fitcheckResult.verdict === 'strong' ? (
               <div className="card border-primary-200 dark:border-primary-600 bg-primary-50/30 dark:bg-primary-900/30">
                 <h3 className="text-xl font-bold text-primary-800 dark:text-primary-200 mb-2">Strong Fit - Let&apos;s Talk</h3>

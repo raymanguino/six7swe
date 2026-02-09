@@ -28,8 +28,11 @@ const fitCheckAgent = new Agent({
     '',
     'Be specific: cite your actual experience (companies, technologies, projects) when describing matches or gaps. Always use I/me/my so the user feels they are chatting with Ray himself.',
     'Be direct and honest. Do not oversell or undersell the fit.',
+    '',
+    'Sarcasm/snark detection: If the job description seems sarcastic, snarky, or mock (e.g. fake/absurd job, trolling, obvious joke), set snarky_preamble to one short witty comeback sentence before the real analysis. Otherwise set snarky_preamble to null. Always still provide the full analysis regardless.',
   ].join('\n'),
   outputType: z.object({
+    snarky_preamble: z.string().nullable(),
     verdict: z.enum(['strong', 'weak']),
     where_i_match: z.array(z.object({
       heading: z.string(),
@@ -78,6 +81,7 @@ export async function fitcheckHandler(request: FastifyRequest, reply: FastifyRep
     }
 
     const output = result.finalOutput as {
+      snarky_preamble?: string | null;
       verdict: 'strong' | 'weak';
       where_i_match?: Array<{ heading: string; details: string }>;
       gaps_to_note?: Array<{ heading: string; details: string }>;
@@ -87,6 +91,7 @@ export async function fitcheckHandler(request: FastifyRequest, reply: FastifyRep
     };
 
     return reply.code(200).send({
+      snarkyPreamble: output.snarky_preamble ?? null,
       verdict: output.verdict,
       whereIMatch: output.where_i_match ?? [],
       gapsToNote: output.gaps_to_note ?? [],
