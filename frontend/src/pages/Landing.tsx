@@ -114,6 +114,21 @@ type ProjectTile = {
 
 const PROJECT_TILES: ProjectTile[] = [
   {
+    id: 'job-hunter',
+    title: '67 SWE (Personal project)',
+    briefDescription:
+      'Job application management platform with AI-powered job matching, automated job fetching from popular boards, and an agent that ranks matches by personal preferences. Custom tools, database ops, and email integration; evolving into an MCP service.',
+    techLabels: ['React', 'TypeScript', 'Node.js', 'PostgreSQL', 'OpenAI'],
+    overview: 'Job application management platform with AI-powered job matching, automated job fetching from popular boards, and an agent that ranks matches by personal preferences. Custom tools, database ops, and email integration; evolving into an MCP service.',
+    keyChallenges: [
+      'Integrating multiple job boards and normalizing data for consistent matching.',
+      'Designing an agent that ranks jobs by personal preferences with explainable results.',
+      'Evolving custom tools and workflows into a reusable MCP service for AI agents.',
+    ],
+    liveSiteUrl: '#',
+    liveSiteDisabled: true,
+  },
+  {
     id: 'greenfield-apis',
     title: 'GraphQL APIs (Tanium)',
     briefDescription:
@@ -126,21 +141,6 @@ const PROJECT_TILES: ProjectTile[] = [
       'Balancing backward compatibility with clean schema design and filtering capabilities.',
     ],
     liveSiteUrl: 'https://help.tanium.com/bundle/ug_gateway_cloud/page/gateway/overview.html',
-  },
-  {
-    id: 'job-hunter',
-    title: 'Job Hunter',
-    briefDescription:
-      'Job application management platform with AI-powered job matching, automated job fetching from popular boards, and an agent that ranks matches by personal preferences. Custom tools, database ops, and email integration; evolving into an MCP service.',
-    techLabels: ['React', 'TypeScript', 'Node.js', 'PostgreSQL', 'OpenAI'],
-    overview: 'Job application management platform with AI-powered job matching, automated job fetching from popular boards, and an agent that ranks matches by personal preferences. Custom tools, database ops, and email integration; evolving into an MCP service.',
-    keyChallenges: [
-      'Integrating multiple job boards and normalizing data for consistent matching.',
-      'Designing an agent that ranks jobs by personal preferences with explainable results.',
-      'Evolving custom tools and workflows into a reusable MCP service for AI agents.',
-    ],
-    liveSiteUrl: '#',
-    liveSiteDisabled: true,
   },
   {
     id: 'schema-registry',
