@@ -107,7 +107,7 @@ export default function ChatAssistant() {
 
       {/* Chat Window */}
       {isOpen && (
-        <div className="fixed bottom-24 right-6 w-[480px] h-[420px] max-h-[calc(100vh-8rem)] bg-white dark:bg-gray-800 rounded-lg shadow-2xl flex flex-col z-50 border border-gray-200 dark:border-gray-600">
+        <div className="fixed bottom-24 left-3 right-3 sm:left-auto sm:right-6 sm:w-[480px] h-[420px] max-h-[min(420px,calc(100vh-7rem))] sm:max-h-[calc(100vh-8rem)] bg-white dark:bg-gray-800 rounded-lg shadow-2xl flex flex-col z-50 border border-gray-200 dark:border-gray-600">
           {/* Chat Header */}
           <div className="bg-primary-600 dark:bg-primary-700 text-white p-4 rounded-t-lg">
             <h3 className="font-semibold">Ask AI about Ray</h3>
