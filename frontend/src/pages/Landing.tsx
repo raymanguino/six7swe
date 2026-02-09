@@ -206,8 +206,8 @@ const SKILLS_GROUPS = [
     name: 'Backend',
     items: [
       { name: 'Node.js', percent: 95, level: 'expert' as SkillLevel },
+      { name: 'PostgreSQL', percent: 88, level: 'advanced' as SkillLevel },
       { name: 'Go', percent: 80, level: 'advanced' as SkillLevel },
-      { name: 'Java', percent: 75, level: 'intermediate' as SkillLevel },
       { name: 'Python', percent: 70, level: 'intermediate' as SkillLevel },
     ],
   },
@@ -221,10 +221,10 @@ const SKILLS_GROUPS = [
   {
     name: 'DevOps & Cloud',
     items: [
-      { name: 'AWS', percent: 90, level: 'expert' as SkillLevel },
-      { name: 'Docker', percent: 90, level: 'expert' as SkillLevel },
-      { name: 'CI/CD', percent: 88, level: 'advanced' as SkillLevel },
-      { name: 'OAuth Integration', percent: 80, level: 'advanced' as SkillLevel },
+      { name: 'AWS', percent: 92, level: 'expert' as SkillLevel },
+      { name: 'Docker', percent: 88, level: 'expert' as SkillLevel },
+      { name: 'CI/CD', percent: 85, level: 'advanced' as SkillLevel },
+      { name: 'OAuth Integration', percent: 78, level: 'advanced' as SkillLevel },
     ],
   },
   {
