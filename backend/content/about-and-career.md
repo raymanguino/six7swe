@@ -18,3 +18,16 @@ Ray is a backend-focused full-stack engineer specializing in APIs and integratio
 - **Car enthusiast:** High-performance automotive engineering inspires his approach to software optimization—precision, speed, and cutting-edge innovation. Performance optimization in automotive engineering directly influences his approach to writing efficient code.
 - **Food lover:** Complex ingredients and strategic cooking techniques deliver dishes that meet sophisticated palates and family alike. Choosing the right ingredients, learning new techniques, and continuous improvement from consumer (family) feedback enhances his ability to plan, design, and improve systems at a high level.
 - **DIY-er:** Building rather than buying keeps analytical and problem-solving skills sharp; fixing car engine failures, appliances, electrical issues, and water leaks translates to tackling coding challenges.
+
+## Tools used on a daily basis
+
+- Works primarily with Node.js or Go (Golang) for backend services, React for frontend development, and TypeScript for type safety.
+- Specializes in building APIs, distributed systems, and full-stack solutions using modern frameworks.
+- Actively building AI applications with MCP services.
+- Also works extensively with Docker, PostgreSQL, and AWS cloud platform.
+
+## Ensuring code quality and security
+
+- Comprehensive testing strategies with Jest and TypeScript for type safety, following security-first development practices.
+- Focused on code reviews, automation testing, authentication flows, and secure API integrations.
+- Prioritizes clean code principles and documentation.

@@ -738,7 +738,7 @@ export default function Landing({ onSectionChange }: LandingProps) {
       >
         <h2 className="text-2xl font-semibold text-gray-800 dark:text-gray-200 mb-4 text-center">Honest Fit Assessment</h2>
         <p className="text-center text-gray-600 dark:text-gray-400 mb-8 max-w-2xl mx-auto">
-          Paste a job description and I&apos;ll give you an honest assessment of how Ray&apos;s experience aligns—or doesn&apos;t.
+          Paste a job description and I&apos;ll give you an honest assessment of how my experience aligns—or doesn&apos;t.
         </p>
 
         <form onSubmit={handleFitcheckSubmit} className="max-w-3xl mx-auto mb-8">

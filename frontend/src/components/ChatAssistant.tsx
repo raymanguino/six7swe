@@ -64,9 +64,10 @@ export default function ChatAssistant() {
     setIsLoading(true);
 
     try {
+      const history = messages.map((m) => ({ role: m.role, content: m.content }));
       const data = await apiRequest('/chat', {
         method: 'POST',
-        body: JSON.stringify({ message: userMessage }),
+        body: JSON.stringify({ message: userMessage, history }),
       });
       setMessages((prev) => [...prev, { role: 'assistant', content: data.response, timestamp: new Date() }]);
     } catch (error) {
@@ -149,7 +150,7 @@ export default function ChatAssistant() {
               <div className="space-y-3">
                 <h4 className="font-medium text-gray-800 dark:text-gray-200 text-center">What would you like to know?</h4>
                 <p className="text-sm text-gray-600 dark:text-gray-400 text-center">
-                  Ask me about my experience, skills, or how I might fit your role. I&apos;ll give you honest, detailed answers.
+                  Ask me about my experience, skills, or how I might fit your role. I&apos;ll keep it short—ask for more detail anytime.
                 </p>
                 <div className="flex flex-col gap-2 pt-1">
                   {EXAMPLE_QUESTIONS.map((q, i) => (

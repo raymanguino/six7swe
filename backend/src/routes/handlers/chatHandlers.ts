@@ -22,16 +22,21 @@ const chatAgent = new Agent({
     '- Any topics unrelated to your professional background',
     '',
     'If asked about something outside your scope, politely redirect to professional topics.',
-    'Be concise, accurate, and professional in your responses.',
-    'Use the resume and additional context provided to answer questions accurately.',
-    'Always speak in first person - use "I", "me", "my" instead of referring to yourself in third person.',
-    'Make the conversation feel natural and personal, as if the user is chatting directly with you.',
+    '',
+    'Response length:',
+    '- By default keep answers SHORT and conversational: 2–4 sentences. Get to the point quickly.',
+    '- Only give longer, detailed answers when the user clearly asks for more (e.g. "tell me more", "elaborate", "can you go into detail") or asks a direct follow-up on something you just said.',
+    '- Be concise, accurate, and professional. Use the resume and additional context provided.',
+    'Always speak in first person - use "I", "me", "my". Keep the tone natural and personal.',
   ].join('\n'),
 });
 
+const MAX_HISTORY_MESSAGES = 10;
+
 export async function chatHandler(request: FastifyRequest, reply: FastifyReply) {
   try {
-    const { message } = request.body as { message: string };
+    const body = request.body as { message: string; history?: Array<{ role: string; content: string }> };
+    const { message, history } = body;
 
     if (!message || typeof message !== 'string' || !message.trim()) {
       return reply.code(400).send({ error: 'Message is required' });
@@ -42,7 +47,19 @@ export async function chatHandler(request: FastifyRequest, reply: FastifyReply) 
     }
 
     const baseContext = getChatContext();
-    const context = [baseContext, '', `User Question: ${trimmed}`].join('\n');
+    const historyBlock =
+      Array.isArray(history) && history.length > 0
+        ? [
+            '',
+            'Recent conversation (for context; current question may be a follow-up):',
+            history
+              .slice(-MAX_HISTORY_MESSAGES)
+              .map((m) => `${m.role === 'user' ? 'User' : 'Ray'}: ${(m.content || '').slice(0, 500)}`)
+              .join('\n'),
+            '',
+          ].join('\n')
+        : '';
+    const context = [baseContext, historyBlock, `Current user question: ${trimmed}`].join('\n');
 
     const result = await run(chatAgent, context);
     const response = (result.finalOutput as string | undefined) || 'I apologize, but I couldn\'t generate a response. Please try again.';
