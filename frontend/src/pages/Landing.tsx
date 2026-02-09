@@ -173,39 +173,47 @@ const PROJECT_TILES: ProjectTile[] = [
   },
 ];
 
+type SkillLevel = 'expert' | 'advanced' | 'intermediate';
+
+const SKILL_LEVEL_CONFIG: Record<SkillLevel, { label: string; dotClass: string }> = {
+  expert: { label: 'Expert', dotClass: 'bg-green-500' },
+  advanced: { label: 'Advanced', dotClass: 'bg-yellow-500' },
+  intermediate: { label: 'Intermediate', dotClass: 'bg-orange-500' },
+};
+
 const SKILLS_GROUPS = [
   {
     name: 'Backend',
     items: [
-      { name: 'Node.js', percent: 95 },
-      { name: 'Go', percent: 80 },
-      { name: 'Java', percent: 75 },
-      { name: 'Python', percent: 75 },
+      { name: 'Node.js', percent: 95, level: 'expert' as SkillLevel },
+      { name: 'Go', percent: 80, level: 'advanced' as SkillLevel },
+      { name: 'Java', percent: 75, level: 'intermediate' as SkillLevel },
+      { name: 'Python', percent: 75, level: 'intermediate' as SkillLevel },
     ],
   },
   {
     name: 'Frontend',
     items: [
-      { name: 'React', percent: 80 },
-      { name: 'JavaScript/ES6', percent: 95 },
-      { name: 'TypeScript', percent: 90 },
-      { name: 'CSS/SCSS', percent: 70 },
+      { name: 'React', percent: 80, level: 'advanced' as SkillLevel },
+      { name: 'JavaScript/ES6', percent: 95, level: 'expert' as SkillLevel },
+      { name: 'TypeScript', percent: 90, level: 'expert' as SkillLevel },
+      { name: 'CSS/SCSS', percent: 70, level: 'intermediate' as SkillLevel },
     ],
   },
   {
     name: 'DevOps & Cloud',
     items: [
-      { name: 'AWS', percent: 90 },
-      { name: 'Docker', percent: 90 },
-      { name: 'CI/CD', percent: 88 },
-      { name: 'OAuth Integration', percent: 80 },
+      { name: 'AWS', percent: 90, level: 'expert' as SkillLevel },
+      { name: 'Docker', percent: 90, level: 'expert' as SkillLevel },
+      { name: 'CI/CD', percent: 88, level: 'advanced' as SkillLevel },
+      { name: 'OAuth Integration', percent: 80, level: 'advanced' as SkillLevel },
     ],
   },
   {
     name: 'AI',
     items: [
-      { name: 'MCP Services', percent: 70 },
-      { name: 'Langchain', percent: 75 },
+      { name: 'MCP Services', percent: 70, level: 'intermediate' as SkillLevel },
+      { name: 'Langchain', percent: 75, level: 'intermediate' as SkillLevel },
     ],
   },
 ];
@@ -631,15 +639,26 @@ export default function Landing({ onSectionChange }: LandingProps) {
             <div key={group.name} className="card">
               <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4 border-b border-gray-200 dark:border-gray-600 pb-2">{group.name}</h3>
               <div className="space-y-4">
-                {group.items.map((item) => (
-                  <div key={item.name}>
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="font-medium text-gray-800 dark:text-gray-200">{item.name}</span>
-                      {item.percent != null && <span className="text-sm text-gray-600 dark:text-gray-400">{item.percent}%</span>}
+                {group.items.map((item) => {
+                  const levelConfig = item.level ? SKILL_LEVEL_CONFIG[item.level] : null;
+                  return (
+                    <div key={item.name}>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-medium text-gray-800 dark:text-gray-200">{item.name}</span>
+                        <div className="flex items-center gap-2">
+                          {levelConfig && (
+                            <span className="flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-400">
+                              <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${levelConfig.dotClass}`} aria-hidden />
+                              {levelConfig.label}
+                            </span>
+                          )}
+                          {item.percent != null && <span className="text-sm text-gray-600 dark:text-gray-400">{item.percent}%</span>}
+                        </div>
+                      </div>
+                      <ProgressBar percent={item.percent} />
                     </div>
-                    <ProgressBar percent={item.percent} />
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           ))}
