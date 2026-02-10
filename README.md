@@ -2,6 +2,12 @@
 
 Six7SWE is a monorepo that combines a Fastify + Supabase backend for managing job applications with a React-based personal portfolio frontend.
 
+<p align="center">
+  <img src="images/chat.png" width="75%" />
+  <img src="images/good-fit.png" width="75%" />
+  <img src="images/bad-fit.png" width="75%" />
+</p>
+
 ## Monorepo Structure
 
 - `backend/` - Fastify + TypeScript API for job application management and interview prep, backed by Supabase (PostgreSQL) and Drizzle ORM.
