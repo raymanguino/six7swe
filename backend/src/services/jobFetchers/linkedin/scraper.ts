@@ -1,9 +1,9 @@
-import { Page } from "puppeteer";
-import { Job } from '../../../types/job';
+import { Page } from 'puppeteer';
+import type { JobInput } from '../../../db/api/job';
 
 export async function jobListFromPage(
   page: Page
-): Promise<Array<Partial<Job>>> {
+): Promise<Array<Partial<JobInput>>> {
 
   const jobCardsSelector = '.base-card';
   await page.waitForSelector(jobCardsSelector, { timeout: 10000 });
@@ -12,7 +12,7 @@ export async function jobListFromPage(
     const attribute = 'data-entity-urn';
     const jobElements = document.querySelectorAll(selector);
 
-    const result: Array<Partial<Job>> = [];
+    const result: Array<Partial<JobInput>> = [];
 
     jobElements.forEach(element => {
       const id = element.getAttribute(attribute);
@@ -37,14 +37,17 @@ export async function jobListFromPage(
 }
 
 export async function jobDetailsFromPage(
-  job: Partial<Job>, 
+  job: Partial<JobInput>,
   page: Page
-): Promise<Job | null> {
+): Promise<JobInput | null> {
   await page.goto(job.link!, { waitUntil: 'networkidle2' });
 
   const titleSelector = 'top-card-layout__title';
   await page.waitForSelector(`.${titleSelector}`, { timeout: 10000 });
-  const title = await page.$eval(`.${titleSelector}`, el => el.textContent?.trim() ?? '');
+  const title = await page.$eval(
+    `.${titleSelector}`,
+    (el) => el.textContent?.trim() ?? ''
+  );
   job.title = title;
 
   const companySelector = 'topcard__org-name-link';
@@ -67,5 +70,5 @@ export async function jobDetailsFromPage(
   const description = await page.$eval(descriptionSelector, el => el.textContent?.trim() ?? '');
   job.description = description;
 
-  return job as Job;
+  return job as JobInput;
 }

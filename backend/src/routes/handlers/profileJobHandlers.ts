@@ -1,136 +1,145 @@
 import { FastifyRequest, FastifyReply, FastifyInstance } from 'fastify';
-import { PoolClient } from 'pg';
-import { Job, ProfileJob, RefreshStatus } from '../../types';
-import { withClient } from '../../util';
+import type { Job, ProfileJob, RefreshStatus } from '../../types';
+import type { JobInput } from '../../db/api/job';
 import { JobMatchEvaluation } from '../../services/agents';
 import { SixSevenService } from '../service';
 
-export async function runRefreshJobsForProfile(request: FastifyRequest, reply: FastifyReply) {
+export async function runRefreshJobsForProfile(
+  request: FastifyRequest,
+  reply: FastifyReply
+) {
   const server = request.server as FastifyInstance & SixSevenService;
-  let client: PoolClient | null = null;
 
   try {
-    let { profileId } = request.params as { profileId: number };
+    const { profileId } = request.params as { profileId: string };
+    const profileIdNum = parseInt(profileId);
 
-    client = await server.pg.connect();
+    const refreshStatus =
+      await server.refreshStatusService.newProfileRefreshStatus(profileIdNum);
 
-    const refreshStatus = await server.refreshStatusService.newProfileRefreshStatus(client, profileId);
-
-    const profile = await server.profileService.getProfileById(client, profileId);
+    const profile =
+      await server.profileService.getProfileById(profileIdNum);
     if (!profile) {
-      throw new Error('Profile id not found: ' + profileId);
+      throw new Error('Profile id not found: ' + profileIdNum);
     }
 
-    // Start the job fetch in the background
+    const keywords = profile.keywords ?? [];
+    const location = profile.location ?? '';
+
     server.jobFetchService.runJobFetch(
-      profile.keywords, 
-      profile.location, 
-      (fetchedJobs: Array<Job>) => withClient(async (pgClient) => {
-        const savedJobs: Array<Job> = await server.jobService.bulkInsertJobs(pgClient, fetchedJobs.map(job => ({
+      keywords,
+      location,
+      async (fetchedJobs: Array<JobInput & { source_id?: string }>) => {
+        const jobInputs = fetchedJobs.map((job) => ({
           ...job,
-          source_id: job.source_id.toUpperCase(),
-        }) as Job));
-
-        const savedProfileJobs: Array<ProfileJob> = await server.profileJobService.getProfileJobs(pgClient, profileId);
-
-        // Filter out jobs already associated with the profile
-        const jobsToFilter = new Set(savedProfileJobs.map(pj => pj.id));
-        const newJobs = savedJobs.filter(job => !jobsToFilter.has(job.id));
-
-        const newProfileJobs: Array<ProfileJob> = await Promise.all(newJobs.map(async job => {
-          const evaluation = await server.agentServices.evaluateJobMatch(profile, job);
-          const result: JobMatchEvaluation = evaluation.finalOutput;
-
-          return {
-            profile_id: profileId,
-            job_id: job.id,
-            job_hash: job.hash,
-            score: result.score.toUpperCase(),
-            explanation: result.explanation,
-            first_skill_match: result.first_skill_match,
-            second_skill_match: result.second_skill_match,
-            third_skill_match: result.third_skill_match,
-            summary: result.summary,
-          } as ProfileJob;
+          source_id: (job.source_id ?? 'LINKEDIN').toUpperCase(),
         }));
+        const savedJobs = await server.jobService.bulkInsertJobs(jobInputs);
 
-        await server.profileJobService.bulkInsertProfileJobs(pgClient, newProfileJobs);
-        
-        await server.refreshStatusService.updateRefreshStatus(pgClient, refreshStatus.id, { 
-          description: `Fetched and saved ${savedJobs.length} jobs for profile ${profileId}.` 
+        const savedProfileJobs =
+          await server.profileJobService.getProfileJobs(profileIdNum);
+
+        const jobsToFilter = new Set(savedProfileJobs.map((pj) => pj.jobId));
+        const newJobs = savedJobs.filter((job) => !jobsToFilter.has(job.id));
+
+        const newProfileJobs: Array<{
+          profile_id: number;
+          job_id: number;
+          job_hash: string;
+          score: string;
+          explanation: string;
+          first_skill_match: string;
+          second_skill_match: string;
+          third_skill_match: string;
+          summary: string;
+        }> = await Promise.all(
+          newJobs.map(async (job) => {
+            const evaluation =
+              await server.agentServices.evaluateJobMatch(profile, job);
+            const result: JobMatchEvaluation = evaluation.finalOutput;
+
+            return {
+              profile_id: profileIdNum,
+              job_id: job.id,
+              job_hash: job.hash,
+              score: result.score.toUpperCase(),
+              explanation: result.explanation,
+              first_skill_match: result.first_skill_match,
+              second_skill_match: result.second_skill_match,
+              third_skill_match: result.third_skill_match,
+              summary: result.summary,
+            };
+          })
+        );
+
+        await server.profileJobService.bulkInsertProfileJobs(newProfileJobs);
+
+        await server.refreshStatusService.updateRefreshStatus(refreshStatus.id, {
+          description: `Fetched and saved ${savedJobs.length} jobs for profile ${profileIdNum}.`,
         });
-      })(),
-      (description: string) => withClient(async (pgClient) => {
-        await server.refreshStatusService.updateRefreshStatus(pgClient, refreshStatus.id, { description });
-      })(),
-      (summary: string) => withClient(async (pgClient) => {
-        await server.refreshStatusService.endSuccess(pgClient, refreshStatus.id, summary);
-      })(),
-      (error: string) => withClient(async (pgClient) => {
-        await server.refreshStatusService.endFailure(pgClient, refreshStatus.id, error);
-      })(),
+      },
+      (description: string) =>
+        server.refreshStatusService.updateRefreshStatus(refreshStatus.id, {
+          description,
+        }),
+      (summary: string) =>
+        server.refreshStatusService.endSuccess(refreshStatus.id, summary),
+      (error: string) =>
+        server.refreshStatusService.endFailure(refreshStatus.id, error)
     );
 
-    server.refreshStatusService.updateRefreshStatus(client, refreshStatus.id, { 
-      status: 'IN_PROGRESS', step: 'FETCHING_JOBS', description: 'Started job fetch.' 
+    await server.refreshStatusService.updateRefreshStatus(refreshStatus.id, {
+      status: 'IN_PROGRESS',
+      step: 'FETCHING_JOBS',
+      description: 'Started job fetch.',
     });
 
     reply.code(200).send({ refreshStatusId: refreshStatus.id });
   } catch (error) {
     server.log.error(error, 'Error running job fetch:');
     reply.code(500).send({ error: 'Failed to run job fetch.' });
-  } finally {
-    if (client) {
-      client.release();
-    }
   }
 }
 
-export async function getRefreshStatus(request: FastifyRequest, reply: FastifyReply): Promise<any> {
+export async function getRefreshStatus(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<unknown> {
   const server = request.server as FastifyInstance & SixSevenService;
-  let client;
 
   try {
-    client = await server.pg.connect();
+    const { refreshId } = request.params as { profileId: string; refreshId: string };
 
-    const { profileId, refreshId } = request.params as { profileId: string; refreshId: string };
-
-    const refreshStatus: RefreshStatus | null = await server.refreshStatusService.getRefreshStatus(client, parseInt(refreshId));
+    const refreshStatus: RefreshStatus | null =
+      await server.refreshStatusService.getRefreshStatus(parseInt(refreshId));
 
     if (!refreshStatus) {
       reply.code(404);
       return { error: 'Refresh status not found' };
     }
 
-    return { refreshStatus };
+    return reply.code(200).send({ refreshStatus });
   } catch (error) {
     server.log.error(error, 'Error fetching refresh status:');
     reply.code(500).send({ error: 'Failed to fetch refresh status.' });
-  } finally {
-    if (client) {
-      client.release();
-    }
   }
 }
 
-export async function getJobsForProfile(request: FastifyRequest, reply: FastifyReply): Promise<any> {
+export async function getJobsForProfile(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<unknown> {
   const server = request.server as FastifyInstance & SixSevenService;
-  let client;
 
   try {
-    client = await server.pg.connect();
-
     const { profileId } = request.params as { profileId: string };
 
-    const jobs = await server.profileJobService.getJobsForProfile(client, parseInt(profileId));
+    const jobs: ProfileJob[] =
+      await server.profileJobService.getJobsForProfile(parseInt(profileId));
 
-    return { jobs };
+    return reply.code(200).send({ jobs });
   } catch (error) {
     server.log.error(error, 'Error fetching jobs for profile:');
     reply.code(500).send({ error: 'Failed to fetch jobs for profile.' });
-  } finally {
-    if (client) {
-      client.release();
-    }
   }
 }

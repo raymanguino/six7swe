@@ -1,29 +1,26 @@
 import { FastifyRequest, FastifyReply, FastifyInstance } from 'fastify';
 import { SixSevenService } from '../service';
 
-export async function getAllProfiles(request: FastifyRequest, reply: FastifyReply) {
+export async function getAllProfiles(
+  request: FastifyRequest,
+  reply: FastifyReply
+) {
   const server = request.server as FastifyInstance & SixSevenService;
-  let client;
 
   try {
-    client = await server.pg.connect();
-
-    const profiles = await server.profileService.getAllProfiles(client);
-
+    const profiles = await server.profileService.getAllProfiles();
     reply.code(200).send({ profiles });
   } catch (error) {
     server.log.error(error, 'Error calling getAllProfiles():');
-    reply.code(500);
-  } finally {
-    if (client) {
-      client.release();
-    }
+    reply.code(500).send({ error: 'Failed to fetch profiles' });
   }
 }
 
-export async function getProfileById(request: FastifyRequest, reply: FastifyReply) {
+export async function getProfileById(
+  request: FastifyRequest,
+  reply: FastifyReply
+) {
   const server = request.server as FastifyInstance & SixSevenService;
-  let client;
 
   try {
     const { profileId: _profileId } = request.params as { profileId: string };
@@ -34,21 +31,15 @@ export async function getProfileById(request: FastifyRequest, reply: FastifyRepl
       return;
     }
 
-    client = await server.pg.connect();
-
-    const profile = await server.profileService.getProfileById(client, profileId);
+    const profile = await server.profileService.getProfileById(profileId);
     if (!profile) {
       reply.code(404).send({ error: 'Profile not found' });
       return;
     }
-    
-    return { profile };
+
+    return reply.code(200).send({ profile });
   } catch (error) {
     server.log.error(error, 'Error fetching profile:');
-    reply.code(500);
-  } finally {
-    if (client) {
-      client.release();
-    }
+    reply.code(500).send({ error: 'Failed to fetch profile' });
   }
 }

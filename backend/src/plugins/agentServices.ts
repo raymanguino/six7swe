@@ -10,7 +10,4 @@ async function agentServicesPlugin(fastify: FastifyInstance) {
   fastify.decorate('agentServices', agentServices);
 }
 
-export default fp(agentServicesPlugin, {
-  name: 'agentServices',
-  dependencies: ['@fastify/postgres'],
-});
+export default fp(agentServicesPlugin, { name: 'agentServices' });

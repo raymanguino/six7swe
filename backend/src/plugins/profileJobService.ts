@@ -1,16 +1,15 @@
 import fp from 'fastify-plugin';
 import { FastifyInstance } from 'fastify';
-import * as profileJobService from '../database/api/profileJob';
+import * as profileJobService from '../db/api/profileJob';
 
 declare module 'fastify' {
-  interface FastifyInstance { profileJobService: any; }
+  interface FastifyInstance {
+    profileJobService: typeof profileJobService;
+  }
 }
 
 async function profileJobServicePlugin(fastify: FastifyInstance) {
   fastify.decorate('profileJobService', profileJobService);
 }
 
-export default fp(profileJobServicePlugin, {
-  name: 'profileJobService',
-  dependencies: ['@fastify/postgres'],
-});
+export default fp(profileJobServicePlugin, { name: 'profileJobService' });

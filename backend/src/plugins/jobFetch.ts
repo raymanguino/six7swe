@@ -10,7 +10,4 @@ async function jobFetchServicePlugin(fastify: FastifyInstance) {
   fastify.decorate('jobFetchService', jobFetchService);
 }
 
-export default fp(jobFetchServicePlugin, {
-  name: 'jobFetchService',
-  dependencies: ['@fastify/postgres'],
-});
+export default fp(jobFetchServicePlugin, { name: 'jobFetchService' });

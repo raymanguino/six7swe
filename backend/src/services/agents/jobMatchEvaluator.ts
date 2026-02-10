@@ -1,7 +1,6 @@
 import { Agent, run, withTrace } from '@openai/agents';
 import { z } from 'zod';
-import { Job } from '../../types/job';
-import { Profile } from '../../types/profile';
+import type { Job, Profile } from '../../types';
 
 export interface JobMatchEvaluatorService {
   evaluateJobMatch(profile: Profile, job: Job): Promise<any>;
@@ -51,18 +50,21 @@ export async function evaluateJobMatch(
 ): Promise<any> {
   const profileContext = [
     `User Profile:`,
-    `- Keywords: ${profile.keywords.join(', ')}`,
-    `- Location: ${profile.location}`,
-    `- Resume: ${profile.resume}`,
-    profile.additionalContext ? `- Additional Context: ${profile.additionalContext}` : '',
+    `- Keywords: ${(profile.keywords ?? []).join(', ')}`,
+    `- Location: ${profile.location ?? 'Not specified'}`,
+    `- Resume: ${profile.resume ?? 'Not provided'}`,
+    profile.additionalContext
+      ? `- Additional Context: ${profile.additionalContext}`
+      : '',
     `- The user is looking for job opportunities that closely align with their profile.`,
   ].join('\n');
 
+  const jobTitle = job.position ?? (job as { title?: string }).title ?? '';
   const jobContext = [
     `Job Details:`,
-    `- Title: ${job.title}`,
+    `- Title: ${jobTitle}`,
     `- Company: ${job.company}`,
-    `- Location: ${job.location}`,
+    `- Location: ${(job as { location?: string }).location ?? 'Not specified'}`,
     `- Description: ${job.description || 'No description provided'}`,
     `- Link: ${job.link}`,
   ].join('\n');

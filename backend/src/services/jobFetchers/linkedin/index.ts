@@ -1,9 +1,9 @@
 import { Browser, Page } from 'puppeteer';
-import { Job } from '../../../types';
+import type { JobInput } from '../../../db/api/job';
 import { retry } from '../../../util';
 import { JobFetcher, JobFetcherSearchResults, newBrowser, newPage } from '..';
 import { buildLinkedInJobListUrl, sanitizeJobLink } from './url';
-import * as scraper  from './scraper';
+import * as scraper from './scraper';
 
 export interface LinkedInJobFetcherOptions {
   concurrency?: number;
@@ -31,16 +31,13 @@ export class LinkedIn implements JobFetcher {
   }
 
   async fetchFullJobDetails(
-    jobs: Array<Partial<Job>>,
+    jobs: Array<Partial<JobInput>>,
     options: LinkedInJobFetcherOptions,
-    fetchedJobsCallback: (jobs: Array<Job>) => void,
+    fetchedJobsCallback: (jobs: Array<JobInput>) => void,
     statusCallback?: (status: string) => void,
-  ): Promise<Array<Job>> {
-    const { 
-      concurrency = 5, 
-      retries = 3 
-    } = options;
-    let results: Array<Job> = [];
+  ): Promise<Array<JobInput>> {
+    const { concurrency = 5, retries = 3 } = options;
+    const results: Array<JobInput> = [];
 
     let i = 0;
     while (i < jobs.length) {
@@ -48,8 +45,8 @@ export class LinkedIn implements JobFetcher {
 
       const fetched = await fetchJobs(batch, retries);
 
-      jobs.forEach(job => {
-        job.source_id = this.constructor.name;
+      batch.forEach((job) => {
+        (job as Record<string, unknown>).source_id = this.constructor.name;
       });
 
       fetchedJobsCallback(fetched);
@@ -69,7 +66,7 @@ async function fetchJobList(
   keywords: Array<string> = [],
   location: string,
   pageNum: number = 0,
-): Promise<Array<Partial<Job>>> {
+): Promise<Array<Partial<JobInput>>> {
   const linkedListUrl = buildLinkedInJobListUrl(keywords, location, pageNum);
   
   console.log('LinkedIn Job List URL:', linkedListUrl);
@@ -91,10 +88,10 @@ async function fetchJobList(
 }
 
 async function fetchJobs(
-  jobs: Array<Partial<Job>>, 
+  jobs: Array<Partial<JobInput>>,
   retries = 3
-) : Promise<Array<Job>> {
-  const results: Array<Job> = [];
+): Promise<Array<JobInput>> {
+  const results: Array<JobInput> = [];
   const browser = await newBrowser();
 
   try {

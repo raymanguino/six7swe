@@ -1,4 +1,4 @@
-import { Job } from '../../types/job';
+import type { JobInput } from '../../db/api/job';
 import { LinkedIn } from './linkedin';
 
 export * from './browser';
@@ -9,8 +9,7 @@ export interface JobFetchService {
   runJobFetch(
     keywords: Array<string>,
     location: string,
-    pageNum: number,
-    fetchedJobsCallback: (jobs: Array<Job>) => void,
+    fetchedJobsCallback: (jobs: Array<JobInput>) => void,
     statusCallback?: (status: string) => void,
     successCallback?: (summary?: string) => void,
     failureCallback?: (error?: string) => void,
@@ -19,7 +18,7 @@ export interface JobFetchService {
 
 export interface JobFetcherSearchResults {
   source: string;
-  jobs: Array<Partial<Job>>;
+  jobs: Array<Partial<JobInput>>;
 }
 
 export interface JobFetcher {
@@ -30,17 +29,17 @@ export interface JobFetcher {
   ): Promise<JobFetcherSearchResults>;
 
   fetchFullJobDetails(
-    jobs: Array<Partial<Job>>,
-    options: any,
-    fetchedJobsCallback: (jobs: Array<Job>) => void,
+    jobs: Array<Partial<JobInput>>,
+    options: { concurrency?: number; retries?: number },
+    fetchedJobsCallback: (jobs: Array<JobInput>) => void,
     statusCallback?: (status: string) => void,
-  ): Promise<Array<Job>>;
+  ): Promise<Array<JobInput>>;
 }
 
 export async function runJobFetch(
   keywords: Array<string> = [],
   location: string,
-  fetchedJobsCallback: (fetchedJobs: Array<Job>) => void,
+  fetchedJobsCallback: (fetchedJobs: Array<JobInput>) => void,
   statusCallback?: (status: string) => void,
   successCallback?: (summary?: string) => void,
   failureCallback?: (error?: string) => void,

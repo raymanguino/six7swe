@@ -1,9 +1,5 @@
-export type User = {
-  id: string;
-  name: string;
+/** User context for request handling (id and email only). id can be string for UnauthenticatedUser placeholder. */
+export type ContextUser = {
+  id: number | string;
   email: string;
-  created_at: Date;
-  updated_at: Date;
 };
-
-export type ContextUser = Omit<User, 'name' | 'created_at' | 'updated_at'>;

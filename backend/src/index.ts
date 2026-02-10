@@ -1,7 +1,6 @@
 import 'dotenv/config';
 
 import fastifyRequestContext, { requestContext } from '@fastify/request-context';
-import fastifyPostgres from '@fastify/postgres';
 import fastifyCors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import { FastifyReply, FastifyRequest } from 'fastify';
@@ -9,7 +8,6 @@ import { UnauthenticatedUser } from './constants';
 import { ContextUser } from './types';
 import * as plugins from './plugins';
 import routes from './routes';
-import { decodeBase64 } from './util';
 import path from 'path';
 
 const Fastify = require('fastify');
@@ -17,21 +15,9 @@ const fastify = Fastify({ logger: true });
 
 declare module '@fastify/request-context' {
   interface RequestContextData {
-    user: ContextUser
+    user: ContextUser;
   }
 }
-
-const {
-  DATABASE_URL,
-} = process.env;
-
-if (!DATABASE_URL) {
-  throw new Error('DATABASE_URL environment variable is required.');
-}
-
-fastify.register(fastifyPostgres, {
-  connectionString: DATABASE_URL,
-});
 
 // Register CORS
 fastify.register(fastifyCors, {
