@@ -2,6 +2,8 @@
 
 This monorepo is configured to deploy on Railway with separate services for frontend and backend.
 
+Before deploying, complete the local setup steps in `SETUP.md` (install dependencies, configure environment variables, and seed your portfolio/resume data).
+
 ## Setup Instructions
 
 ### 1. Backend Service

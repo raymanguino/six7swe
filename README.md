@@ -30,3 +30,11 @@ See `frontend/README.md` for full frontend development and deployment instructio
 A modular monolith application for managing job applications with a Fastify backend and Supabase (PostgreSQL) database.
 
 For full backend setup, database configuration, and API documentation, see `backend/README.md`.
+
+## Local Setup
+
+For full local setup instructions (environment, dependencies, seeding, and dev servers), see `SETUP.md`.
+
+## Deployment
+
+For Railway deployment instructions and production configuration, see `DEPLOYMENT.md`.

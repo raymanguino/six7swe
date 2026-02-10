@@ -59,3 +59,7 @@ The backend will be available at http://localhost:3000
 ## Updating Resume/Portfolio Data
 
 Update the `portfolio_profile` table in the database, or edit `backend/scripts/seed-portfolio.ts` (copy from `seed-portfolio.example.ts` if needed) and re-run `pnpm run db:seed-portfolio`. The AI chat assistant uses `full_resume_text` to answer questions.
+
+## Deployment
+
+For deploying this project to Railway, including service configuration and production environment variables, see `DEPLOYMENT.md`.
