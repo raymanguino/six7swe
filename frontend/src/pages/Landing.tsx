@@ -79,7 +79,7 @@ const EXPERIENCE: Array<{
         summary: 'Architected and delivered API layer services to provide dynamically generated GraphQL endpoints for improved user experiences.',
         accordion: {
           situation: 'Customers needed dynamically generated, customer-specific GraphQL APIs to scale without dedicated engineering support; existing APIs and data infrastructure were inconsistent and did not support that model.',
-          approach: 'Defined technical direction for the GraphQL schema registry. Evaluated sync vs async design based on data and delivery constraints; coordinated delivery across backend and QA teams.',
+          approach: 'Defined technical direction for the GraphQL schema registry. Evaluated sync vs. async design based on data and delivery constraints; coordinated delivery across backend and QA teams.',
           technicalWork: 'Architected and led delivery of the distributed GraphQL schema registry for customer-specific dynamic APIs. Implemented high-throughput schema ingestion pipeline and API generation. Shipped synchronous design first with monitoring to scale later; used data to show the simpler design was sufficient, with follow-up tickets for future scaling.',
           lessonsLearned: 'Not every system needs Kafka from day one. Implementing monitoring and using data to validate the simpler sync design avoided over-engineering and accelerated delivery while keeping a path to scale.',
         },
@@ -922,7 +922,7 @@ export default function Landing({ onSectionChange }: LandingProps) {
                 <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                 </svg>
-                Download Ray&apos;s resume
+                Download
               </a>
             </div>
           </div>
