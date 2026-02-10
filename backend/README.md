@@ -72,7 +72,9 @@ This project uses **Supabase** (PostgreSQL) with Drizzle ORM. You can use either
 
 1. Get connection string from Supabase Dashboard → Settings → Database
 
-2. Update your `.env` file:
+2. **Railway deployment:** Railway does not support outbound IPv6. Use Supabase’s **IPv4** connection string for `DATABASE_URL` so the backend can reach the database. See [Railway Outbound Networking](https://docs.railway.com/networking/outbound-networking).
+
+3. Update your `.env` file:
    ```env
    NODE_ENV=production
    APP_PORT=3000
@@ -81,7 +83,7 @@ This project uses **Supabase** (PostgreSQL) with Drizzle ORM. You can use either
    OPENAI_API_KEY=your_openai_api_key_here
    ```
 
-3. Apply migrations:
+4. Apply migrations:
    ```bash
    cd backend
    pnpm run db:generate

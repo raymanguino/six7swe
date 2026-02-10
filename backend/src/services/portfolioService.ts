@@ -64,8 +64,11 @@ async function fetchFromDb(): Promise<PortfolioData> {
         githubUrl: profileRow.githubUrl,
         summary: profileRow.summary,
         skills: (profileRow.skills as string[]) ?? [],
-        experience: (profileRow.experience as Array<{ title: string; company: string; period: string; description: string }>) ?? [],
-        projects: (profileRow.projects as Array<{ name: string; description: string; technologies: string[] }>) ?? [],
+        experience:
+          (profileRow.experience as Array<{ title: string; company: string; period: string; description: string }>) ??
+          [],
+        projects:
+          (profileRow.projects as Array<{ name: string; description: string; technologies: string[] }>) ?? [],
         fullResumeText: profileRow.fullResumeText,
         resumeFilename: profileRow.resumeFilename,
       }
