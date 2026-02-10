@@ -139,6 +139,6 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
 # Private portfolio data (stored in Supabase)
-backend/content/
+backend/content/*
 backend/public/*.pdf
 backend/scripts/seed-portfolio.ts
