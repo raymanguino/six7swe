@@ -277,4 +277,3 @@ curl http://localhost:3000/users/1/profiles
 ## License
 
 This project is licensed under the ISC License.
-
