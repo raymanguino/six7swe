@@ -1,0 +1,55 @@
+---
+description: Keep README and docs in sync with behavior changes
+alwaysApply: true
+---
+
+# Documentation Update Expectations
+
+This rule configures the AI to proactively keep documentation in sync with code and behavior changes, and to update docs automatically when it is safe to do so.
+
+## When to Consider Documentation Updates
+
+- When changing:
+  - Public or semi-public APIs (HTTP endpoints, RPC, SDKs, exported functions, CLI commands)
+  - Database schema or data shape used outside a single module
+  - Configuration options, feature flags, or environment variables
+  - User-visible behavior, workflows, or error messages
+  - Seeding, migration, or example data that is referenced in docs
+- The AI should assume relevant docs may live in:
+  - `README.md` or `README*.md` files
+  - `docs/**` (including architecture docs like `docs/architecture.md`)
+  - Any `*.md` or `*.mdx` files close to the changed code (same package, feature, or directory)
+
+## AI Behavior for Documentation
+
+When assisting with changes that meet the criteria above, the AI should:
+
+1. **Search for relevant docs**
+   - Look for `README*.md` at the repo root and in affected packages/directories.
+   - Look under `docs/**` for files likely related to the change (e.g. architecture, API, or feature docs).
+
+2. **Decide if a doc change is needed**
+   - If the change alters how something is used, configured, or behaves from a consumer’s perspective, docs **must** be updated or explicitly annotated as still correct.
+   - If behavior is purely internal (refactors, performance tweaks, non-visible bug fixes) and does not affect usage or guarantees, a doc change is usually **not** required.
+
+3. **Prefer automatic updates over reminders**
+   - When the intent is clear and the impact on docs is straightforward, the AI should generate concrete doc changes (patches) using the editor tools instead of only reminding the user.
+   - Keep wording simple and factual; avoid marketing tone and do not invent features that do not exist in the code.
+
+4. **Be explicit when skipping a doc change**
+   - If the AI determines that no doc changes are needed, it should briefly explain why (e.g. “internal refactor, no API/behavior change”) in its response.
+
+## Style and Safety Guidelines
+
+- **Accuracy first**
+  - Do not describe behavior that is not present in the code.
+  - If details are ambiguous or inferred, call them out clearly instead of presenting them as facts.
+
+- **Scope**
+  - Keep doc changes focused on the behavior actually modified in the current change.
+  - Avoid large rewrites unless the user asks for them or the existing docs are clearly misleading or wrong.
+
+- **Clarity**
+  - Use short paragraphs and bullet lists where appropriate.
+  - Prefer concrete examples and input/output shapes when describing APIs or data models.
+
