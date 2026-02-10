@@ -108,7 +108,21 @@ pnpm run db:generate   # Generate migration files from schema
 pnpm run db:migrate    # Apply migrations to database
 pnpm run db:push       # Push schema directly (dev only)
 pnpm run db:studio     # Open Drizzle Studio GUI
+pnpm run db:seed-portfolio  # Seed portfolio (requires seed-portfolio.ts; copy from seed-portfolio.example.ts)
 ```
+
+### Portfolio Data (Supabase)
+
+Portfolio profile and content are stored in Supabase for public-repo safety:
+
+1. Apply migrations: `supabase db push` (or `pnpm run db:push`)
+2. Seed portfolio data:
+   - Copy `scripts/seed-portfolio.example.ts` to `scripts/seed-portfolio.ts`
+   - Edit `seed-portfolio.ts` with your profile data
+   - Run `pnpm run db:seed-portfolio`
+   - Seeds `portfolio_profile` (id=1) and `content_sections`
+   - If `backend/content/` exists, reads .md/.txt files into content_sections
+3. **Resume PDF**: Place `ray.manguino.pdf` in `backend/public/` for local fallback, or upload to Supabase Storage bucket `portfolio-files` and set `SUPABASE_URL` plus `SUPABASE_SECRET_KEY` (or `SUPABASE_SERVICE_ROLE_KEY`) in `.env`. Use the [secret key](https://supabase.com/docs/guides/api/api-keys) (`sb_secret_...`) for backend access.
 
 ## Development
 
@@ -154,6 +168,10 @@ Tests cover:
 
 ### Health Check
 - `GET /` - Health check
+
+### Portfolio (public)
+- `GET /portfolio` - Portfolio contact/profile metadata (email, phone, social links, resume filename)
+- `GET /resume` - Resume PDF download
 
 ### Users
 - `GET /users` - List all users

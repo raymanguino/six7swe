@@ -2,7 +2,7 @@ import { FastifyRequest, FastifyReply } from 'fastify';
 import { Agent, run } from '@openai/agents';
 import { z } from 'zod';
 import { INPUT_LIMITS } from '../../constants';
-import { resumeData } from '../../data/resume';
+import { getPortfolioData } from '../../services/portfolioService';
 
 const jobMatchAgent = new Agent({
   name: 'Job Match Analyzer',
@@ -40,17 +40,20 @@ export async function jobMatchHandler(request: FastifyRequest, reply: FastifyRep
       return reply.code(400).send({ error: `Job description must be at most ${INPUT_LIMITS.jobDescription} characters` });
     }
 
-    const context = [
-      `Candidate Profile:`,
-      `Name: ${resumeData.name}`,
-      `Title: ${resumeData.title}`,
-      `Summary: ${resumeData.summary}`,
-      `Skills: ${resumeData.skills.join(', ')}`,
-      `Full Resume: ${resumeData.fullResumeText}`,
-      '',
-      `Job Description:`,
-      trimmed,
-    ].join('\n');
+    const { profile } = await getPortfolioData();
+    const context = profile
+      ? [
+          `Candidate Profile:`,
+          `Name: ${profile.name}`,
+          `Title: ${profile.title}`,
+          `Summary: ${profile.summary}`,
+          `Skills: ${profile.skills.join(', ')}`,
+          `Full Resume: ${profile.fullResumeText}`,
+          '',
+          `Job Description:`,
+          trimmed,
+        ].join('\n')
+      : [`Job Description:`, trimmed].join('\n');
 
     const result = await run(jobMatchAgent, context);
     

@@ -1,5 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { Resend } from 'resend';
+import { getPortfolioData } from '../../services/portfolioService';
 
 const INPUT_LIMITS = {
   name: 100,
@@ -7,8 +8,6 @@ const INPUT_LIMITS = {
   company: 200,
   message: 5000,
 } as const;
-
-const RECIPIENT_EMAIL = 'ray.manguino@gmail.com';
 
 // Simple email regex for basic validation
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -44,6 +43,13 @@ export async function contactHandler(request: FastifyRequest, reply: FastifyRepl
       return reply.code(400).send({ error: 'Invalid email format' });
     }
 
+    const { profile } = await getPortfolioData();
+    const recipientEmail = profile?.email;
+    if (!recipientEmail) {
+      request.log.error('Portfolio profile not found - no recipient email configured');
+      return reply.code(500).send({ error: 'Failed to process contact form' });
+    }
+
     const apiKey = process.env.RESEND_API_KEY;
     if (!apiKey) {
       request.log.error('RESEND_API_KEY is not configured');
@@ -64,7 +70,7 @@ export async function contactHandler(request: FastifyRequest, reply: FastifyRepl
 
     const { error } = await resend.emails.send({
       from: 'onboarding@resend.dev',
-      to: RECIPIENT_EMAIL,
+      to: recipientEmail,
       replyTo: email,
       subject,
       text: bodyText,

@@ -2,7 +2,6 @@ import { FastifyRequest, FastifyReply } from 'fastify';
 import { Agent, run } from '@openai/agents';
 import { z } from 'zod';
 import { INPUT_LIMITS } from '../../constants';
-import { resumeData } from '../../data/resume';
 import { getChatContext } from '../../data/chatContext';
 
 const fitCheckAgent = new Agent({
@@ -63,7 +62,7 @@ export async function fitcheckHandler(request: FastifyRequest, reply: FastifyRep
       return reply.code(400).send({ error: `Job description must be at most ${INPUT_LIMITS.jobDescription} characters` });
     }
 
-    const rayContext = getChatContext();
+    const rayContext = await getChatContext();
 
     const context = [
       rayContext,

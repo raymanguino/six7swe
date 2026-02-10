@@ -30,10 +30,10 @@ This monorepo is configured to deploy on Railway with separate services for fron
 1. Copy your resume PDF to `backend/public/resume.pdf`
 2. The resume will be served at `/public/resume.pdf` from the backend
 
-### 4. Update Resume Data
+### 4. Update Resume / Portfolio Data
 
-1. Edit `backend/src/data/resume.ts` with your actual resume information
-2. Update contact information in `frontend/src/pages/Contacts.tsx`
+1. Copy `backend/scripts/seed-portfolio.example.ts` to `backend/scripts/seed-portfolio.ts`, fill in your data, then run `pnpm run db:seed-portfolio` in backend—or update `portfolio_profile` directly in the database
+2. Contact info is served from the portfolio API; no frontend edits needed
 
 ## Monorepo Structure
 

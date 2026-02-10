@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { INPUT_LIMITS } from '../constants';
+import { usePortfolio } from '../hooks/usePortfolio';
 
 export default function Contacts() {
+  const { portfolio } = usePortfolio();
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -62,44 +64,51 @@ export default function Contacts() {
         <div className="card">
           <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">Contact Information</h2>
           <div className="space-y-4">
-            <div>
-              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">Email</h3>
-              <a
-                href="mailto:ray@example.com"
-                className="text-primary-600 dark:text-primary-400 hover:underline"
-              >
-                ray@example.com
-              </a>
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">LinkedIn</h3>
-              <a
-                href="https://linkedin.com/in/raymanguino"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary-600 dark:text-primary-400 hover:underline"
-              >
-                linkedin.com/in/raymanguino
-              </a>
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">GitHub</h3>
-              <a
-                href="https://github.com/raymanguino"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary-600 dark:text-primary-400 hover:underline"
-              >
-                github.com/raymanguino
-              </a>
-            </div>
+            {portfolio?.email && (
+              <div>
+                <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">Email</h3>
+                <a
+                  href={`mailto:${portfolio.email}`}
+                  className="text-primary-600 dark:text-primary-400 hover:underline"
+                >
+                  {portfolio.email}
+                </a>
+              </div>
+            )}
+            {portfolio?.linkedinUrl && (
+              <div>
+                <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">LinkedIn</h3>
+                <a
+                  href={portfolio.linkedinUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary-600 dark:text-primary-400 hover:underline"
+                >
+                  {portfolio.linkedinUrl.replace(/^https?:\/\//, '')}
+                </a>
+              </div>
+            )}
+            {portfolio?.githubUrl && (
+              <div>
+                <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">GitHub</h3>
+                <a
+                  href={portfolio.githubUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary-600 dark:text-primary-400 hover:underline"
+                >
+                  {portfolio.githubUrl.replace(/^https?:\/\//, '')}
+                </a>
+              </div>
+            )}
           </div>
 
+          {portfolio && (
           <div className="mt-8 pt-6 border-t border-gray-200 dark:border-gray-600">
             <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Resume</h3>
             <a
-              href={`${import.meta.env.VITE_API_URL || '/api'}/public/resume.pdf`}
-              download
+              href={`${import.meta.env.VITE_API_URL || '/api'}/resume`}
+              download={portfolio.resumeFilename || undefined}
               className="inline-flex items-center btn-primary"
             >
               <svg
@@ -118,6 +127,7 @@ export default function Contacts() {
               Download Resume (PDF)
             </a>
           </div>
+          )}
         </div>
 
         {/* Contact Form */}

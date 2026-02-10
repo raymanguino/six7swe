@@ -57,13 +57,13 @@ A modern, professional personal portfolio website built with React, TypeScript, 
 ## Next Steps
 
 1. **Update Resume Data**: 
-   - Edit `backend/src/data/resume.ts` with your actual resume information
-   - Copy your resume PDF to `backend/public/resume.pdf`
-   - Update contact info in `frontend/src/pages/Contacts.tsx`
+   - Copy `backend/scripts/seed-portfolio.example.ts` to `seed-portfolio.ts`, fill in your data, run `pnpm run db:seed-portfolio` (see backend README)
+   - Copy your resume PDF to `backend/public/` or upload to Supabase Storage
+   - Contact info is fetched from the `/portfolio` API
 
 2. **Extract Resume from PDF**:
    - Use a PDF parsing library or manually extract text
-   - Update the `fullResumeText` field in `backend/src/data/resume.ts`
+   - Update the `full_resume_text` column in `portfolio_profile` table
    - This text is used by the AI chat assistant
 
 3. **Deploy to Railway**:

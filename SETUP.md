@@ -34,11 +34,12 @@ The frontend will automatically proxy API requests to the backend in development
 For production, set:
 - `VITE_API_URL` - Backend API URL
 
-### 4. Resume PDF
+### 4. Portfolio / Resume
 
-1. Copy your resume PDF to `backend/public/resume.pdf`
-2. Update resume data in `backend/src/data/resume.ts` with your actual information
-3. Update contact information in `frontend/src/pages/Contacts.tsx`
+1. Copy `backend/scripts/seed-portfolio.example.ts` to `backend/scripts/seed-portfolio.ts`
+2. Edit `seed-portfolio.ts` with your profile data (name, email, resume text, etc.)
+3. Run `pnpm run db:seed-portfolio` in backend
+4. Copy your resume PDF to `backend/public/` (e.g. `resume.pdf`) or upload to Supabase Storage
 
 ### 5. Run Development Servers
 
@@ -55,13 +56,6 @@ pnpm dev:frontend
 The frontend will be available at http://localhost:5173
 The backend will be available at http://localhost:3000
 
-## Updating Resume Data
+## Updating Resume/Portfolio Data
 
-Edit `backend/src/data/resume.ts` to update:
-- Personal information
-- Skills
-- Experience
-- Projects
-- Full resume text (used by AI chat assistant)
-
-The AI chat assistant uses the `fullResumeText` field to answer questions, so make sure it contains comprehensive information about your professional background.
+Update the `portfolio_profile` table in the database, or edit `backend/scripts/seed-portfolio.ts` (copy from `seed-portfolio.example.ts` if needed) and re-run `pnpm run db:seed-portfolio`. The AI chat assistant uses `full_resume_text` to answer questions.

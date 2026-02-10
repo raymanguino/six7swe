@@ -7,6 +7,8 @@ import * as chatHandlers from './handlers/chatHandlers';
 import * as jobMatchHandlers from './handlers/jobMatchHandlers';
 import * as fitcheckHandlers from './handlers/fitcheckHandlers';
 import * as contactHandlers from './handlers/contactHandlers';
+import * as portfolioHandlers from './handlers/portfolioHandlers';
+import * as resumeHandlers from './handlers/resumeHandlers';
 
 export * from './currentUser'
 
@@ -20,6 +22,8 @@ interface RefreshParams extends ProfileParams {
 
 export default async function registerRoutes(service: FastifyInstance) {
   // Public portfolio routes
+  service.get('/portfolio', portfolioHandlers.getPortfolioHandler);
+  service.get('/resume', resumeHandlers.resumeHandler);
   service.post('/chat', chatHandlers.chatHandler);
   service.post('/job-match', jobMatchHandlers.jobMatchHandler);
   service.post('/fitcheck', fitcheckHandlers.fitcheckHandler);
