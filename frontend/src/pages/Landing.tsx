@@ -215,8 +215,9 @@ const SKILLS_GROUPS = [
   {
     name: 'AI',
     items: [
-      { name: 'LangChain', percent: 75, level: 'intermediate' as SkillLevel },
-      { name: 'MCP Services', percent: 70, level: 'intermediate' as SkillLevel },
+      { name: 'MCP Integrations', percent: 75, level: 'intermediate' as SkillLevel },
+      { name: 'LangChain', percent: 70, level: 'intermediate' as SkillLevel },
+      { name: 'OpenAI', percent: 70, level: 'intermediate' as SkillLevel },
     ],
   },
   {
