@@ -225,7 +225,7 @@ const SKILLS_GROUPS = [
       { name: 'AWS', percent: 92, level: 'expert' as SkillLevel },
       { name: 'Docker', percent: 88, level: 'expert' as SkillLevel },
       { name: 'CI/CD', percent: 85, level: 'advanced' as SkillLevel },
-      { name: 'OAuth Integration', percent: 78, level: 'advanced' as SkillLevel },
+      { name: 'Terraform', percent: 75, level: 'advanced' as SkillLevel },
     ],
   },
   {
