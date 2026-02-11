@@ -213,11 +213,12 @@ const SKILLS_GROUPS = [
     ],
   },
   {
-    name: 'AI',
+    name: 'Frontend',
     items: [
-      { name: 'MCP Integrations', percent: 75, level: 'intermediate' as SkillLevel },
-      { name: 'LangChain', percent: 70, level: 'intermediate' as SkillLevel },
-      { name: 'OpenAI', percent: 70, level: 'intermediate' as SkillLevel },
+      { name: 'JavaScript/ES6', percent: 95, level: 'expert' as SkillLevel },
+      { name: 'TypeScript', percent: 90, level: 'expert' as SkillLevel },
+      { name: 'React', percent: 80, level: 'advanced' as SkillLevel },
+      { name: 'CSS/SCSS', percent: 70, level: 'intermediate' as SkillLevel },
     ],
   },
   {
@@ -230,12 +231,11 @@ const SKILLS_GROUPS = [
     ],
   },
   {
-    name: 'Frontend',
+    name: 'AI',
     items: [
-      { name: 'JavaScript/ES6', percent: 95, level: 'expert' as SkillLevel },
-      { name: 'TypeScript', percent: 90, level: 'expert' as SkillLevel },
-      { name: 'React', percent: 80, level: 'advanced' as SkillLevel },
-      { name: 'CSS/SCSS', percent: 70, level: 'intermediate' as SkillLevel },
+      { name: 'MCP Integrations', percent: 75, level: 'intermediate' as SkillLevel },
+      { name: 'LangChain', percent: 70, level: 'intermediate' as SkillLevel },
+      { name: 'OpenAI', percent: 70, level: 'intermediate' as SkillLevel },
     ],
   },
 ];
