@@ -11,7 +11,7 @@ const ABOUT_STRENGTH_COLUMNS = [
     icon: 'check',
     iconClass: 'text-green-500',
     items: [
-      'Platform/Infrastructure',
+      'Platform & Infrastructure',
       'API Design & Versioning',
       'Technical Strategy',
       'Developer Experience',
@@ -29,7 +29,7 @@ const ABOUT_STRENGTH_COLUMNS = [
     title: 'Gaps',
     icon: 'x',
     iconClass: 'text-orange-500',
-    items: ['RAG Systems', 'Mobile Development', 'Growth/Experimentation'],
+    items: ['RAG Systems', 'Growth & Experimentation', 'Mobile Development'],
   },
 ];
 
@@ -591,7 +591,7 @@ export default function Landing({ onSectionChange }: LandingProps) {
           Architecting scalable and intelligent systems with security-first approach
         </p>
         <p className="text-gray-700 dark:text-gray-300 leading-relaxed mb-10 max-w-3xl mx-auto">
-          I am a backend-focused full-stack engineer specializing in APIs and integrations for web applications, with extensive hands-on experience in building public interfaces and designing scalable systems in various domains including IT/security, e-commerce, and finance. I have a growing interest in AI and am working towards building expertise around MCP architectures and intelligent agents. My background spans both backend and frontend development, with a consistent focus on user-friendly, robust interfaces and data security as a primary concern.
+          I am a backend-focused full-stack engineer specializing in APIs and integrations for web applications, with extensive hands-on experience in building public interfaces and designing scalable systems in various domains including IT/security, e-commerce, and finance. I have a growing interest in AI and am working towards building expertise around MCP architectures and intelligent agents. My background spans both backend and frontend development, with a consistent focus on user-friendly, robust interfaces and security best practices.
         </p>
 
         <div className="grid sm:grid-cols-3 gap-6 mb-12">
