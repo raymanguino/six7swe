@@ -29,8 +29,23 @@ Before deploying, complete the local setup steps in `SETUP.md` (install dependen
 
 ### 3. Resume PDF
 
-1. Copy your resume PDF to `backend/public/resume.pdf`
-2. The resume will be served at `/public/resume.pdf` from the backend
+The frontend downloads the resume from the backend via `GET /resume`.
+
+You have two supported options for providing the resume PDF in production:
+
+1. **Supabase Storage (recommended)**:
+   - Upload your resume to your Supabase Storage bucket (default: `portfolio-files`)
+   - Name it either:
+     - the same as `portfolio_profile.resume_filename` (e.g. `ray.manguino.pdf`), **or**
+     - `resume.pdf` (the backend will fall back to this if the DB filename is different)
+   - Set these env vars on the Railway **backend** service:
+     - `SUPABASE_URL`
+     - `SUPABASE_SECRET_KEY` (preferred) or `SUPABASE_SERVICE_ROLE_KEY`
+     - `SUPABASE_STORAGE_BUCKET` (optional; defaults to `portfolio-files`)
+
+2. **Local file in `backend/public/`**:
+   - Place your resume at `backend/public/resume.pdf` (or match `portfolio_profile.resume_filename`)
+   - Ensure it is present in the deployed backend filesystem (note: this repo’s `.gitignore` ignores `backend/public/*.pdf` by default, so it will not deploy unless you change that policy).
 
 ### 4. Update Resume / Portfolio Data
 
