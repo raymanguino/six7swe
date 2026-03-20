@@ -26,10 +26,10 @@ const ABOUT_STRENGTH_COLUMNS = [
     items: ['AI & MCP Architectures', 'Security & Compliance', 'Team Building'],
   },
   {
-    title: 'Gaps',
-    icon: 'x',
-    iconClass: 'text-orange-500',
-    items: ['RAG Systems', 'Growth & Experimentation', 'Mobile Development'],
+    title: 'Currently Building',
+    icon: 'tools',
+    iconClass: 'text-primary-600 dark:text-primary-400',
+    items: ['RAG Systems', 'Eval Pipelines', 'Edge AI Deployment'],
   },
 ];
 
@@ -137,9 +137,9 @@ type ProjectTile = {
 const PROJECT_TILES: ProjectTile[] = [
   {
     id: '67-swe-project',
-    title: '67 SWE (Personal Project)',
+    title: 'AI Job Search Platform',
     briefDescription:
-      'Job application management platform with AI-powered job matching, automated job fetching from popular boards, and an AI agent that ranks matches by personal preferences. Custom tools, database ops, and email integration; evolving into an MCP service.',
+      'Agentic job search platform built on MCP — custom tools for job fetching, database operations, and email automation, with an LLM that ranks matches against personal preferences.',
     techLabels: ['React', 'TypeScript', 'Node.js', 'PostgreSQL', 'OpenAI'],
     overview: 'Custom web scraper to fetch jobs from popular boards and an AI agent to rank them by personal preferences. MCP services for DB access to store and query jobs, and email integration to send job matches to candidates.',
     keyChallenges: [
@@ -151,46 +151,20 @@ const PROJECT_TILES: ProjectTile[] = [
     liveSiteDisabled: true,
   },
   {
-    id: 'greenfield-apis',
-    title: 'GraphQL APIs (Tanium)',
+    id: 'openclaw-gateway-research-plugin',
+    title: 'Self-Hosted AI Agent Gateway + Research Plugin',
     briefDescription:
-      "External GraphQL API gateway that replaced fragmented REST endpoints for Tanium's endpoint management platform. Enables programmatic access to IT/security operations data via streamlined queries, reducing troubleshooting time from hours to minutes for 1,500+ customers.",
-    techLabels: ['TypeScript', 'Node.js', 'Golang', 'GraphQL', 'Security', 'gRPC'],
-    overview: 'Designed and delivered new external GraphQL APIs at Tanium that replaced fragmented REST endpoints, adopted by 1,500 customers. Reduced support call volumes by 50% and improved deployment stability by giving customers a clear migration path and up-to-date documentation.',
+      'OpenClaw plugin running on a self-hosted Raspberry Pi gateway. Send a job URL from Telegram or WhatsApp — the agent browses the company\'s real web presence via Chrome extension (authenticated session, no headless limitations), synthesizes a structured research briefing, and stores it to Supabase. Custom-built tool interface designed for reliable LLM invocation.',
+    techLabels: ['OpenClaw', 'MCP', 'Node.js', 'TypeScript', 'Supabase', 'LangChain'],
+    overview:
+      'A custom plugin for a self-hosted OpenClaw AI agent gateway running on a Raspberry Pi. OpenClaw bridges messaging apps (Telegram, WhatsApp, Discord) to an AI agent runtime — the plugin extends it with a company research skill. Send a job URL from any connected channel and the agent autonomously researches the company: navigating its careers page, LinkedIn presence, and recent news using a real authenticated Chrome session via the OpenClaw browser tool. It synthesizes findings into a structured briefing — company stage, tech stack signals, team size, open roles, and red flags — and persists the result to Supabase for job pipeline tracking. Designed as a first-class OpenClaw tool with a clean interface contract so the agent reliably knows when and how to invoke it.',
     keyChallenges: [
-      'Creating a migration path from legacy REST to modern GraphQL without breaking existing workflows.',
-      'Driving cross-functional alignment on API strategy, documentation standards, and schema governance.',
-      'Balancing backward compatibility with clean schema design and filtering capabilities.',
+      'Designing a clean tool interface contract so the agent reliably knows when and how to invoke the plugin.',
+      'Running research via a real authenticated browser session to avoid headless limitations and access gated content.',
+      'Synthesizing messy web signals into consistent structured output and persisting it to Supabase for tracking.',
     ],
-    liveSiteUrl: 'https://help.tanium.com/bundle/ug_gateway_cloud/page/gateway/overview.html',
-  },
-  {
-    id: 'schema-registry',
-    title: 'GraphQL Schema Registry (Nacelle)',
-    briefDescription:
-      "Nacelle's GraphQL APIs enable streamlined and expressive data queries and resource mutations while optimizing network efficiency. The schema registry delivers customer-specific dynamic APIs—Storefront GraphQL for normalized e-commerce data and Admin GraphQL for management—so merchants scale without dedicated engineering support.",
-    techLabels: ['GraphQL', 'Node.js', 'TypeScript', 'CLI', 'Data pipelines'],
-    overview: 'Architected and led delivery of a distributed GraphQL schema registry for customer-specific dynamic APIs at Nacelle. High-throughput schema ingestion pipeline and developer tooling enabled customers to scale without dedicated engineering support.',
-    keyChallenges: [
-      'Choosing sync vs async design: used data and monitoring to ship synchronous first with a path to scale later.',
-      'Building a high-throughput schema ingestion pipeline that stayed reliable under load.',
-      'Coordinating delivery across backend and QA teams while defining technical direction for the registry.',
-    ],
-    liveSiteUrl: 'https://docs.nacelle.com/reference/api-reference',
-  },
-  {
-    id: 'canada-platform',
-    title: 'Canadian Credit Card Platform (Capital One)',
-    briefDescription:
-      'Internal tooling to onboard Canada to a new cloud-based credit card acquisition platform by inner-sourcing into a U.S.-owned system. Secured ~$20M/year in revenue, met regulatory deadlines, and modernized solicitation workflows with Golang backend and React component library.',
-    techLabels: ['Golang', 'React', 'CI/CD', 'Observability', 'AWS'],
-    overview: 'Led the engineering effort to onboard Canada to a new cloud-based credit card management platform by inner-sourcing into a U.S.-owned system. Met strict regulatory deadlines and secured approximately $20M/year in revenue. Architected the pathway, built Golang backend for Canadian business intent, and led the React front-end component library.',
-    keyChallenges: [
-      'Gaining alignment and inner-sourcing approval with U.S. teams who were fully allocated to a major migration.',
-      'Mapping Canadian business intent to customer profiles and existing U.S. platform with Go backend and React UI.',
-      'Delivering on a fixed regulatory deadline with cross-country coordination and a small Canadian-side team.',
-    ],
-    liveSiteUrl: null,
+    liveSiteUrl: '#',
+    liveSiteDisabled: true,
   },
 ];
 
@@ -198,8 +172,8 @@ type SkillLevel = 'expert' | 'advanced' | 'intermediate';
 
 const SKILL_LEVEL_CONFIG: Record<SkillLevel, { label: string; dotClass: string }> = {
   expert: { label: 'Expert', dotClass: 'bg-green-500' },
-  advanced: { label: 'Advanced', dotClass: 'bg-yellow-500' },
-  intermediate: { label: 'Intermediate', dotClass: 'bg-orange-500' },
+  advanced: { label: 'Proficient', dotClass: 'bg-yellow-500' },
+  intermediate: { label: 'Familiar', dotClass: 'bg-orange-500' },
 };
 
 const SKILLS_GROUPS = [
@@ -233,9 +207,10 @@ const SKILLS_GROUPS = [
   {
     name: 'AI',
     items: [
-      { name: 'MCP Integrations', percent: 75, level: 'intermediate' as SkillLevel },
-      { name: 'LangChain', percent: 70, level: 'intermediate' as SkillLevel },
-      { name: 'OpenAI', percent: 70, level: 'intermediate' as SkillLevel },
+      { name: 'Prompt Craft', percent: 80, level: 'advanced' as SkillLevel },
+      { name: 'Context/Intent/Spec Engineering', percent: 70, level: 'intermediate' as SkillLevel },
+      { name: 'OpenAI Agents SDK', percent: 70, level: 'intermediate' as SkillLevel },
+      { name: 'OpenClaw', percent: 70, level: 'intermediate' as SkillLevel },
     ],
   },
 ];
@@ -356,16 +331,6 @@ function ProjectTileCard({
       {project.briefDescription && (
         <p className="text-gray-600 dark:text-gray-400 text-sm mb-4">{project.briefDescription}</p>
       )}
-      <div className="flex flex-wrap gap-2 mb-4">
-        {project.techLabels.map((label) => (
-          <span
-            key={label}
-            className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 dark:bg-primary-900/50 text-primary-800 dark:text-primary-200"
-          >
-            {label}
-          </span>
-        ))}
-      </div>
       <div className="flex flex-col gap-2">
         <button
           type="button"
@@ -401,38 +366,6 @@ function ProjectTileCard({
                   ))}
                 </ul>
               </div>
-              <div>
-                <span className="font-semibold text-gray-800 block mb-0.5">Technologies Used</span>
-                <div className="flex flex-wrap gap-2 mt-1">
-                  {project.techLabels.map((label) => (
-                    <span
-                      key={label}
-                      className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-600 text-gray-800 dark:text-gray-200"
-                    >
-                      {label}
-                    </span>
-                  ))}
-                </div>
-              </div>
-              {project.liveSiteDisabled ? (
-                <button
-                  type="button"
-                  disabled
-                  aria-disabled
-                  className="inline-block mt-3 btn-primary text-center opacity-50 cursor-not-allowed"
-                >
-                  Visit Live Site (Coming soon)
-                </button>
-              ) : project.liveSiteUrl ? (
-                <a
-                  href={project.liveSiteUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-block mt-3 btn-primary text-center"
-                >
-                  Visit Live Site
-                </a>
-              ) : null}
             </div>
           )}
         </div>
@@ -570,11 +503,11 @@ export default function Landing({ onSectionChange }: LandingProps) {
         <div className="text-center mb-12">
           <p className="text-xl md:text-2xl text-gray-700 dark:text-gray-300 mb-4">My name is Ray Manguino ...</p>
           <p className="text-lg text-primary-600 dark:text-primary-400 font-semibold mb-6">
-            API Specialist & Backend-focused Full-Stack Web Developer
+            AI API Engineer · Building production LLM systems, agentic workflows, and the APIs that make them usable
           </p>
           <div className="max-w-3xl mx-auto">
             <p className="text-lg text-gray-700 dark:text-gray-300 leading-relaxed">
-              Building APIs and distributed systems for intelligent AI agents, MCP services, and vanilla SaaS systems. From highly tuned workflow optimized APIs and scalable ingestion pipelines to chat bots and custom MCP services - crafting the future of AI-powered web experiences.
+              I design and build the API and infrastructure layer for AI-powered systems — agentic workflows, RAG pipelines, multi-channel agent gateways, and the production tooling that makes LLM features reliable at scale. Ten years of backend and distributed systems experience, now applied to the hardest problems in production AI.
             </p>
           </div>
         </div>
@@ -590,9 +523,17 @@ export default function Landing({ onSectionChange }: LandingProps) {
         <p className="text-center text-gray-600 dark:text-gray-400 mb-2 max-w-2xl mx-auto">
           Architecting scalable and intelligent systems with security-first approach
         </p>
-        <p className="text-gray-700 dark:text-gray-300 leading-relaxed mb-10 max-w-3xl mx-auto">
-          I am a backend-focused full-stack engineer specializing in APIs and integrations for web applications, with extensive hands-on experience in building public interfaces and designing scalable systems in various domains including IT/security, e-commerce, and finance. I have a growing interest in AI and am working towards building expertise around MCP architectures and intelligent agents. My background spans both backend and frontend development, with a consistent focus on user-friendly, robust interfaces and security best practices.
-        </p>
+        <div className="text-gray-700 dark:text-gray-300 leading-relaxed mb-10 max-w-3xl mx-auto space-y-6">
+          <p>
+            I'm a backend engineer specializing in the API and infrastructure layer for AI systems. My work sits at the intersection of distributed systems engineering and applied AI — designing the service architecture, data pipelines, and tool interfaces that make LLM-powered products production-ready.
+          </p>
+          <p>
+            I've spent ten years building at companies like Capital One, Nacelle, and Tanium — distributed GraphQL systems, high-throughput ingestion pipelines, cloud migrations, and the monitoring infrastructure that keeps them running. For the past year I've been focused on AI: shipping agentic workflows with MCP and the OpenAI Agents SDK, running a self-hosted multi-channel AI agent gateway, and building RAG systems with hybrid vector search.
+          </p>
+          <p>
+            I'm looking for a senior AI API engineering role where I can own the full stack from prompt to API response — building AI features that are reliable, observable, and actually usable by the teams and customers they serve.
+          </p>
+        </div>
 
         <div className="grid sm:grid-cols-3 gap-6 mb-12">
           {ABOUT_STRENGTH_COLUMNS.map((col) => (
@@ -617,6 +558,13 @@ export default function Landing({ onSectionChange }: LandingProps) {
                       <span className={`flex-shrink-0 ${col.iconClass}`} aria-hidden>
                         <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                           <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                        </svg>
+                      </span>
+                    )}
+                    {col.icon === 'tools' && (
+                      <span className={`flex-shrink-0 ${col.iconClass}`} aria-hidden>
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M14.7 6.3a4.5 4.5 0 01-5.85 5.85l-5.4 5.4a2 2 0 102.83 2.83l5.4-5.4a4.5 4.5 0 005.85-5.85l-2.3 2.3a1 1 0 01-1.42 0l-1.42-1.42a1 1 0 010-1.42l2.3-2.3z" />
                         </svg>
                       </span>
                     )}
@@ -703,7 +651,6 @@ export default function Landing({ onSectionChange }: LandingProps) {
                               {levelConfig.label}
                             </span>
                           )}
-                          {item.percent != null && <span className="text-sm text-gray-600 dark:text-gray-400">{item.percent}%</span>}
                         </div>
                       </div>
                       <ProgressBar percent={item.percent} />
