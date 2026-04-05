@@ -1,38 +1,14 @@
 import { db } from '../db';
 import { portfolioProfile, contentSections } from '../db/schema';
 import { eq, asc } from 'drizzle-orm';
+import type { PortfolioData, PortfolioProfileData, ContentSectionData } from '../types/portfolio';
+import { getPortfolioDataSource, isMcpConnectionConfigured } from '../config/portfolioMcp';
+import { fetchPortfolioFromMcp } from './mcpPortfolioClient';
+
+export type { PortfolioProfileData, ContentSectionData, PortfolioData } from '../types/portfolio';
 
 const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const CACHE_TTL_MS = Number(process.env.PORTFOLIO_CACHE_TTL_MS) || DEFAULT_CACHE_TTL_MS;
-
-export type PortfolioProfileData = {
-  id: number;
-  name: string;
-  title: string;
-  email: string;
-  phone: string | null;
-  location: string | null;
-  linkedinUrl: string | null;
-  githubUrl: string | null;
-  summary: string | null;
-  skills: string[];
-  experience: Array<{ title: string; company: string; period: string; description: string }>;
-  projects: Array<{ name: string; description: string; technologies: string[] }>;
-  fullResumeText: string;
-  resumeFilename: string | null;
-};
-
-export type ContentSectionData = {
-  id: number;
-  filename: string;
-  content: string;
-  sortOrder: number;
-};
-
-export type PortfolioData = {
-  profile: PortfolioProfileData | null;
-  contentSections: ContentSectionData[];
-};
 
 let cache: { data: PortfolioData; expiresAt: number } | null = null;
 
@@ -84,11 +60,23 @@ async function fetchFromDb(): Promise<PortfolioData> {
   return { profile, contentSections: contentSectionsData };
 }
 
+async function fetchPortfolioData(): Promise<PortfolioData> {
+  if (getPortfolioDataSource() === 'mcp') {
+    if (!isMcpConnectionConfigured()) {
+      throw new Error(
+        'PORTFOLIO_DATA_SOURCE=mcp requires MCP_PORTFOLIO_URL (streamable HTTP) or MCP_PORTFOLIO_COMMAND (stdio)',
+      );
+    }
+    return fetchPortfolioFromMcp();
+  }
+  return fetchFromDb();
+}
+
 export async function getPortfolioData(): Promise<PortfolioData> {
   if (isCacheValid() && cache) {
     return cache.data;
   }
-  const data = await fetchFromDb();
+  const data = await fetchPortfolioData();
   cache = {
     data,
     expiresAt: Date.now() + CACHE_TTL_MS,

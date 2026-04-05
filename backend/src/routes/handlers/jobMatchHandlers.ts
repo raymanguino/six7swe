@@ -1,32 +1,9 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
-import { Agent, run } from '@openai/agents';
-import { z } from 'zod';
+import { run } from '@openai/agents';
 import { INPUT_LIMITS } from '../../constants';
 import { getPortfolioData } from '../../services/portfolioService';
-
-const jobMatchAgent = new Agent({
-  name: 'Job Match Analyzer',
-  instructions: [
-    'You are an expert at analyzing job descriptions and matching them to candidate profiles.',
-    'Your task is to:',
-    '1. Analyze the provided job description',
-    '2. Compare it against Ray Manguino\'s skills and experience',
-    '3. Provide a match score from 0-100',
-    '4. Provide a brief analysis explaining the match',
-    '',
-    'Consider:',
-    '- Required skills vs. candidate skills',
-    '- Experience level requirements',
-    '- Technology stack alignment',
-    '- Domain/industry fit',
-    '',
-    'Be honest and accurate in your assessment.',
-  ].join('\n'),
-  outputType: z.object({
-    score: z.number().min(0).max(100),
-    analysis: z.string(),
-  }),
-});
+import { createJobMatchAgent } from '../../services/agents/agentDefinitions';
+import { withPortfolioMcpServers } from '../../services/mcpAgentServer';
 
 export async function jobMatchHandler(request: FastifyRequest, reply: FastifyReply) {
   try {
@@ -55,21 +32,23 @@ export async function jobMatchHandler(request: FastifyRequest, reply: FastifyRep
         ].join('\n')
       : [`Job Description:`, trimmed].join('\n');
 
-    const result = await run(jobMatchAgent, context);
-    
-    // Get structured output from the agent
-    let score = 75; // Default score
+    const result = await withPortfolioMcpServers(async (servers) => {
+      const agent = createJobMatchAgent(servers);
+      return run(agent, context);
+    });
+
+    let score = 75;
     let analysis = 'Based on the job description, there appears to be a reasonable match with the candidate\'s skills and experience.';
 
-    if (result.finalOutput) {
+    if (result.finalOutput && typeof result.finalOutput === 'object') {
       const output = result.finalOutput as { score: number; analysis: string };
       score = output.score ?? score;
       analysis = output.analysis ?? analysis;
     }
 
-    return reply.code(200).send({ 
+    return reply.code(200).send({
       score: Math.round(score),
-      analysis 
+      analysis,
     });
   } catch (error) {
     request.log.error(error, 'Error in job match handler');

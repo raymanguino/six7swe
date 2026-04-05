@@ -39,7 +39,7 @@ For production, set:
 1. Copy `backend/scripts/seed-portfolio.example.ts` to `backend/scripts/seed-portfolio.ts`
 2. Edit `seed-portfolio.ts` with your profile data (name, email, resume text, etc.)
 3. Run `pnpm run db:seed-portfolio` in backend
-4. Copy your resume PDF to `backend/public/` (e.g. `resume.pdf`) or upload to Supabase Storage
+4. Copy your resume PDF to `backend/public/` (e.g. `resume.pdf`), or set `PORTFOLIO_DATA_SOURCE=mcp` and configure MCP in `backend/.env` so portfolio and resume are served from your MCP server (see `backend/.env.example`).
 
 ### 5. Run Development Servers
 

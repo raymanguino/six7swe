@@ -124,7 +124,7 @@ Portfolio profile and content are stored in Supabase for public-repo safety:
    - Run `pnpm run db:seed-portfolio`
    - Seeds `portfolio_profile` (id=1) and `content_sections`
    - If `backend/content/` exists, reads .md/.txt files into content_sections
-3. **Resume PDF**: Place `ray.manguino.pdf` in `backend/public/` for local fallback, or upload to Supabase Storage bucket `portfolio-files` and set `SUPABASE_URL` plus `SUPABASE_SECRET_KEY` (or `SUPABASE_SERVICE_ROLE_KEY`) in `.env`. Use the [secret key](https://supabase.com/docs/guides/api/api-keys) (`sb_secret_...`) for backend access.
+3. **Resume PDF**: With `PORTFOLIO_DATA_SOURCE=mcp`, implement `get_resume_pdf` on your MCP server (see `.env.example`). Otherwise place the PDF in `backend/public/` (e.g. `resume.pdf`) for local serving.
 
 ## Development
 
