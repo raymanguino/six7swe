@@ -136,32 +136,33 @@ type ProjectTile = {
 
 const PROJECT_TILES: ProjectTile[] = [
   {
-    id: '67-swe-project',
-    title: 'AI Job Search Platform',
+    id: 'mission-control',
+    title: 'Mission Control',
     briefDescription:
-      'Agentic job search platform built on MCP — custom tools for job fetching, database operations, and email automation, with an LLM that ranks matches against personal preferences.',
-    techLabels: ['React', 'TypeScript', 'Node.js', 'PostgreSQL', 'OpenAI'],
-    overview: 'Custom web scraper to fetch jobs from popular boards and an AI agent to rank them by personal preferences. MCP services for DB access to store and query jobs, and email integration to send job matches to candidates.',
+      'Agent orchestration platform that coordinates specialized AI workers for software project delivery, from approval to deployment, with integrated task workflows and quality control.',
+    techLabels: ['MCP', 'Webhooks', 'TypeScript', 'Node.js', 'AI Agents'],
+    overview:
+      'Mission Control is a tailnet-native API platform that creates, manages, and coordinates multi-agent workflows for software development. It standardizes webhook events and a unified MCP tool interface. The system provides automated project decomposition, task routing, and progress tracking while maintaining a consistent agent communication architecture.',
     keyChallenges: [
-      'Integrating multiple job boards and normalizing data for consistent matching.',
-      'Designing an agent that ranks jobs by personal preferences with explainable results.',
-      'Evolving custom tools and workflows into a reusable MCP service for AI agents.',
+      'Building reliable webhooks across different agent runtimes while maintaining proper event sequencing.',
+      'Designing workflows that handle async task completion without losing project context.',
+      'Creating an MCP interface that enables agent collaboration while enforcing quality gates.',
     ],
     liveSiteUrl: '#',
     liveSiteDisabled: true,
   },
   {
-    id: 'openclaw-gateway-research-plugin',
-    title: 'Self-Hosted AI Agent Gateway + Research Plugin',
+    id: 'portfolio',
+    title: 'Portfolio',
     briefDescription:
-      'OpenClaw plugin running on a self-hosted Raspberry Pi gateway. Send a job URL from Telegram or WhatsApp — the agent browses the company\'s real web presence via Chrome extension (authenticated session, no headless limitations), synthesizes a structured research briefing, and stores it to Supabase. Custom-built tool interface designed for reliable LLM invocation.',
-    techLabels: ['OpenClaw', 'MCP', 'Node.js', 'TypeScript', 'Supabase', 'LangChain'],
+      'A portfolio site that loads profile, projects, skills, and resume content from a custom MCP service, serves resume assets, and includes a floating chat assistant that answers using that portfolio and resume context.',
+    techLabels: ['React', 'TypeScript', 'Vite', 'Fastify', 'MCP', 'PostgreSQL'],
     overview:
-      'A custom plugin for a self-hosted OpenClaw AI agent gateway running on a Raspberry Pi. OpenClaw bridges messaging apps (Telegram, WhatsApp, Discord) to an AI agent runtime — the plugin extends it with a company research skill. Send a job URL from any connected channel and the agent autonomously researches the company: navigating its careers page, LinkedIn presence, and recent news using a real authenticated Chrome session via the OpenClaw browser tool. It synthesizes findings into a structured briefing — company stage, tech stack signals, team size, open roles, and red flags — and persists the result to Supabase for job pipeline tracking. Designed as a first-class OpenClaw tool with a clean interface contract so the agent reliably knows when and how to invoke it.',
+      'A full-stack TypeScript portfolio app: the React/Vite SPA loads profile, projects, skills, experience, and contact from a Fastify API backed by a custom MCP service, with resume PDFs and extra content sections served from the backend. A built-in chat widget calls the API so visitors can ask questions about your work using an assistant grounded on stored portfolio and resume context.',
     keyChallenges: [
-      'Designing a clean tool interface contract so the agent reliably knows when and how to invoke the plugin.',
-      'Running research via a real authenticated browser session to avoid headless limitations and access gated content.',
-      'Synthesizing messy web signals into consistent structured output and persisting it to Supabase for tracking.',
+      'The portfolio API must serve the same shape from PostgreSQL or optional MCP without pushing that complexity into the frontend.',
+      'The chat assistant needs enough resume and portfolio context to answer well, without oversized prompts or leaking internal-only details.',
+      'Resume and asset URLs must stay correct and fresh across static files, storage, and caching so downloads don\'t break or go stale after updates.',
     ],
     liveSiteUrl: '#',
     liveSiteDisabled: true,
