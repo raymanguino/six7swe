@@ -57,7 +57,6 @@ This project uses **Supabase** (PostgreSQL) with Drizzle ORM. You can use either
    APP_PORT=3000
    DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres?sslmode=disable
    DATABASE_MIGRATIONS_DIR=./migrations
-   OPENAI_API_KEY=your_openai_api_key_here
    ```
 
 3. Generate and apply migrations:
@@ -80,7 +79,6 @@ This project uses **Supabase** (PostgreSQL) with Drizzle ORM. You can use either
    APP_PORT=3000
    DATABASE_URL=your_supabase_connection_string
    DATABASE_MIGRATIONS_DIR=./migrations
-   OPENAI_API_KEY=your_openai_api_key_here
    ```
 
 4. Apply migrations:

@@ -14,7 +14,6 @@ Before deploying, complete the local setup steps in `SETUP.md` (install dependen
 4. Railway will automatically detect the `railway.json` configuration
 5. Set environment variables:
    - `DATABASE_URL` - PostgreSQL connection string
-   - `OPENAI_API_KEY` - Your OpenAI API key
    - `APP_PORT` - Port (Railway will set this automatically)
    - `NODE_ENV` - Set to `production`
 

@@ -210,7 +210,7 @@ const SKILLS_GROUPS = [
     items: [
       { name: 'Prompt Craft', percent: 80, level: 'advanced' as SkillLevel },
       { name: 'Context/Intent/Spec Engineering', percent: 70, level: 'intermediate' as SkillLevel },
-      { name: 'OpenAI Agents SDK', percent: 70, level: 'intermediate' as SkillLevel },
+      { name: 'MiniMax Agents SDK', percent: 70, level: 'intermediate' as SkillLevel },
       { name: 'OpenClaw', percent: 70, level: 'intermediate' as SkillLevel },
     ],
   },
@@ -529,7 +529,7 @@ export default function Landing({ onSectionChange }: LandingProps) {
             I'm a backend engineer specializing in the API and infrastructure layer for AI systems. My work sits at the intersection of distributed systems engineering and applied AI — designing the service architecture, data pipelines, and tool interfaces that make LLM-powered products production-ready.
           </p>
           <p>
-            I've spent ten years building at companies like Capital One, Nacelle, and Tanium — distributed GraphQL systems, high-throughput ingestion pipelines, cloud migrations, and the monitoring infrastructure that keeps them running. For the past year I've been focused on AI: shipping agentic workflows with MCP and the OpenAI Agents SDK, running a self-hosted multi-channel AI agent gateway, and building RAG systems with hybrid vector search.
+            I've spent ten years building at companies like Capital One, Nacelle, and Tanium — distributed GraphQL systems, high-throughput ingestion pipelines, cloud migrations, and the monitoring infrastructure that keeps them running. For the past year I've been focused on AI: shipping agentic workflows with MCP and the MiniMax Agents SDK, running a self-hosted multi-channel AI agent gateway, and building RAG systems with hybrid vector search.
           </p>
           <p>
             I'm looking for a senior AI API engineering role where I can own the full stack from prompt to API response — building AI features that are reliable, observable, and actually usable by the teams and customers they serve.

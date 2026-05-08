@@ -10,7 +10,7 @@ Rules:
 ## Architectural Rules (Hard Requirements)
 
 - **Domain is pure**
-  - No Fastify, OpenAI, Puppeteer, Drizzle, or Node APIs
+  - No Fastify, MiniMax, Puppeteer, Drizzle, or Node APIs
   - No side effects
 - **Side effects are infrastructure-only**
   - Database access

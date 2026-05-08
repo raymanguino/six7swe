@@ -4,7 +4,6 @@
 
 - Node.js 18+ and pnpm installed
 - PostgreSQL database (local Supabase or remote)
-- OpenAI API key
 
 ## Initial Setup
 
@@ -19,12 +18,11 @@ pnpm install
 ```bash
 cd backend
 cp .env.example .env
-# Edit .env with your database URL and OpenAI API key
+# Edit .env with your database URL
 ```
 
 Required environment variables:
 - `DATABASE_URL` - PostgreSQL connection string
-- `OPENAI_API_KEY` - Your OpenAI API key
 - `APP_PORT` - Port (default: 3000)
 
 ### 3. Frontend Setup

@@ -19,7 +19,7 @@ const highlights: Highlight[] = [
     id: '2',
     title: 'AI & Machine Learning',
     summary: 'Experience integrating AI capabilities into applications',
-    details: 'Worked with OpenAI APIs, LangChain, and various ML frameworks. Built intelligent systems for job matching, content generation, and data analysis. Understanding of prompt engineering and AI agent architectures.',
+    details: 'Worked with AI APIs, LangChain, and various ML frameworks. Built intelligent systems for job matching, content generation, and data analysis. Understanding of prompt engineering and AI agent architectures.',
   },
   {
     id: '3',

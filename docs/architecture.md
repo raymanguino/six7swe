@@ -9,7 +9,7 @@ The system is a full-stack TypeScript application consisting of:
 - **Frontend**: React SPA built with Vite (in `frontend/`).
 - **Backend**: Fastify HTTP API server (in `backend/`).
 - **Database**: PostgreSQL accessed via Drizzle ORM.
-- **AI Assistant**: Chat endpoint backed by `@openai/agents`, enriched with portfolio and resume content from the database.
+- **AI Assistant**: Chat endpoint backed by `agents`, enriched with portfolio and resume content from the database.
 
 The main user-facing experience is a portfolio website with:
 
@@ -30,7 +30,7 @@ flowchart LR
     Routes["Route Handlers\nbackend/src/routes"]
     Plugins["Service Plugins\nbackend/src/plugins"]
     Static["Static Files (/public)\nResume PDF & assets"]
-    Agent["OpenAI Agent\n@openai/agents"]
+    Agent["Agent\nagents SDK"]
   end
 
   subgraph Data["Data Layer"]
@@ -187,7 +187,7 @@ flowchart LR
     - Resume and portfolio content from `getChatContext()` (which uses `getPortfolioData()`).
     - Recent chat history (up to `MAX_HISTORY_MESSAGES`), formatted for the agent.
     - The user’s current question.
-  - Instantiates an `Agent` from `@openai/agents` with instructions that:
+  - Instantiates an `Agent` from the `agents` SDK with instructions that:
     - Make the assistant speak as Ray in first person.
     - Restrict topics to professional background, skills, experience, etc.
     - Enforce short answers by default unless the user asks for more detail.

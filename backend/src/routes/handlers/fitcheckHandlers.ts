@@ -1,9 +1,7 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
-import { run } from '@openai/agents';
 import { INPUT_LIMITS } from '../../constants';
 import { getChatContext } from '../../data/chatContext';
-import { createFitCheckAgent } from '../../services/agents/agentDefinitions';
-import { withPortfolioMcpServers } from '../../services/mcpAgentServer';
+import { fitCheckWithContext } from '../../services/minimaxService';
 
 export async function fitcheckHandler(request: FastifyRequest, reply: FastifyReply) {
   try {
@@ -19,36 +17,10 @@ export async function fitcheckHandler(request: FastifyRequest, reply: FastifyRep
 
     const rayContext = await getChatContext();
 
-    const context = [
-      rayContext,
-      '',
-      '---',
-      '',
-      'Job Description to analyze:',
-      trimmed,
-    ].join('\n');
-
-    const result = await withPortfolioMcpServers(async (servers) => {
-      const agent = createFitCheckAgent(servers);
-      return run(agent, context);
-    });
-
-    if (!result.finalOutput) {
-      return reply.code(500).send({ error: 'FitCheck analysis failed to produce output' });
-    }
-
-    const output = result.finalOutput as unknown as {
-      snarky_preamble?: string | null;
-      verdict: 'strong' | 'weak';
-      where_i_match?: Array<{ heading: string; details: string }>;
-      gaps_to_note?: Array<{ heading: string; details: string }>;
-      where_i_dont_fit?: Array<{ heading: string; details: string }>;
-      what_does_transfer?: string;
-      recommendation: string;
-    };
+    const output = await fitCheckWithContext(trimmed, rayContext);
 
     return reply.code(200).send({
-      snarkyPreamble: output.snarky_preamble ?? null,
+      snarkyPreamble: output.snarky_preamble,
       verdict: output.verdict,
       whereIMatch: output.where_i_match ?? [],
       gapsToNote: output.gaps_to_note ?? [],

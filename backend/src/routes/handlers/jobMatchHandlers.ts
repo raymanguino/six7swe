@@ -1,9 +1,7 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
-import { run } from '@openai/agents';
 import { INPUT_LIMITS } from '../../constants';
 import { getPortfolioData } from '../../services/portfolioService';
-import { createJobMatchAgent } from '../../services/agents/agentDefinitions';
-import { withPortfolioMcpServers } from '../../services/mcpAgentServer';
+import { jobMatchWithContext } from '../../services/minimaxService';
 
 export async function jobMatchHandler(request: FastifyRequest, reply: FastifyReply) {
   try {
@@ -18,37 +16,21 @@ export async function jobMatchHandler(request: FastifyRequest, reply: FastifyRep
     }
 
     const { profile } = await getPortfolioData();
-    const context = profile
+    const profileContext = profile
       ? [
-          `Candidate Profile:`,
           `Name: ${profile.name}`,
           `Title: ${profile.title}`,
           `Summary: ${profile.summary}`,
           `Skills: ${profile.skills.join(', ')}`,
           `Full Resume: ${profile.fullResumeText}`,
-          '',
-          `Job Description:`,
-          trimmed,
         ].join('\n')
-      : [`Job Description:`, trimmed].join('\n');
+      : 'No profile data available.';
 
-    const result = await withPortfolioMcpServers(async (servers) => {
-      const agent = createJobMatchAgent(servers);
-      return run(agent, context);
-    });
-
-    let score = 75;
-    let analysis = 'Based on the job description, there appears to be a reasonable match with the candidate\'s skills and experience.';
-
-    if (result.finalOutput && typeof result.finalOutput === 'object') {
-      const output = result.finalOutput as { score: number; analysis: string };
-      score = output.score ?? score;
-      analysis = output.analysis ?? analysis;
-    }
+    const result = await jobMatchWithContext(trimmed, profileContext);
 
     return reply.code(200).send({
-      score: Math.round(score),
-      analysis,
+      score: Math.round(result.score),
+      analysis: result.analysis,
     });
   } catch (error) {
     request.log.error(error, 'Error in job match handler');
