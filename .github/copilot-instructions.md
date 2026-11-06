@@ -123,6 +123,19 @@ Rules:
 - Never log secrets
 - Assume Railway-style deployments
 
+### Secrets in agent context
+
+- Do not read `.env` (or any file containing live secrets) unless the task
+  explicitly requires it. Prefer `.env.example`, which contains placeholders.
+- Treat secret values as **write-only**: never repeat, quote, log, or write them
+  into chat replies, code, comments, tests, commits, or PRs.
+- Reference secrets by **variable name** (`MINIMAX_API_KEY`) or a masked form
+  (`sk-…abcd`), never by value.
+- When asked to "share", "document", or "summarize" config, describe variable
+  names and purposes only — never values.
+- If a secret value has already appeared in the transcript, tell the user it
+  must be rotated.
+
 ---
 
 ## What NOT to Do

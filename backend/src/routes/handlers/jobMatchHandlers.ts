@@ -1,7 +1,7 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { INPUT_LIMITS } from '../../constants';
 import { getPortfolioData } from '../../services/portfolioService';
-import { jobMatchWithContext } from '../../services/minimaxService';
+import { jobMatchWithContext, MiniMaxApiError } from '../../services/minimaxService';
 
 export async function jobMatchHandler(request: FastifyRequest, reply: FastifyReply) {
   try {
@@ -33,7 +33,10 @@ export async function jobMatchHandler(request: FastifyRequest, reply: FastifyRep
       analysis: result.analysis,
     });
   } catch (error) {
-    request.log.error(error, 'Error in job match handler');
-    return reply.code(500).send({ error: 'Failed to analyze job match' });
+    request.log.error({ err: error }, 'Error in job match handler');
+    if (error instanceof MiniMaxApiError) {
+      return reply.code(502).send({ error: 'The AI service is temporarily unavailable. Please try again.' });
+    }
+    return reply.code(500).send({ error: 'Something went wrong while analyzing this job match. Please try again.' });
   }
 }

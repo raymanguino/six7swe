@@ -99,7 +99,7 @@ flowchart LR
     - **Routes** from `backend/src/routes`.
   - Defines an `onRequest` hook that currently stubs `requestContext.user` to a fixed user (to be replaced with real auth).
   - Defines a `preHandler` hook that enforces authentication for non-public routes based on `requestContext.user`.
-  - Registers a root health check route at `/` returning basic status and selected env info.
+  - Registers a root health check route at `/` returning basic status and an allowlisted subset of non-sensitive environment values (`NODE_ENV`, `PORT`, `HOST`). Secrets are never exposed.
   - Listens on `PORT` (default 3000) and `HOST` (default `0.0.0.0`).
 
 **Routing**

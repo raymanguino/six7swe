@@ -70,7 +70,10 @@ export async function evaluateJobMatch(
     { role: 'user', content: [profileContext, '', jobContext].join('\n') },
   ];
 
-  const response = await chatCompletion(messages, { max_tokens: 2048 });
+  const response = await chatCompletion(messages, {
+    max_tokens: 2048,
+    reasoning_effort: 'medium',
+  });
 
   try {
     const parsed = JSON.parse(response) as JobMatchEvaluation;

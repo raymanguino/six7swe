@@ -1,5 +1,3 @@
-import { agent } from 'supertest';
-
 export * as jobFetch from './jobFetch';
 export * as jobService from './jobService';
 export * as profileJobService from './profileJobService';

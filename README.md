@@ -17,7 +17,7 @@ Six7SWE is a monorepo that combines a Fastify + Supabase backend for managing jo
 
 - Node.js (LTS) and `pnpm` installed globally
 - Supabase CLI for managing the local PostgreSQL instance
-- Podman or Docker for containerized backend services
+- Docker Desktop (the Supabase CLI runs Postgres in a container)
 - (Optional) Railway account for hosting the frontend
 
 ## Frontend - Personal Portfolio Website

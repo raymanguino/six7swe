@@ -71,11 +71,14 @@ export default function ChatAssistant() {
       });
       setMessages((prev) => [...prev, { role: 'assistant', content: data.response, timestamp: new Date() }]);
     } catch (error) {
+      const detail = error instanceof Error ? error.message : '';
       setMessages((prev) => [
         ...prev,
         {
           role: 'assistant',
-          content: 'Sorry, I encountered an error. Please try again later.',
+          content: detail
+            ? `Sorry, I encountered an error. Please try again later. (${detail})`
+            : 'Sorry, I encountered an error. Please try again later.',
           timestamp: new Date(),
         },
       ]);

@@ -1,6 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { INPUT_LIMITS } from '../../constants';
-import { chatWithContext } from '../../services/minimaxService';
+import { chatWithContext, MiniMaxApiError } from '../../services/minimaxService';
 
 export async function chatHandler(request: FastifyRequest, reply: FastifyReply) {
   try {
@@ -19,7 +19,10 @@ export async function chatHandler(request: FastifyRequest, reply: FastifyReply) 
 
     return reply.code(200).send({ response });
   } catch (error) {
-    request.log.error(error, 'Error in chat handler');
-    return reply.code(500).send({ error: 'Failed to process chat message' });
+    request.log.error({ err: error }, 'Error in chat handler');
+    if (error instanceof MiniMaxApiError) {
+      return reply.code(502).send({ error: 'The AI service is temporarily unavailable. Please try again.' });
+    }
+    return reply.code(500).send({ error: 'Something went wrong while processing your message. Please try again.' });
   }
 }

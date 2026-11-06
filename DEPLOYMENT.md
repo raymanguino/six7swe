@@ -12,10 +12,17 @@ Before deploying, complete the local setup steps in `SETUP.md` (install dependen
 2. Connect your GitHub repository
 3. Set the **Root Directory** to `backend` in Railway service settings
 4. Railway will automatically detect the `railway.json` configuration
-5. Set environment variables:
+5. Set environment variables on the service:
    - `DATABASE_URL` - PostgreSQL connection string
-   - `APP_PORT` - Port (Railway will set this automatically)
+   - `PORT` - Port (Railway sets this automatically)
    - `NODE_ENV` - Set to `production`
+   - `MINIMAX_API_KEY` - MiniMax API key
+   - `MINIMAX_API_KEY_SECONDARY` - Optional MiniMax key used for one retry when the primary request receives HTTP 429
+   - `RESEND_API_KEY` - Resend API key (contact form)
+
+> Set production values in the Railway dashboard, not in a committed file. `backend/.env` and `backend/.env.*` are gitignored and never deployed.
+
+> **IPv4 only:** Railway does not support outbound IPv6. Use Supabase's IPv4 connection string for `DATABASE_URL`. See [Railway Outbound Networking](https://docs.railway.com/networking/outbound-networking).
 
 ### 2. Frontend Service
 
@@ -26,27 +33,27 @@ Before deploying, complete the local setup steps in `SETUP.md` (install dependen
 5. Set environment variables:
    - `VITE_API_URL` - URL of your backend service (e.g., `https://your-backend.railway.app`)
 
-### 3. Resume PDF
+### 3. Apply the Schema to the Remote Database
 
-The frontend downloads the resume from the backend via `GET /resume`.
+The schema must exist before the backend can serve requests. From your machine:
 
-You have two supported options for providing the resume PDF in production:
+```bash
+cd backend
+DOTENV_CONFIG_PATH=.env.remote pnpm run db:push
+```
 
-1. **Supabase Storage (recommended)**:
-   - Upload your resume to your Supabase Storage bucket (default: `portfolio-files`)
-   - Name it either:
-     - the same as `portfolio_profile.resume_filename` (e.g. `ray.manguino.pdf`), **or**
-     - `resume.pdf` (the backend will fall back to this if the DB filename is different)
-   - Set these env vars on the Railway **backend** service:
-     - `SUPABASE_URL`
-     - `SUPABASE_SECRET_KEY` (preferred) or `SUPABASE_SERVICE_ROLE_KEY`
-     - `SUPABASE_STORAGE_BUCKET` (optional; defaults to `portfolio-files`)
+`backend/.env.remote` holds the remote `DATABASE_URL` and is gitignored.
 
-2. **Local file in `backend/public/`**:
-   - Place your resume at `backend/public/resume.pdf` (or match `portfolio_profile.resume_filename`)
-   - Ensure it is present in the deployed backend filesystem (note: this repo’s `.gitignore` ignores `backend/public/*.pdf` by default, so it will not deploy unless you change that policy).
+### 4. Resume PDF
 
-### 4. Update Resume / Portfolio Data
+The frontend downloads the resume from the backend via `GET /resume`. The backend serves it from the local filesystem at `backend/public/`, falling back to `resume.pdf` if the database filename does not match.
+
+- Place your resume at `backend/public/resume.pdf` (or match `portfolio_profile.resume_filename`).
+- Ensure it is present in the deployed backend filesystem. Note that this repo's `.gitignore` ignores `backend/public/*.pdf` by default, so it will not deploy unless you change that policy.
+
+> Supabase Storage is **not** currently read by the backend — `@supabase/supabase-js` is not a dependency and no code path reads `SUPABASE_URL` or `SUPABASE_SECRET_KEY`. Serving the resume from Storage requires implementing that path first.
+
+### 5. Update Resume / Portfolio Data
 
 1. Copy `backend/scripts/seed-portfolio.example.ts` to `backend/scripts/seed-portfolio.ts`, fill in your data, then run `pnpm run db:seed-portfolio` in backend—or update `portfolio_profile` directly in the database
 2. Contact info is served from the portfolio API; no frontend edits needed

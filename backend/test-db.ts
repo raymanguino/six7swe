@@ -2,10 +2,18 @@
 import 'dotenv/config';
 import { db, users } from './src/db';
 
+function databaseHost(): string {
+  try {
+    return new URL(process.env.DATABASE_URL || '').host;
+  } catch {
+    return 'unknown';
+  }
+}
+
 async function testConnection() {
   try {
     console.log('Testing Drizzle + Supabase connection...');
-    console.log('Database Mode:', process.env.DATABASE_MODE);
+    console.log('Database host:', databaseHost());
     
     // Query all users
     const allUsers = await db.select().from(users);

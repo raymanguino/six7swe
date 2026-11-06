@@ -6,12 +6,25 @@ import fastifyStatic from '@fastify/static';
 import { FastifyReply, FastifyRequest } from 'fastify';
 import { UnauthenticatedUser } from './constants';
 import { ContextUser } from './types';
+import { getSafeEnv } from './config/env';
 import * as plugins from './plugins';
 import routes from './routes';
 import path from 'path';
 
 const Fastify = require('fastify');
-const fastify = Fastify({ logger: true });
+const fastify = Fastify({
+  logger: {
+    redact: {
+      paths: [
+        'req.headers.authorization',
+        'req.headers["x-api-key"]',
+        'req.headers["x-brain-key"]',
+        'res.headers["set-cookie"]',
+      ],
+      remove: true,
+    },
+  },
+});
 
 declare module '@fastify/request-context' {
   interface RequestContextData {
@@ -76,8 +89,9 @@ fastify.addHook('preHandler', async (req: FastifyRequest, reply: FastifyReply) =
 fastify.register(routes);
 
 // Register health check route
-fastify.get('/', async (req: FastifyRequest, reply: FastifyReply) => {
-  return { hello: 'world', status: 'ok', ...process.env };
+// Exposes only allowlisted, non-sensitive values. Never spread process.env here.
+fastify.get('/', async (_req: FastifyRequest, _reply: FastifyReply) => {
+  return { hello: 'world', status: 'ok', env: getSafeEnv() };
 });
 
 const start = async () => {

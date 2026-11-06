@@ -3,9 +3,9 @@ import { eq, and } from 'drizzle-orm';
 
 /**
  * Example file demonstrating how to use Drizzle ORM with the six7swe project
- * 
+ *
  * This file shows various database operations using type-safe Drizzle queries.
- * Works with both Postgres and Supabase - just change DATABASE_MODE in .env
+ * The target database is selected by DATABASE_URL - see backend/.env.example
  */
 
 // ============================================================

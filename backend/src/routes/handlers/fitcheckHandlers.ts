@@ -1,7 +1,7 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { INPUT_LIMITS } from '../../constants';
 import { getChatContext } from '../../data/chatContext';
-import { fitCheckWithContext } from '../../services/minimaxService';
+import { fitCheckWithContext, MiniMaxApiError } from '../../services/minimaxService';
 
 export async function fitcheckHandler(request: FastifyRequest, reply: FastifyReply) {
   try {
@@ -29,7 +29,10 @@ export async function fitcheckHandler(request: FastifyRequest, reply: FastifyRep
       recommendation: output.recommendation,
     });
   } catch (error) {
-    request.log.error(error, 'Error in FitCheck handler');
-    return reply.code(500).send({ error: 'Failed to analyze job fit' });
+    request.log.error({ err: error }, 'Error in FitCheck handler');
+    if (error instanceof MiniMaxApiError) {
+      return reply.code(502).send({ error: 'The AI service is temporarily unavailable. Please try again.' });
+    }
+    return reply.code(500).send({ error: 'Something went wrong while analyzing this job fit. Please try again.' });
   }
 }

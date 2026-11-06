@@ -6,13 +6,15 @@ This backend lives in the `backend/` directory of the Six7SWE monorepo. See the 
 
 ## Features
 
-- ✅ User CRUD operations
-- ✅ Profile CRUD operations
-- ✅ PostgreSQL database integration
-- ✅ Containerized with Podman/Docker
+- ✅ User and profile queries
+- ✅ Job ingestion, matching and refresh status
+- ✅ PostgreSQL database integration via Drizzle ORM
+- ✅ Portfolio content served from the database or an MCP server
+- ✅ AI endpoints (chat, job match, fit check) via MiniMax
+- ✅ Contact form delivery via Resend
 - ✅ TypeScript with Fastify framework
 - ✅ Environment-based configuration
-- ✅ Comprehensive unit testing with Jest
+- ✅ Unit testing with Jest
 - ✅ Modular architecture with services and handlers
 
 ## Quick Start
@@ -23,22 +25,69 @@ This backend lives in the `backend/` directory of the Six7SWE monorepo. See the 
    cd six7swe
    ```
 
-2. Create environment file:
+2. Start the local database (Supabase CLI + Docker Desktop):
+   ```bash
+   supabase start
+   ```
+
+3. Create the environment file and install dependencies:
    ```bash
    cd backend
    cp .env.example .env
-   # Edit .env and add your database credentials
+   # Edit .env and add your API keys
+   cd ..
+   pnpm install
    ```
 
-3. Start the services:
+4. Apply the schema and seed portfolio data:
    ```bash
-   podman compose up -d
+   cd backend
+   pnpm run db:push
+   pnpm run db:seed-portfolio
    ```
 
-4. Test the API:
+5. Run the API:
    ```bash
-   curl http://localhost:3000/users
+   pnpm dev
    ```
+
+6. Test the API:
+   ```bash
+   curl http://localhost:3000/
+   curl http://localhost:3000/portfolio
+   ```
+
+> **Prerequisites:** Node.js (LTS), `pnpm`, the [Supabase CLI](https://supabase.com/docs/guides/cli), and Docker Desktop (the Supabase CLI starts Postgres in a container).
+
+## Environment Files
+
+| File | Tracked | Purpose |
+|---|---|---|
+| `.env.example` | ✅ | Template with placeholder values |
+| `.env` | ❌ | Local development. Points at the local Supabase database |
+| `.env.remote` | ❌ | Copy of `.env` pointing at the remote database |
+
+`.env` and `.env.*` are gitignored, so only `.env.example` is ever committed.
+
+### Choosing between local and remote
+
+The environment is selected by **which file dotenv loads**, not by commenting lines out. Every entry point (`src/index.ts`, `drizzle.config.ts`, `scripts/seed-portfolio.ts`) uses `dotenv/config`, which honours `DOTENV_CONFIG_PATH`:
+
+```bash
+# Local database (default - .env)
+pnpm dev
+pnpm run db:push
+
+# Remote database (.env.remote)
+DOTENV_CONFIG_PATH=.env.remote pnpm run db:push
+DOTENV_CONFIG_PATH=.env.remote pnpm run db:seed-portfolio
+```
+
+> **Two rules that cause most `.env` bugs:**
+> 1. **Only one `DATABASE_URL` may be active.** dotenv resolves duplicates by *last occurrence wins*, so a stale line silently overrides the intended one.
+> 2. **JSON values must be on a single line.** dotenv stops parsing a value at the first newline, which turns a multi-line JSON blob into invalid JSON.
+
+See [`.env.example`](.env.example) for the full annotated list of variables.
 
 ## Database Setup
 
@@ -46,47 +95,44 @@ This project uses **Supabase** (PostgreSQL) with Drizzle ORM. You can use either
 
 ### Local Development with Supabase
 
-1. Start local Supabase:
+1. Start local Supabase (run from the repo root):
    ```bash
    supabase start
    ```
+   This boots Postgres on `127.0.0.1:54322`, the REST API on `54321`, and Studio on `54323`.
 
 2. Configure your `.env` file in the backend directory:
    ```env
    NODE_ENV=development
-   APP_PORT=3000
+   PORT=3000
    DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres?sslmode=disable
    DATABASE_MIGRATIONS_DIR=./migrations
    ```
 
-3. Generate and apply migrations:
+3. Apply the schema:
    ```bash
    cd backend
-   pnpm run db:generate              # Generate Drizzle migrations
-   cd ..
-   supabase db push                  # Push to Supabase
+   pnpm run db:push
    ```
 
 ### Remote Supabase (Production)
 
-1. Get connection string from Supabase Dashboard → Settings → Database
+1. Get the connection string from Supabase Dashboard → Settings → Database.
 
 2. **Railway deployment:** Railway does not support outbound IPv6. Use Supabase’s **IPv4** connection string for `DATABASE_URL` so the backend can reach the database. See [Railway Outbound Networking](https://docs.railway.com/networking/outbound-networking).
 
-3. Update your `.env` file:
+3. Set the variables on the Railway service (not in a file):
    ```env
    NODE_ENV=production
-   APP_PORT=3000
+   PORT=3000
    DATABASE_URL=your_supabase_connection_string
    DATABASE_MIGRATIONS_DIR=./migrations
    ```
 
-4. Apply migrations:
+4. Apply the schema to the remote database:
    ```bash
    cd backend
-   pnpm run db:generate
-   cd ..
-   supabase db push
+   DOTENV_CONFIG_PATH=.env.remote pnpm run db:push
    ```
 
 ### Drizzle Studio (Database GUI)
@@ -115,7 +161,7 @@ pnpm run db:seed-portfolio  # Seed portfolio (requires seed-portfolio.ts; copy f
 
 Portfolio profile and content are stored in Supabase for public-repo safety:
 
-1. Apply migrations: `supabase db push` (or `pnpm run db:push`)
+1. Apply migrations: `pnpm run db:push`
 2. Seed portfolio data:
    - Copy `scripts/seed-portfolio.example.ts` to `scripts/seed-portfolio.ts`
    - Edit `seed-portfolio.ts` with your profile data
@@ -142,7 +188,7 @@ pnpm run debug
 
 ## Testing
 
-The project includes comprehensive unit tests using Jest:
+The project includes unit tests using Jest:
 
 ```bash
 # Run all tests
@@ -158,7 +204,8 @@ pnpm run test:coverage
 ### Test Coverage
 
 Tests cover:
-- ✅ All handler methods (success and error cases)
+- ✅ Environment allowlisting (guarantees secrets are never exposed over HTTP)
+- ✅ Handler methods (success and error cases)
 - ✅ Service layer functionality
 - ✅ Input validation
 - ✅ Database error handling
@@ -167,49 +214,65 @@ Tests cover:
 ## API Endpoints
 
 ### Health Check
-- `GET /` - Health check
+- `GET /` - Health check. Returns `status` plus an allowlisted subset of non-sensitive env values. Never returns secrets.
 
 ### Portfolio (public)
 - `GET /portfolio` - Portfolio contact/profile metadata (email, phone, social links, resume filename)
 - `GET /resume` - Resume PDF download
 
-### Users
+### AI (public)
+- `POST /chat` - Conversational assistant grounded in the portfolio
+- `POST /job-match` - Score a job description against the profile
+- `POST /fitcheck` - Fit assessment for a role
+- `POST /contact` - Contact form submission (delivered via Resend)
+
+### Jobs (public)
+- `GET /jobs` - List all jobs
+- `GET /jobs/:source_id/:source_job_id` - Get a job by source
+
+### Profiles & Users (protected)
+- `GET /profiles` - List all profiles
+- `GET /profiles/:profileId` - Get profile by ID
+- `GET /profiles/:profileId/jobs` - Jobs matched to a profile
+- `POST /profiles/:profileId/jobs/refresh` - Trigger a job refresh
+- `GET /profiles/:profileId/jobs/refresh/:refreshId` - Refresh status
 - `GET /users` - List all users
 - `GET /users/:id` - Get user by ID
-- `POST /users` - Create new user
-- `PUT /users/:id` - Update user
-- `DELETE /users/:id` - Delete user
 
-### Profiles
-- `GET /profiles` - List all profiles
-- `GET /profiles/:id` - Get profile by ID
-- `GET /users/:userId/profiles` - Get all profiles for a specific user
-- `POST /profiles` - Create new profile
-- `PUT /profiles/:id` - Update profile
-- `DELETE /profiles/:id` - Delete profile
+> Routes outside the public allowlist require authentication. Auth is currently stubbed — see the `TODO` in `src/index.ts`.
 
 ## Project Structure
 
 ```text
 src/
-├── index.ts                 # Main application entry point
-├── handlers/                # Request handlers
-│   ├── userHandlers.ts
-│   └── profileHandlers.ts
-├── routes/                  # Route definitions
-│   ├── users.ts
-│   └── profiles.ts
-├── services/                # Business logic layer
-│   ├── userService.ts
-│   └── profileService.ts
-├── plugins/                 # Fastify plugins
-│   ├── userService.ts
-│   └── profileService.ts
-├── database/
-│   └── schema.sql          # Database schema
-└── __tests__/              # Unit tests
-    ├── handlers/
-    └── services/
+├── index.ts                   # App entry point, hooks, health check
+├── constants.ts
+├── config/
+│   ├── env.ts                 # Allowlisted env values safe to expose
+│   └── portfolioMcp.ts        # MCP source configuration
+├── data/
+│   └── chatContext.ts
+├── db/
+│   ├── index.ts               # postgres.js client + Drizzle instance
+│   ├── schema.ts              # Table definitions
+│   ├── examples.ts
+│   ├── test-connection.ts
+│   └── api/                   # Data access per domain
+├── plugins/                   # Fastify service decorators
+├── routes/
+│   ├── index.ts               # Route registration
+│   ├── service.ts             # Service interface
+│   ├── currentUser.ts
+│   └── handlers/              # Request handlers
+├── services/
+│   ├── portfolioService.ts
+│   ├── minimaxService.ts
+│   ├── mcpPortfolioClient.ts
+│   ├── agents/                # AI agent implementations
+│   └── jobFetchers/           # Puppeteer job scrapers
+├── types/
+├── util/                      # retry, hash, decode, redact
+└── __tests__/                 # Unit tests
 ```
 
 ## Tech Stack
@@ -218,53 +281,115 @@ src/
 - **Database**: Supabase (PostgreSQL)
 - **ORM**: Drizzle ORM
 - **Testing**: Jest, ts-jest
-- **Containerization**: Podman/Docker
+- **AI**: MiniMax
+- **Email**: Resend
+- **Scraping**: Puppeteer
 - **Package Manager**: pnpm
 
 ## Database Schema
 
-### Users Table
+All tables live in `src/db/schema.ts`.
+
+### `users`
 - `id` - Primary key
 - `name` - User's full name
 - `email` - Unique email address
-- `created_at` - Creation timestamp
-- `updated_at` - Last update timestamp
+- `created_at` / `updated_at` - Timestamps
 
-### Profiles Table
+### `profiles`
 - `id` - Primary key
-- `user_id` - Foreign key to users table
+- `user_id` - Foreign key to `users` (cascade delete)
 - `name` - Profile name (unique per user)
+- `keywords` - Text array
 - `location` - User location
 - `additional_context` - Additional profile information
 - `resume` - Resume text/data
-- `created_at` - Creation timestamp
-- `updated_at` - Last update timestamp
+- `created_at` / `updated_at` - Timestamps
+
+### `jobs`
+- `id` - Primary key
+- `source_id` - Enum: `LINKEDIN`, `INDEED`, `GLASSDOOR`, `COMPANY_WEBSITE`, `OTHER`
+- `source_job_id` - Identifier from the source
+- `link`, `company`, `position`, `description`
+- `hash` - Content hash for change detection
+- `created_at` / `updated_at` - Timestamps
+- Unique on `(source_id, source_job_id)`
+
+### `profile_jobs`
+- `id` - Primary key
+- `profile_id` / `job_id` - Foreign keys (cascade delete)
+- `job_hash` - Hash of the job at match time
+- `score` - Enum: `LOW`, `MEDIUM`, `HIGH`, `TOP`
+- `explanation`, `summary` - Human-readable reasoning
+- `first_skill_match`, `second_skill_match`, `third_skill_match`
+- Unique on `(profile_id, job_id)`
+
+### `refresh_status`
+- `id` - Primary key
+- `profile_id` - Foreign key to `profiles` (cascade delete)
+- `status` - Enum: `PENDING`, `IN_PROGRESS`, `COMPLETED`, `FAILED`
+- `step` - Enum: `PENDING`, `FETCHING_JOBS`, `FILTERING_JOBS`
+- `description` - Progress detail
+- `created_at` / `updated_at` - Timestamps
+
+### `portfolio_profile`
+Single row (`id = 1`) holding the portfolio owner’s public profile.
+- `name`, `title`, `email`, `phone`, `location`
+- `linkedin_url`, `github_url`
+- `summary` - Text
+- `skills` - JSONB array
+- `experience` - JSONB array of `{ title, company, period, description }`
+- `projects` - JSONB array of `{ name, description, technologies }`
+- `full_resume_text` - Plain text resume used by the AI endpoints
+- `resume_filename` - PDF filename served by `GET /resume`
+- `created_at` / `updated_at` - Timestamps
+
+### `content_sections`
+- `id` - Primary key
+- `filename` - Source file name
+- `content` - Markdown/plain text body
+- `sort_order` - Display order
+- `created_at` / `updated_at` - Timestamps
 
 ## Example Usage
 
-### Create a User
+### Health check
 ```bash
-curl -X POST http://localhost:3000/users \
-  -H "Content-Type: application/json" \
-  -d '{"name": "John Doe", "email": "john@example.com"}'
+curl http://localhost:3000/
 ```
 
-### Create a Profile
+### Portfolio
 ```bash
-curl -X POST http://localhost:3000/profiles \
-  -H "Content-Type: application/json" \
-  -d '{
-    "user_id": 1,
-    "name": "Software Engineer Profile",
-    "location": "San Francisco, CA",
-    "additional_context": "Full-stack developer with 5+ years experience"
-  }'
+curl http://localhost:3000/portfolio
 ```
 
-### Get User's Profiles
+### Chat
 ```bash
-curl http://localhost:3000/users/1/profiles
+curl -X POST http://localhost:3000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What are Ray'"'"'s main skills?"}'
 ```
+
+### Contact form
+```bash
+curl -X POST http://localhost:3000/contact \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Jane Doe", "email": "jane@example.com", "message": "Hello"}'
+```
+
+### List jobs
+```bash
+curl http://localhost:3000/jobs
+```
+
+## Security
+
+See [`docs/SECURITY.md`](../docs/SECURITY.md) for the credential rotation checklist and incident notes.
+
+- Secrets live only in environment variables. Never commit `.env`.
+- The health check returns an **allowlist** of non-sensitive values (`NODE_ENV`, `PORT`, `HOST`). Never spread `process.env` into a response.
+- Pino redacts `authorization`, `x-api-key` and `x-brain-key` request headers.
+- Upstream error bodies are truncated and masked before being logged.
 
 ## Contributing
 

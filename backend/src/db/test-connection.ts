@@ -8,9 +8,18 @@
 import 'dotenv/config';
 import { db, users, profiles } from './index';
 
+/** Host portion of DATABASE_URL. Never prints credentials. */
+function databaseHost(): string {
+  try {
+    return new URL(process.env.DATABASE_URL || '').host;
+  } catch {
+    return 'unknown';
+  }
+}
+
 async function testConnection() {
   console.log('🔍 Testing Drizzle ORM connection...\n');
-  console.log(`📊 Database Mode: ${process.env.DATABASE_MODE || 'postgres'}\n`);
+  console.log(`📊 Database host: ${databaseHost()}\n`);
 
   try {
     // Test 1: Fetch all users

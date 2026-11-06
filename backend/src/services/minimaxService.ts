@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { getChatContext } from '../data/chatContext';
+import { redactSecrets } from '../util';
 
 interface MiniMaxMessage {
   role: string;
@@ -15,7 +16,6 @@ interface MiniMaxResponse {
       content: string;
       role: 'assistant';
       name?: string;
-      audio_content?: string;
       reasoning_content?: string;
     };
   }>;
@@ -26,64 +26,105 @@ interface MiniMaxResponse {
     completion_tokens: number;
     total_tokens: number;
   };
+  base_resp?: {
+    status_code: number;
+    status_msg: string;
+  };
 }
 
-const MINI_MAX_API_URL = 'https://api.minimax.io/v1/text/chatcompletion_v2';
+/** MiniMax reports most failures inside a 200 response body; this marks them as upstream errors. */
+export class MiniMaxApiError extends Error {
+  readonly code: number;
+
+  constructor(message: string, code = 0) {
+    super(message);
+    this.name = 'MiniMaxApiError';
+    this.code = code;
+  }
+}
+
+const MINI_MAX_API_URL = 'https://api.minimax.io/v1/chat/completions';
+const MINI_MAX_MODEL = 'MiniMax-M3.1-Flash';
+
+export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+export interface CompletionOptions {
+  model?: string;
+  max_tokens?: number;
+  reasoning_effort?: ReasoningEffort;
+}
 
 function getMiniMaxConfig() {
   const apiKey = process.env.MINIMAX_API_KEY;
-  const groupId = process.env.MINIMAX_GROUP_ID;
+  const secondaryApiKey = process.env.MINIMAX_API_KEY_SECONDARY;
 
   if (!apiKey) {
     throw new Error('MINIMAX_API_KEY is not configured');
   }
-  if (!groupId) {
-    throw new Error('MINIMAX_GROUP_ID is not configured');
-  }
 
-  return { apiKey, groupId };
+  return { apiKey, secondaryApiKey };
 }
 
 export async function chatCompletion(
   messages: MiniMaxMessage[],
-  options?: {
-    model?: string;
-    max_tokens?: number;
-    temperature?: number;
-  }
+  options?: CompletionOptions
 ): Promise<string> {
-  const { apiKey, groupId } = getMiniMaxConfig();
+  const { apiKey, secondaryApiKey } = getMiniMaxConfig();
 
-  const model = options?.model ?? 'MiniMax-M2';
-  const max_tokens = options?.max_tokens ?? 1024;
-  const temperature = options?.temperature ?? 0.7;
+  const model = options?.model ?? MINI_MAX_MODEL;
+  const max_completion_tokens = options?.max_tokens ?? 4096;
+  const reasoning_effort = options?.reasoning_effort ?? 'low';
 
-  const url = `${MINI_MAX_API_URL}?GroupId=${groupId}`;
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      max_tokens,
-      temperature,
-    }),
+  const body = JSON.stringify({
+    model,
+    messages,
+    max_completion_tokens,
+    reasoning_effort,
   });
+
+  async function sendRequest(key: string): Promise<Response> {
+    return fetch(MINI_MAX_API_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json',
+      },
+      body,
+    });
+  }
+
+  let response = await sendRequest(apiKey);
+  if (response.status === 429 && secondaryApiKey) {
+    response = await sendRequest(secondaryApiKey);
+  }
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`MiniMax API error: ${response.status} ${response.statusText} - ${errorText}`);
+    throw new MiniMaxApiError(
+      `MiniMax API error: ${response.status} ${response.statusText} - ${redactSecrets(errorText)}`,
+      response.status,
+    );
   }
 
   const data = (await response.json()) as MiniMaxResponse;
 
-  const content = data.choices?.[0]?.message?.content;
+  if (data.base_resp && data.base_resp.status_code !== 0) {
+    throw new MiniMaxApiError(
+      `MiniMax API error ${data.base_resp.status_code}: ${redactSecrets(data.base_resp.status_msg)}`,
+      data.base_resp.status_code,
+    );
+  }
+
+  const choice = data.choices?.[0];
+  const content = choice?.message?.content?.trim();
+
   if (!content) {
-    throw new Error('No content in MiniMax response');
+    if (choice?.finish_reason === 'length') {
+      throw new MiniMaxApiError(
+        'MiniMax response hit the token limit before producing an answer',
+      );
+    }
+    throw new MiniMaxApiError('No content in MiniMax response');
   }
 
   return content;
@@ -92,11 +133,7 @@ export async function chatCompletion(
 export async function structuredCompletion<T>(
   messages: MiniMaxMessage[],
   outputSchema: z.ZodType<T>,
-  options?: {
-    model?: string;
-    max_tokens?: number;
-    temperature?: number;
-  }
+  options?: CompletionOptions
 ): Promise<T> {
   const response = await chatCompletion(messages, {
     ...options,
@@ -169,7 +206,7 @@ export async function chatWithContext(options: ChatOptions): Promise<string> {
     { role: 'user', content: fullContext },
   ];
 
-  return chatCompletion(messages);
+  return chatCompletion(messages, { reasoning_effort: 'medium' });
 }
 
 interface JobMatchOutput {
@@ -207,7 +244,10 @@ ${jobDescription}`;
     { role: 'user', content: prompt },
   ];
 
-  const response = await chatCompletion(messages, { max_tokens: 2048 });
+  const response = await chatCompletion(messages, {
+    max_tokens: 2048,
+    reasoning_effort: 'medium',
+  });
 
   try {
     const parsed = JSON.parse(response) as JobMatchOutput;
@@ -273,7 +313,10 @@ ${jobDescription}`;
     { role: 'user', content: prompt },
   ];
 
-  const response = await chatCompletion(messages, { max_tokens: 4096 });
+  const response = await chatCompletion(messages, {
+    max_tokens: 8192,
+    reasoning_effort: 'high',
+  });
 
   try {
     const parsed = JSON.parse(response) as FitCheckOutput;

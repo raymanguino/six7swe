@@ -2,6 +2,28 @@ import js from '@eslint/js';
 import tseslint from '@typescript-eslint/eslint-plugin';
 import tsparser from '@typescript-eslint/parser';
 
+const backendGlobals = {
+  console: 'readonly',
+  process: 'readonly',
+  __dirname: 'readonly',
+  __filename: 'readonly',
+  Buffer: 'readonly',
+  module: 'readonly',
+  require: 'readonly',
+};
+
+const jestGlobals = {
+  describe: 'readonly',
+  it: 'readonly',
+  test: 'readonly',
+  expect: 'readonly',
+  beforeAll: 'readonly',
+  beforeEach: 'readonly',
+  afterAll: 'readonly',
+  afterEach: 'readonly',
+  jest: 'readonly',
+};
+
 export default [
   {
     ignores: ['**/dist/**', '**/node_modules/**', '**/*.js'],
@@ -15,15 +37,7 @@ export default [
         sourceType: 'module',
         project: true,
       },
-      globals: {
-        console: 'readonly',
-        process: 'readonly',
-        __dirname: 'readonly',
-        __filename: 'readonly',
-        Buffer: 'readonly',
-        module: 'readonly',
-        require: 'readonly',
-      },
+      globals: backendGlobals,
     },
     plugins: {
       '@typescript-eslint': tseslint,
@@ -37,6 +51,12 @@ export default [
       '@typescript-eslint/explicit-module-boundary-types': 'off',
       '@typescript-eslint/no-floating-promises': 'error',
       'no-console': ['warn', { allow: ['warn', 'error'] }],
+    },
+  },
+  {
+    files: ['backend/**/__tests__/**/*.ts', 'backend/**/*.test.ts', 'backend/**/*.spec.ts'],
+    languageOptions: {
+      globals: { ...backendGlobals, ...jestGlobals },
     },
   },
   {
