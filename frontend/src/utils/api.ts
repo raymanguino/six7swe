@@ -43,9 +43,17 @@ export const apiRequest = async (endpoint: string, options: RequestInit = {}) =>
   const url = API_URL ? `${API_URL}${endpoint}` : `/api${endpoint}`;
 
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
     ...(options.headers as Record<string, string> | undefined),
   };
+
+  // Only declare a JSON body when there actually is one. Sending
+  // `Content-Type: application/json` with an empty body makes Fastify reject
+  // the request with FST_ERR_CTP_EMPTY_JSON_BODY, which broke bodyless POSTs
+  // such as starting a job refresh. A caller-supplied Content-Type wins.
+  const hasBody = options.body !== undefined && options.body !== null;
+  if (hasBody && headers['Content-Type'] === undefined) {
+    headers['Content-Type'] = 'application/json';
+  }
 
   if (accessTokenProvider) {
     const token = await accessTokenProvider();
