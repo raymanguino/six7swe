@@ -46,7 +46,7 @@ interface Stubs {
   getProfileById: jest.Mock;
 }
 
-function buildService(stubs: Stubs, profile: Profile | null = makeProfile()) {
+function buildService(stubs: Stubs) {
   return createJobRefreshService({
     jobFetchService: {
       runJobFetch: async () => undefined,

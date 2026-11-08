@@ -11,9 +11,9 @@ import authPlugin from './plugins/auth';
 import routes from './routes';
 import { PUBLIC_ROUTE } from './routes/access';
 import { reapStaleRefreshes } from './services/jobHunt/standalone';
+import Fastify from 'fastify';
 import path from 'path';
 
-const Fastify = require('fastify');
 const fastify = Fastify({
   logger: {
     redact: {
@@ -58,9 +58,13 @@ fastify.register(fastifyRequestContext, {
 // the route guard below reads.
 fastify.register(authPlugin);
 
-// Register service plugins
+// Register service plugins.
+//
+// Each entry of the plugins namespace is a module, so the plugin itself is
+// its default export. Avvio unwraps that automatically, but doing it here
+// keeps the registration typed.
 for (const plugin of Object.values(plugins)) {
-  fastify.register(plugin);
+  fastify.register(plugin.default);
 }
 
 // Register service authentication preHandler
@@ -107,4 +111,4 @@ const start = async () => {
   }
 };
 
-start();
+void start();

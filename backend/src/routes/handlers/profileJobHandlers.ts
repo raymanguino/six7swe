@@ -1,6 +1,5 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { requestContext } from '@fastify/request-context';
-import { z } from 'zod';
 import type { ProfileJob, RefreshStatus } from '../../types';
 import { UnauthenticatedUser } from '../../constants';
 import {
@@ -10,7 +9,7 @@ import {
 } from '../../services/jobHunt/jobRefreshService';
 
 /** The authenticated user's local id. Routes here are private, so it is set. */
-function currentUserId(request: FastifyRequest): number {
+function currentUserId(_request: FastifyRequest): number {
   const user = requestContext.get('user');
   if (!user || user === UnauthenticatedUser) {
     throw new Error('Unauthenticated');

@@ -3,7 +3,7 @@ import { requestContext } from '@fastify/request-context';
 import { UnauthenticatedUser } from '../../constants';
 
 /** The authenticated user's local id. Routes here are private, so it is set. */
-function currentUserId(request: FastifyRequest): number {
+function currentUserId(_request: FastifyRequest): number {
   const user = requestContext.get('user');
   if (!user || user === UnauthenticatedUser) {
     throw new Error('Unauthenticated');

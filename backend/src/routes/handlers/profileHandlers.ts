@@ -30,7 +30,7 @@ const createProfileSchema = z.object({
 const updateProfileSchema = createProfileSchema.partial();
 
 /** The authenticated user's local id. Routes here are private, so it is set. */
-function currentUserId(request: FastifyRequest): number {
+function currentUserId(_request: FastifyRequest): number {
   const user = requestContext.get('user');
   if (!user || user === UnauthenticatedUser) {
     throw new Error('Unauthenticated');

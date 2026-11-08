@@ -10,6 +10,12 @@ const backendGlobals = {
   Buffer: 'readonly',
   module: 'readonly',
   require: 'readonly',
+  fetch: 'readonly',
+  document: 'readonly',
+  setTimeout: 'readonly',
+  clearTimeout: 'readonly',
+  setInterval: 'readonly',
+  clearInterval: 'readonly',
 };
 
 const jestGlobals = {
@@ -45,7 +51,10 @@ export default [
     rules: {
       ...js.configs.recommended.rules,
       ...tseslint.configs.recommended.rules,
-      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', ignoreRestSiblings: true },
+      ],
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/explicit-function-return-type': 'off',
       '@typescript-eslint/explicit-module-boundary-types': 'off',
@@ -66,10 +75,6 @@ export default [
       },
       globals: {
         ...backendGlobals,
-        setTimeout: 'readonly',
-        clearTimeout: 'readonly',
-        setInterval: 'readonly',
-        clearInterval: 'readonly',
       },
     },
     plugins: {
@@ -78,7 +83,10 @@ export default [
     rules: {
       ...js.configs.recommended.rules,
       ...tseslint.configs.recommended.rules,
-      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', ignoreRestSiblings: true },
+      ],
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/no-floating-promises': 'error',
       'no-console': ['warn', { allow: ['warn', 'error'] }],
@@ -87,6 +95,11 @@ export default [
   {
     files: ['backend/**/__tests__/**/*.ts', 'backend/**/*.test.ts', 'backend/**/*.spec.ts'],
     languageOptions: {
+      parserOptions: {
+        // The build tsconfig excludes the tests, so they need a project of
+        // their own for the type-aware rules to resolve against them.
+        project: './backend/tsconfig.test.json',
+      },
       globals: { ...backendGlobals, ...jestGlobals },
     },
   },
