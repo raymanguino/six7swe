@@ -52,7 +52,11 @@ export const matchBandEnum = pgEnum('match_band', [
 export const users = pgTable('users', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
-  email: varchar('email', { length: 255 }).notNull().unique(),
+  // Nullable: an authenticated identity may carry no email claim. Postgres
+  // treats NULLs as distinct in a unique index, so several email-less users
+  // can coexist. `auth_id` is the real identity key; the email is an
+  // attribute that may be missing.
+  email: varchar('email', { length: 255 }).unique(),
   /** External auth provider id (Supabase auth user id). */
   authId: varchar('auth_id', { length: 255 }).unique(),
   createdAt: timestamp('created_at').defaultNow(),

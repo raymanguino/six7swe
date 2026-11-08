@@ -84,7 +84,10 @@ export async function resolveUserFromToken(token: string | undefined): Promise<C
 
   return {
     id: authId,
-    email: email ?? '',
+    // A token may carry no email claim. `null` says "this identity has no
+    // email" and is not the same as an empty address, so it can never be
+    // used as a lookup key that several identities would share.
+    email: email ?? null,
     authId,
   };
 }

@@ -235,6 +235,7 @@ imports:
 | `refresh.ts` | Refresh status state machine |
 | `filtering.ts` | Which jobs still need scoring (`selectJobsToScore`) |
 | `jobs.ts` | Search query construction and geoId validation |
+| `identity.ts` | Which local row an authenticated subject maps to |
 
 ## Environment & Configuration
 
