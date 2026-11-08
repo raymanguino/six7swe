@@ -21,6 +21,18 @@ export interface DatabaseTarget {
 export const wantsRemote = process.argv.includes('--remote');
 
 /**
+ * True when the caller asked for the job-hunt development data to be
+ * inserted. A reset leaves the database empty unless this is passed.
+ */
+export const wantsSeed = process.argv.includes('--seed');
+
+/**
+ * True when the caller confirmed a destructive operation up front, so the
+ * script does not have to ask.
+ */
+export const assumesYes = process.argv.includes('--yes');
+
+/**
  * Loads the env file for the selected target and returns the connection.
  *
  * `.env` points at the local Supabase stack; `.env.remote` points at the

@@ -3,20 +3,27 @@
  *
  * There are no migration files: the Drizzle schema in src/db/schema/ is the
  * single source of truth. This script drops everything in the `public`
- * schema, recreates it from that schema, and re-seeds the reference data.
+ * schema and recreates it from that schema.
  *
  * The Supabase-managed schemas (auth, storage, graphql_public) are left
  * alone, so Supabase Auth users survive a reset.
  *
+ * The database is left empty unless `--seed` is passed. The portfolio is
+ * never seeded here: its data lives in gitignored files, so it is applied
+ * separately with `pnpm run db:seed-portfolio`.
+ *
  * Usage:
- *   pnpm run db:reset              # local database
- *   pnpm run db:reset -- --remote # the hosted database
+ *   pnpm run db:reset                    # local database, empty
+ *   pnpm run db:reset -- --seed          # local database, with dev data
+ *   pnpm run db:reset -- --remote        # the hosted database, empty
+ *   pnpm run db:reset -- --remote --yes  # hosted database, no prompt
  */
 
 import { spawnSync } from 'node:child_process';
+import readline from 'node:readline/promises';
 import path from 'node:path';
 import postgres from 'postgres';
-import { resolveDatabaseTarget, sslOptions } from './db-env';
+import { assumesYes, resolveDatabaseTarget, sslOptions, wantsSeed } from './db-env';
 
 /**
  * Drops every table and enum in the `public` schema.
@@ -76,9 +83,44 @@ function pushSchema(): void {
   }
 }
 
+/**
+ * Confirms a destructive reset of the hosted database.
+ *
+ * The reset drops every table in the public schema, so a mistake destroys
+ * real data. The target host is printed so it can be checked against the
+ * dashboard, and the host has to be typed back to continue.
+ */
+async function confirmRemoteReset(databaseUrl: string): Promise<void> {
+  const host = new URL(databaseUrl).hostname;
+
+  process.stdout.write(
+    `\nThis will DROP every table in the public schema of ${host}.\n` +
+      'Everything in it is lost. The Supabase auth users are not affected.\n',
+  );
+
+  if (assumesYes) {
+    process.stdout.write('Confirmation skipped because --yes was passed.\n');
+    return;
+  }
+
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = await rl.question(`Type the host (${host}) to continue: `);
+    if (answer.trim() !== host) {
+      throw new Error('Reset aborted: the confirmation did not match the host.');
+    }
+  } finally {
+    rl.close();
+  }
+}
+
 async function main(): Promise<void> {
   const target = resolveDatabaseTarget();
   const label = target.remote ? 'REMOTE' : 'local';
+
+  if (target.remote) {
+    await confirmRemoteReset(target.databaseUrl);
+  }
 
   process.stdout.write(`Resetting the ${label} database.\n`);
 
@@ -98,13 +140,15 @@ async function main(): Promise<void> {
   pushSchema();
   process.stdout.write('Schema applied from src/db/schema/.\n');
 
-  // Imported after the schema is in place: both seeds create the Drizzle
-  // client, which binds to DATABASE_URL when it is first loaded.
-  const { seedJobHuntData } = await import('./seed-job-hunt');
-  const seeded = await seedJobHuntData();
-  process.stdout.write(
-    `Seeded ${seeded.users} user(s) and ${seeded.profiles} profile(s).\n`,
-  );
+  if (wantsSeed) {
+    // Imported after the schema is in place: the seed creates the Drizzle
+    // client, which binds to DATABASE_URL when it is first loaded.
+    const { seedJobHuntData } = await import('./seed-job-hunt');
+    const seeded = await seedJobHuntData();
+    process.stdout.write(`Seeded ${seeded.users} user(s) and ${seeded.profiles} profile(s).\n`);
+  } else {
+    process.stdout.write('No seed data inserted; the database is empty.\n');
+  }
 
   process.stdout.write(
     '\nDone. The portfolio profile and content sections are not seeded by this ' +

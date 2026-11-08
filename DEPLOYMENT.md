@@ -50,9 +50,30 @@ cd backend
 pnpm run db:reset -- --remote
 ```
 
-This drops everything in the `public` schema, re-applies it from `src/db/schema/` and re-seeds the
-users and search profiles. The Supabase-managed schemas (`auth`, `storage`, `graphql_public`) are
-left alone, so Supabase Auth users survive.
+This drops everything in the `public` schema and re-applies it from `src/db/schema/`. The
+Supabase-managed schemas (`auth`, `storage`, `graphql_public`) are left alone, so Supabase Auth
+users survive.
+
+Because the reset destroys data, it prints the target host and asks you to type it back before it
+drops anything. Pass `--yes` to skip the prompt when you have already checked the host:
+
+```bash
+pnpm run db:reset -- --remote --yes
+```
+
+The database is left **empty**. Add `--seed` to also insert the job-hunter development data:
+
+```bash
+pnpm run db:reset -- --remote --seed   # hosted database, with dev data
+pnpm run db:reset -- --seed             # local database, with dev data
+```
+
+The portfolio is never seeded by the reset: its data lives in gitignored files, so apply it
+separately with `pnpm run db:seed-portfolio -- --remote`. Without it the public site renders
+without a profile.
+
+> Take a backup first (`pg_dump "$DATABASE_URL" -Fc -f backup.dump`) if the hosted database holds
+> anything you want to keep.
 
 To only apply the schema without dropping anything, use `pnpm run db:push` with
 `DOTENV_CONFIG_PATH=.env.remote`.
