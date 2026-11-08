@@ -3,9 +3,11 @@
 Portfolio + job-matching SWE platform. Full architecture in `docs/architecture.md`.
 
 ## Architecture Notes
-- Auth is stubbed: `onRequest` hard-codes a user via `@fastify/request-context`; replace before prod
+- Two separate products in one repo: the public **portfolio** (`backend/src/db/schema/portfolio.ts`, routes in `backend/src/routes/portfolio.ts`) and the **job hunter** (`backend/src/db/schema/jobHunt.ts`, routes in `backend/src/routes/jobHunt.ts`). The job hunter lives under `/job-hunt/*`.
+- Auth verifies real Supabase JWTs against the project JWKS (`backend/src/services/auth/`). Routes are private by default and opt out via `PUBLIC_ROUTE` in `backend/src/routes/access.ts`. `AUTH_DEV_BYPASS=true` is for local use only.
 - Supabase used for Storage only (resume/PDF bucket `portfolio-files`); no frontend Supabase client
-- Drizzle manages schema (`backend/src/db/schema.ts`) and migrations (`backend/migrations/`); Supabase migrations (`supabase/migrations/`) cover the same tables for local Supabase CLI use
+- **No migration files.** The Drizzle schema (`backend/src/db/schema/`) is the single source of truth; `pnpm run db:push` reconciles the database with it and `pnpm run db:reset` rebuilds it from scratch. The parallel `supabase/migrations/` set was removed because it drifted.
+- Portfolio data is private and gitignored: `backend/scripts/portfolio-data.json` (template: `portfolio-data.example.json`) and `backend/content/`. Seed it with `pnpm run db:seed-portfolio`.
 - `portfolioService.ts` caches in memory; TTL via `PORTFOLIO_CACHE_TTL_MS` (default 10 min)
 - Lerna is present (`lerna.json`) but unused; pnpm workspace scripts are authoritative
 - `packages/` is empty; no shared packages yet

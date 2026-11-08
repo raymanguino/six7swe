@@ -43,9 +43,9 @@ This backend lives in the `backend/` directory of the Six7SWE monorepo. See the 
    ```bash
    cd backend
    pnpm run db:push
-   # The seed script is gitignored, so copy the example first:
-   cp scripts/seed-portfolio.example.ts scripts/seed-portfolio.ts
-   # Edit scripts/seed-portfolio.ts with your own profile data, then:
+   # The profile data is gitignored, so copy the example first:
+   cp scripts/portfolio-data.example.json scripts/portfolio-data.json
+   # Edit scripts/portfolio-data.json with your own profile data, then:
    pnpm run db:seed-portfolio
    ```
 
@@ -74,16 +74,20 @@ This backend lives in the `backend/` directory of the Six7SWE monorepo. See the 
 
 ### Choosing between local and remote
 
-The environment is selected by **which file dotenv loads**, not by commenting lines out. Every entry point (`src/index.ts`, `drizzle.config.ts`, `scripts/seed-portfolio.ts`) uses `dotenv/config`, which honours `DOTENV_CONFIG_PATH`:
+The environment is selected by **which file dotenv loads**, not by commenting lines out. The server
+(`src/index.ts`) and the Drizzle config use `dotenv/config`, which honours `DOTENV_CONFIG_PATH`.
+The maintenance scripts take an explicit `--remote` flag instead, because they load the env file
+themselves:
 
 ```bash
 # Local database (default - .env)
 pnpm dev
 pnpm run db:push
+pnpm run db:seed
 
 # Remote database (.env.remote)
-DOTENV_CONFIG_PATH=.env.remote pnpm run db:push
-DOTENV_CONFIG_PATH=.env.remote pnpm run db:seed-portfolio
+pnpm run db:reset -- --remote
+pnpm run db:seed-portfolio -- --remote
 ```
 
 > **Two rules that cause most `.env` bugs:**
@@ -109,7 +113,6 @@ This project uses **Supabase** (PostgreSQL) with Drizzle ORM. You can use either
    NODE_ENV=development
    PORT=3000
    DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres?sslmode=disable
-   DATABASE_MIGRATIONS_DIR=./migrations
    ```
 
 3. Apply the schema:
@@ -129,13 +132,12 @@ This project uses **Supabase** (PostgreSQL) with Drizzle ORM. You can use either
    NODE_ENV=production
    PORT=3000
    DATABASE_URL=your_supabase_connection_string
-   DATABASE_MIGRATIONS_DIR=./migrations
    ```
 
 4. Apply the schema to the remote database:
    ```bash
    cd backend
-   DOTENV_CONFIG_PATH=.env.remote pnpm run db:push
+   pnpm run db:reset -- --remote
    ```
 
 ### Drizzle Studio (Database GUI)
@@ -151,27 +153,38 @@ Opens at `https://local.drizzle.studio`
 
 ### Database Scripts
 
+There are **no migration files**. The Drizzle schema in `src/db/schema/` is the single source of
+truth, and `drizzle-kit push` reconciles the database with it. A second copy of the schema (for
+the Supabase CLI) was removed because the two inevitably drifted apart.
+
 ```bash
 # In backend directory:
-pnpm run db:generate   # Generate migration files from schema
-pnpm run db:migrate    # Apply migrations to database
-pnpm run db:push       # Push schema directly (dev only)
-pnpm run db:studio     # Open Drizzle Studio GUI
-pnpm run db:seed-portfolio  # Seed portfolio (requires seed-portfolio.ts; copy from seed-portfolio.example.ts)
+pnpm run db:push            # Apply the schema to the database
+pnpm run db:reset           # Drop everything in `public`, re-apply the schema, re-seed
+pnpm run db:reset -- --remote   # The same, against the hosted database
+pnpm run db:studio          # Open Drizzle Studio GUI
+pnpm run db:seed            # Seed the users and search profiles
+pnpm run db:seed-portfolio  # Seed the portfolio profile and content sections
 ```
+
+`db:reset` drops and recreates everything in the `public` schema. The Supabase-managed schemas
+(`auth`, `storage`, `graphql_public`) are left alone, so Supabase Auth users survive a reset.
 
 ### Portfolio Data (Supabase)
 
 Portfolio profile and content are stored in Supabase for public-repo safety:
 
-1. Apply migrations: `pnpm run db:push`
+1. Apply the schema: `pnpm run db:push`
 2. Seed portfolio data:
-   - Copy `scripts/seed-portfolio.example.ts` to `scripts/seed-portfolio.ts`
-   - Edit `seed-portfolio.ts` with your profile data
+   - Copy `scripts/portfolio-data.example.json` to `scripts/portfolio-data.json`
+   - Edit `scripts/portfolio-data.json` with your profile data
    - Run `pnpm run db:seed-portfolio`
    - Seeds `portfolio_profile` (id=1) and `content_sections`
    - If `backend/content/` exists, reads .md/.txt files into content_sections
 3. **Resume PDF**: With `PORTFOLIO_DATA_SOURCE=mcp`, implement `get_resume_pdf` on your MCP server (see `.env.example`). Otherwise place the PDF in `backend/public/` (e.g. `resume.pdf`) for local serving.
+
+The data file is gitignored (`backend/scripts/portfolio-data.json`), as is `backend/content/`.
+Only the example JSON and the seed logic are tracked.
 
 ## Development
 

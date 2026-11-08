@@ -47,8 +47,15 @@ The schema must exist before the backend can serve requests. From your machine:
 
 ```bash
 cd backend
-DOTENV_CONFIG_PATH=.env.remote pnpm run db:push
+pnpm run db:reset -- --remote
 ```
+
+This drops everything in the `public` schema, re-applies it from `src/db/schema/` and re-seeds the
+users and search profiles. The Supabase-managed schemas (`auth`, `storage`, `graphql_public`) are
+left alone, so Supabase Auth users survive.
+
+To only apply the schema without dropping anything, use `pnpm run db:push` with
+`DOTENV_CONFIG_PATH=.env.remote`.
 
 `backend/.env.remote` holds the remote `DATABASE_URL` and is gitignored.
 
@@ -63,7 +70,7 @@ The frontend downloads the resume from the backend via `GET /resume`. The backen
 
 ### 5. Update Resume / Portfolio Data
 
-1. Copy `backend/scripts/seed-portfolio.example.ts` to `backend/scripts/seed-portfolio.ts`, fill in your data, then run `pnpm run db:seed-portfolio` from `backend/`—or update `portfolio_profile` directly in the database
+1. Copy `backend/scripts/portfolio-data.example.json` to `backend/scripts/portfolio-data.json`, fill in your data, then run `pnpm run db:seed-portfolio -- --remote` from `backend/`—or update `portfolio_profile` directly in the database
 2. Contact info is served from the portfolio API; no frontend edits needed
 
 ### 6. Job Refreshes (optional)

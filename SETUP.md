@@ -22,12 +22,12 @@ Run from the repo root:
 supabase start
 ```
 
-This starts Postgres on `127.0.0.1:54322`, the REST API on `54321`, and Studio on `54323`. The Supabase migrations in `supabase/migrations/` are applied automatically on first run.
+This starts Postgres on `127.0.0.1:54322`, the REST API on `54321`, and Studio on `54323`. The local
+stack provides Supabase Auth, which the job-hunter signs in with.
 
-> `supabase/migrations/` is a **mirror** of `backend/migrations/` for the Supabase CLI. The two
-> have different baselines, so their tags do not line up one-to-one; the journal in
-> `supabase/migrations/meta/_journal.json` is the source of truth for the order. Keep both in
-> sync whenever you add a backend migration.
+> The schema is **not** managed by the Supabase CLI. It is owned by Drizzle
+> (`backend/src/db/schema/`) and applied with `pnpm run db:push`. Migrations in
+> `supabase/migrations/` were removed because a second copy of the schema only drifts.
 
 ### 3. Backend Setup
 
@@ -60,7 +60,8 @@ Set `MINIMAX_API_KEY_SECONDARY` optionally to retry once with a second key when 
 
 ```bash
 cd backend
-pnpm run db:push
+pnpm run db:push     # create the schema
+pnpm run db:seed     # users and search profiles
 ```
 
 ### 5. Frontend Setup
@@ -88,8 +89,8 @@ after creating or editing `frontend/.env`.
 
 ### 6. Portfolio / Resume
 
-1. Copy `backend/scripts/seed-portfolio.example.ts` to `backend/scripts/seed-portfolio.ts`
-2. Edit `seed-portfolio.ts` with your profile data (name, email, resume text, etc.)
+1. Copy `backend/scripts/portfolio-data.example.json` to `backend/scripts/portfolio-data.json`
+2. Edit `portfolio-data.json` with your profile data (name, email, resume text, etc.)
 3. Run `pnpm run db:seed-portfolio` from `backend/`
 4. Copy your resume PDF to `backend/public/` (e.g. `resume.pdf`), or set `PORTFOLIO_DATA_SOURCE=mcp` and configure MCP in `backend/.env` so portfolio and resume are served from your MCP server (see `backend/.env.example`).
 
@@ -174,14 +175,30 @@ pnpm dev
 pnpm run db:push
 
 # Remote database
-DOTENV_CONFIG_PATH=.env.remote pnpm run db:push
+pnpm run db:reset -- --remote
 ```
 
 Both files are gitignored. Only `backend/.env.example` is tracked.
 
+## Resetting the Database
+
+There are no migration files: the Drizzle schema in `backend/src/db/schema/` is the single source
+of truth. To rebuild a database from scratch, drop everything in the `public` schema, re-apply the
+schema and re-seed:
+
+```bash
+cd backend
+pnpm run db:reset                # local
+pnpm run db:reset -- --remote    # hosted
+pnpm run db:seed-portfolio       # portfolio profile and content sections
+```
+
+The Supabase-managed schemas (`auth`, `storage`, `graphql_public`) are left alone, so Supabase
+Auth users survive a reset.
+
 ## Updating Resume/Portfolio Data
 
-Update the `portfolio_profile` table in the database, or edit `backend/scripts/seed-portfolio.ts` (copy from `seed-portfolio.example.ts` if needed) and re-run `pnpm run db:seed-portfolio` from `backend/`. The AI chat assistant uses `full_resume_text` to answer questions.
+Update the `portfolio_profile` table in the database, or edit `backend/scripts/portfolio-data.json` (copy from `portfolio-data.example.json` if needed) and re-run `pnpm run db:seed-portfolio` from `backend/`. The AI chat assistant uses `full_resume_text` to answer questions.
 
 > The portfolio payload is cached in memory for `PORTFOLIO_CACHE_TTL_MS`
 > (default 10 minutes), so chat may keep serving the previous text until the
