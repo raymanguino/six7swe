@@ -5,12 +5,17 @@ import type { ProfileService } from '../../db/api/profile';
 import type { RefreshStatusService } from '../../db/api/refreshStatus';
 import type { Profile } from '../../db/schema/jobHunt';
 import type { JobFetchService } from '../jobFetchers';
-import { matchJob } from '../ai';
+// Imported directly rather than through the `../ai` barrel: the barrel also
+// exports the chat and fitcheck agents, which pull the portfolio database
+// client in and would make this service untestable without a database.
+import { matchJob } from '../ai/jobMatch';
 import { mapWithConcurrency } from '../../util';
 import {
   buildJobSearchQuery,
+  isValidGeoId,
   nextRefreshState,
   selectJobsToScore,
+  ActiveRefreshExistsError,
   INITIAL_REFRESH_STATE,
   type RefreshEvent,
   type RefreshState,
@@ -41,6 +46,22 @@ export class ProfileNotFoundError extends Error {
   constructor(profileId: number) {
     super(`Profile ${profileId} not found`);
     this.name = 'ProfileNotFoundError';
+  }
+}
+
+/**
+ * Thrown when the profile has no usable LinkedIn geo id.
+ *
+ * A refresh needs a numeric region id. Without one the search would silently
+ * return nothing, so the refresh is rejected up front instead of failing
+ * partway through.
+ */
+export class InvalidProfileLocationError extends Error {
+  constructor(profileId: number, location: string | null) {
+    super(
+      `Profile ${profileId} has an invalid LinkedIn geo id: ${JSON.stringify(location ?? null)}`,
+    );
+    this.name = 'InvalidProfileLocationError';
   }
 }
 
@@ -91,14 +112,33 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
       throw new ProfileNotFoundError(profileId);
     }
 
+    // A refresh needs a numeric LinkedIn geo id. Checking here turns a
+    // background failure into an immediate, actionable error.
+    if (!isValidGeoId(profile.location)) {
+      throw new InvalidProfileLocationError(profileId, profile.location);
+    }
+
     // Guard against two refreshes for the same profile running at once:
     // they would score the same jobs twice and race on the status row.
+    //
+    // The read below is only a fast path. The insert is the real gate: a
+    // partial unique index makes the database reject a second active refresh
+    // for the same profile, so two concurrent requests cannot both start one.
     const active = await refreshStatusService.getActiveRefreshForProfile(profileId);
     if (active) {
       throw new RefreshInProgressError(profileId);
     }
 
-    const refresh = await refreshStatusService.newProfileRefreshStatus(profileId);
+    let refresh;
+    try {
+      refresh = await refreshStatusService.newProfileRefreshStatus(profileId);
+    } catch (error) {
+      if (error instanceof ActiveRefreshExistsError) {
+        // Another request inserted between the check above and this insert.
+        throw new RefreshInProgressError(profileId);
+      }
+      throw error;
+    }
 
     // Runs in the background so the request returns straight away. runPipeline
     // never rejects: it records failures on the refresh row instead.

@@ -7,8 +7,10 @@ import {
   text,
   pgEnum,
   unique,
+  uniqueIndex,
   index,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 
 // ============================================================
 // JOB-HUNTER PRODUCT SCHEMA
@@ -103,7 +105,21 @@ export const refreshStatus = pgTable('refresh_status', {
   description: varchar('description', { length: 512 }),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
-});
+}, (table) => ({
+  // At most one refresh may be active for a profile at a time.
+  //
+  // The application also checks for an active refresh before starting one,
+  // but that check and the insert are separate statements, so two concurrent
+  // requests can both observe "no active refresh" and both insert. This
+  // partial unique index makes the database the authority: the second insert
+  // fails with a unique violation instead of creating a duplicate run.
+  //
+  // It is partial so that finished rows (COMPLETED / FAILED) never block a
+  // later refresh, and so the full history of past refreshes is kept.
+  activeProfileUnique: uniqueIndex('refresh_status_active_profile_unique')
+    .on(table.profileId)
+    .where(sql`${table.status} in ('PENDING', 'IN_PROGRESS')`),
+}));
 
 export const profileJobs = pgTable('profile_jobs', {
   id: serial('id').primaryKey(),

@@ -54,3 +54,22 @@ export function nextRefreshState(current: RefreshState, event: RefreshEvent): Re
     }
   }
 }
+
+/**
+ * Thrown when a refresh could not start because the profile already has one
+ * in flight.
+ *
+ * At most one refresh may be active per profile: two would score the same
+ * jobs twice and race on the status row. The database enforces this with a
+ * partial unique index, and this error carries that enforcement up into the
+ * service and route layers.
+ */
+export class ActiveRefreshExistsError extends Error {
+  readonly profileId: number;
+
+  constructor(profileId: number) {
+    super(`A refresh is already active for profile ${profileId}`);
+    this.name = 'ActiveRefreshExistsError';
+    this.profileId = profileId;
+  }
+}

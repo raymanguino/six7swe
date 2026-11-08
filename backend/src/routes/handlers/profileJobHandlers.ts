@@ -6,6 +6,7 @@ import { UnauthenticatedUser } from '../../constants';
 import {
   ProfileNotFoundError,
   RefreshInProgressError,
+  InvalidProfileLocationError,
 } from '../../services/jobHunt/jobRefreshService';
 
 /** The authenticated user's local id. Routes here are private, so it is set. */
@@ -71,6 +72,12 @@ export async function runRefreshJobsForProfile(
     }
     if (error instanceof RefreshInProgressError) {
       return reply.code(409).send({ error: 'A refresh is already running for this profile.' });
+    }
+    if (error instanceof InvalidProfileLocationError) {
+      return reply.code(400).send({
+        error:
+          'This profile has no valid LinkedIn geo id. Set it to a numeric region id before refreshing.',
+      });
     }
     request.log.error({ err: error }, 'Error running job fetch');
     return reply.code(500).send({ error: 'Failed to run job fetch.' });

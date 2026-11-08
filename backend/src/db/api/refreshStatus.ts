@@ -1,6 +1,24 @@
 import { eq, and, lt, isNull, or, sql } from 'drizzle-orm';
 import { db } from '../index';
 import { refreshStatus, type RefreshStatus as RefreshStatusType } from '../schema/jobHunt';
+import { ActiveRefreshExistsError } from '../../domain/jobHunt';
+
+/** Postgres error code for a unique constraint violation. */
+const UNIQUE_VIOLATION = '23505';
+
+/**
+ * True when the error is a unique constraint violation.
+ *
+ * The insert races are resolved by the database, so this is how the service
+ * learns that another refresh won.
+ */
+function isUniqueViolation(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) {
+    return false;
+  }
+  const code = (error as { code?: unknown }).code;
+  return code === UNIQUE_VIOLATION;
+}
 
 export interface RefreshStatusService {
   newProfileRefreshStatus(profileId: number): Promise<RefreshStatusType>;
@@ -15,22 +33,36 @@ export interface RefreshStatusService {
   endFailure(id: number, error?: string): Promise<void>;
 }
 
+/**
+ * Creates a PENDING refresh row for a profile.
+ *
+ * Throws {@link ActiveRefreshExistsError} when the profile already has an
+ * active refresh. The partial unique index on `refresh_status` decides this,
+ * so the outcome is correct even when two requests race.
+ */
 export async function newProfileRefreshStatus(
   profileId: number
 ): Promise<RefreshStatusType> {
-  const [row] = await db
-    .insert(refreshStatus)
-    .values({
-      profileId,
-      status: 'PENDING',
-      step: 'PENDING',
-      description: '',
-    })
-    .returning();
-  if (!row) {
-    throw new Error('Failed to create refresh status');
+  try {
+    const [row] = await db
+      .insert(refreshStatus)
+      .values({
+        profileId,
+        status: 'PENDING',
+        step: 'PENDING',
+        description: '',
+      })
+      .returning();
+    if (!row) {
+      throw new Error('Failed to create refresh status');
+    }
+    return row;
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      throw new ActiveRefreshExistsError(profileId);
+    }
+    throw error;
   }
-  return row;
 }
 
 export async function getRefreshStatus(
