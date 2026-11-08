@@ -1,10 +1,12 @@
-// Simple hash function for computing diffs.
+import { createHash } from 'node:crypto';
+
+/**
+ * Content fingerprint used for change detection.
+ *
+ * SHA-256 rather than a 32-bit rolling hash: these values are stored in
+ * `varchar(64)` columns and are compared across refreshes to decide whether a
+ * posting changed, so collisions have to be practically impossible.
+ */
 export function hashData(data: string): string {
-  let hash = 0, i, chr;
-  for (i = 0; i < data.length; i++) {
-    chr   = data.charCodeAt(i);
-    hash  = ((hash << 5) - hash) + chr;
-    hash |= 0; // Convert to 32bit integer
-  }
-  return hash.toString();
+  return createHash('sha256').update(data, 'utf8').digest('hex');
 }

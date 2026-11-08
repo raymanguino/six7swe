@@ -25,19 +25,46 @@ const readErrorMessage = async (response: Response): Promise<string> => {
   return `Request failed with status ${response.status}`;
 };
 
+type AccessTokenProvider = () => Promise<string | null>;
+
+let accessTokenProvider: AccessTokenProvider | null = null;
+
+/**
+ * Registers the source of the current access token.
+ *
+ * The auth context installs itself here so any call can attach the token
+ * without every caller having to thread it through.
+ */
+export const setAccessTokenProvider = (provider: AccessTokenProvider | null): void => {
+  accessTokenProvider = provider;
+};
+
 export const apiRequest = async (endpoint: string, options: RequestInit = {}) => {
   const url = API_URL ? `${API_URL}${endpoint}` : `/api${endpoint}`;
 
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(options.headers as Record<string, string> | undefined),
+  };
+
+  if (accessTokenProvider) {
+    const token = await accessTokenProvider();
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+  }
+
   const response = await fetch(url, {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
+    headers,
   });
 
   if (!response.ok) {
     throw new ApiError(await readErrorMessage(response), response.status);
+  }
+
+  if (response.status === 204) {
+    return undefined;
   }
 
   return response.json();

@@ -2,4 +2,6 @@
 export type ContextUser = {
   id: number | string;
   email: string;
+  /** External auth provider id (Supabase auth user id), when authenticated. */
+  authId?: string;
 };

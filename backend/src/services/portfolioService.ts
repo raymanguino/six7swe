@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { portfolioProfile, contentSections } from '../db/schema';
+import { portfolioProfile, contentSections } from '../db/schema/portfolio';
 import { eq, asc } from 'drizzle-orm';
 import type { PortfolioData, PortfolioProfileData, ContentSectionData } from '../types/portfolio';
 import { getPortfolioDataSource, isMcpConnectionConfigured } from '../config/portfolioMcp';

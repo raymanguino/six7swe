@@ -7,4 +7,4 @@ export type {
   Job,
   ProfileJob,
   RefreshStatus,
-} from '../db/schema';
+} from '../db/schema/jobHunt';

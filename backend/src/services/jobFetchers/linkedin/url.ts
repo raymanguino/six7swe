@@ -11,7 +11,7 @@ const LINKEDIN_BASE_URL = 'https://www.linkedin.com';
 */
 export function buildLinkedInJobListUrl(
   keywords: Array<string> = [],
-  location: string = '105149290', // Location (105149290 = Ontario, Canada)
+  geoId: string = '105149290', // Location (105149290 = Ontario, Canada)
   pageNum: number = 0,
 ): string {
   const baseUrl = `${LINKEDIN_BASE_URL}/jobs/search/`;
@@ -19,7 +19,7 @@ export function buildLinkedInJobListUrl(
     f_E: '4', // Experience level (4 = Mid-Senior level)
     f_TPR: 'r86400', // Time posted (r86400 = past 24 hours)
     f_WT: '2,1,3', // Work type (2 = Full-time, 1 = Internship, 3 = Contract)
-    geoId: location,
+    geoId: geoId,
     keywords: keywords.map(keyword => `"${keyword}"`).join(','), // Enclose keywords with "" and join them with "," e.g., ["Software Engineer", "Developer"] => "%22Software+Engineer%22,%22Developer%22"
     sortBy: 'DD', // Sort by date posted (DD = Date Descending)
     position: '1',

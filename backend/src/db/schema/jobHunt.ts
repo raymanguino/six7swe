@@ -8,11 +8,15 @@ import {
   pgEnum,
   unique,
   index,
-  jsonb,
 } from 'drizzle-orm/pg-core';
 
 // ============================================================
-// ENUMS
+// JOB-HUNTER PRODUCT SCHEMA
+//
+// Tables owned by the job-search product: users, per-search profiles,
+// scraped job postings, matches and refresh progress.
+// These are independent of the public portfolio site; see ./portfolio.ts
+// for the portfolio owner's public profile.
 // ============================================================
 
 export const jobSourceEnum = pgEnum('job_source', [
@@ -36,21 +40,19 @@ export const refreshUpdateStatusStepEnum = pgEnum('refresh_update_status_step', 
   'FILTERING_JOBS',
 ]);
 
-export const matchScoreEnum = pgEnum('match_score', [
+export const matchBandEnum = pgEnum('match_band', [
   'LOW',
   'MEDIUM',
   'HIGH',
   'TOP',
 ]);
 
-// ============================================================
-// TABLES
-// ============================================================
-
 export const users = pgTable('users', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 255 }).notNull(),
   email: varchar('email', { length: 255 }).notNull().unique(),
+  /** External auth provider id (Supabase auth user id). */
+  authId: varchar('auth_id', { length: 255 }).unique(),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 });
@@ -79,6 +81,10 @@ export const jobs = pgTable('jobs', {
   company: varchar('company', { length: 255 }).notNull(),
   position: varchar('position', { length: 255 }).notNull(),
   description: text('description').notNull(),
+  // Location as displayed by the source (e.g. "Toronto, Ontario, Canada").
+  location: varchar('location', { length: 255 }),
+  // Raw relative label from the source (e.g. "2 days ago"), not a timestamp.
+  datePosted: varchar('date_posted', { length: 64 }),
   hash: varchar('hash', { length: 64 }).notNull(),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
@@ -99,36 +105,6 @@ export const refreshStatus = pgTable('refresh_status', {
   updatedAt: timestamp('updated_at').defaultNow(),
 });
 
-// Portfolio owner profile (resume + contact info) - single row
-export const portfolioProfile = pgTable('portfolio_profile', {
-  id: serial('id').primaryKey(),
-  name: varchar('name', { length: 255 }).notNull(),
-  title: varchar('title', { length: 512 }).notNull(),
-  email: varchar('email', { length: 255 }).notNull(),
-  phone: varchar('phone', { length: 50 }),
-  location: varchar('location', { length: 255 }),
-  linkedinUrl: varchar('linkedin_url', { length: 512 }),
-  githubUrl: varchar('github_url', { length: 512 }),
-  summary: text('summary'),
-  skills: jsonb('skills').$type<string[]>().default([]),
-  experience: jsonb('experience').$type<Array<{ title: string; company: string; period: string; description: string }>>().default([]),
-  projects: jsonb('projects').$type<Array<{ name: string; description: string; technologies: string[] }>>().default([]),
-  fullResumeText: text('full_resume_text').notNull(),
-  resumeFilename: varchar('resume_filename', { length: 255 }),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
-});
-
-// Additional content sections (from backend/content files)
-export const contentSections = pgTable('content_sections', {
-  id: serial('id').primaryKey(),
-  filename: varchar('filename', { length: 255 }).notNull(),
-  content: text('content').notNull(),
-  sortOrder: integer('sort_order').default(0),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
-});
-
 export const profileJobs = pgTable('profile_jobs', {
   id: serial('id').primaryKey(),
   profileId: integer('profile_id')
@@ -138,7 +114,8 @@ export const profileJobs = pgTable('profile_jobs', {
     .notNull()
     .references(() => jobs.id, { onDelete: 'cascade' }),
   jobHash: varchar('job_hash', { length: 64 }).notNull(),
-  score: matchScoreEnum('score'),
+  score: integer('score'),
+  band: matchBandEnum('band'),
   explanation: text('explanation'),
   firstSkillMatch: text('first_skill_match'),
   secondSkillMatch: text('second_skill_match'),
@@ -169,8 +146,7 @@ export type InsertRefreshStatus = typeof refreshStatus.$inferInsert;
 export type ProfileJob = typeof profileJobs.$inferSelect;
 export type InsertProfileJob = typeof profileJobs.$inferInsert;
 
-export type PortfolioProfile = typeof portfolioProfile.$inferSelect;
-export type InsertPortfolioProfile = typeof portfolioProfile.$inferInsert;
-
-export type ContentSection = typeof contentSections.$inferSelect;
-export type InsertContentSection = typeof contentSections.$inferInsert;
+export type JobSource = (typeof jobSourceEnum.enumValues)[number];
+export type RefreshUpdateStatus = (typeof refreshUpdateStatusEnum.enumValues)[number];
+export type RefreshUpdateStatusStep = (typeof refreshUpdateStatusStepEnum.enumValues)[number];
+export type MatchBand = (typeof matchBandEnum.enumValues)[number];

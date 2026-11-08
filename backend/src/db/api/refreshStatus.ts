@@ -1,10 +1,12 @@
-import { eq } from 'drizzle-orm';
+import { eq, and, lt, isNull, or, sql } from 'drizzle-orm';
 import { db } from '../index';
-import { refreshStatus, type RefreshStatus as RefreshStatusType } from '../schema';
+import { refreshStatus, type RefreshStatus as RefreshStatusType } from '../schema/jobHunt';
 
 export interface RefreshStatusService {
   newProfileRefreshStatus(profileId: number): Promise<RefreshStatusType>;
   getRefreshStatus(id: number): Promise<RefreshStatusType | null>;
+  getActiveRefreshForProfile(profileId: number): Promise<RefreshStatusType | null>;
+  failStaleRefreshes(olderThan: Date): Promise<number>;
   updateRefreshStatus(
     id: number,
     options: Partial<Pick<RefreshStatusType, 'status' | 'step' | 'description'>>
@@ -39,6 +41,63 @@ export async function getRefreshStatus(
     .from(refreshStatus)
     .where(eq(refreshStatus.id, id));
   return row ?? null;
+}
+
+/**
+ * Returns the refresh that is currently running for a profile, if any.
+ *
+ * Used to reject a second concurrent refresh for the same profile.
+ */
+export async function getActiveRefreshForProfile(
+  profileId: number
+): Promise<RefreshStatusType | null> {
+  const [row] = await db
+    .select()
+    .from(refreshStatus)
+    .where(
+      and(
+        eq(refreshStatus.profileId, profileId),
+        or(
+          eq(refreshStatus.status, 'PENDING'),
+          eq(refreshStatus.status, 'IN_PROGRESS'),
+        ),
+      ),
+    )
+    .orderBy(sql`${refreshStatus.id} desc`)
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * Marks refreshes that have been running longer than `olderThan` as FAILED.
+ *
+ * A process restart mid-refresh leaves a row stuck in IN_PROGRESS forever.
+ * Reaping stale rows on startup keeps the status honest.
+ */
+export async function failStaleRefreshes(olderThan: Date): Promise<number> {
+  const rows = await db
+    .update(refreshStatus)
+    .set({
+      status: 'FAILED',
+      step: 'PENDING',
+      description: 'Refresh did not complete; the process restarted before it finished.',
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        or(
+          eq(refreshStatus.status, 'IN_PROGRESS'),
+          eq(refreshStatus.status, 'PENDING'),
+        ),
+        or(
+          lt(refreshStatus.updatedAt, olderThan),
+          and(isNull(refreshStatus.updatedAt), lt(refreshStatus.createdAt, olderThan)),
+        ),
+      ),
+    )
+    .returning({ id: refreshStatus.id });
+
+  return rows.length;
 }
 
 export async function updateRefreshStatus(

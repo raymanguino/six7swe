@@ -1,145 +1,146 @@
-import { FastifyRequest, FastifyReply, FastifyInstance } from 'fastify';
-import type { Job, ProfileJob, RefreshStatus } from '../../types';
-import type { JobInput } from '../../db/api/job';
-import { JobMatchEvaluation } from '../../services/agents';
-import { SixSevenService } from '../service';
+import { FastifyRequest, FastifyReply } from 'fastify';
+import { requestContext } from '@fastify/request-context';
+import { z } from 'zod';
+import type { ProfileJob, RefreshStatus } from '../../types';
+import { UnauthenticatedUser } from '../../constants';
+import {
+  ProfileNotFoundError,
+  RefreshInProgressError,
+} from '../../services/jobHunt/jobRefreshService';
 
-export async function runRefreshJobsForProfile(
+/** The authenticated user's local id. Routes here are private, so it is set. */
+function currentUserId(request: FastifyRequest): number {
+  const user = requestContext.get('user');
+  if (!user || user === UnauthenticatedUser) {
+    throw new Error('Unauthenticated');
+  }
+  const id = Number(user.id);
+  if (Number.isNaN(id)) {
+    throw new Error('Unauthenticated');
+  }
+  return id;
+}
+
+/**
+ * Confirms the profile belongs to the caller.
+ *
+ * Every route that takes a profile id goes through this, so a caller cannot
+ * reach another user's profile by guessing an id.
+ */
+async function assertOwnsProfile(
   request: FastifyRequest,
-  reply: FastifyReply
-) {
-  const server = request.server as FastifyInstance & SixSevenService;
-
-  try {
-    const { profileId } = request.params as { profileId: string };
-    const profileIdNum = parseInt(profileId);
-
-    const refreshStatus =
-      await server.refreshStatusService.newProfileRefreshStatus(profileIdNum);
-
-    const profile =
-      await server.profileService.getProfileById(profileIdNum);
-    if (!profile) {
-      throw new Error('Profile id not found: ' + profileIdNum);
-    }
-
-    const keywords = profile.keywords ?? [];
-    const location = profile.location ?? '';
-
-    server.jobFetchService.runJobFetch(
-      keywords,
-      location,
-      async (fetchedJobs: Array<JobInput & { source_id?: string }>) => {
-        const jobInputs = fetchedJobs.map((job) => ({
-          ...job,
-          source_id: (job.source_id ?? 'LINKEDIN').toUpperCase(),
-        }));
-        const savedJobs = await server.jobService.bulkInsertJobs(jobInputs);
-
-        const savedProfileJobs =
-          await server.profileJobService.getProfileJobs(profileIdNum);
-
-        const jobsToFilter = new Set(savedProfileJobs.map((pj) => pj.jobId));
-        const newJobs = savedJobs.filter((job) => !jobsToFilter.has(job.id));
-
-        const newProfileJobs: Array<{
-          profile_id: number;
-          job_id: number;
-          job_hash: string;
-          score: string;
-          explanation: string;
-          first_skill_match: string;
-          second_skill_match: string;
-          third_skill_match: string;
-          summary: string;
-        }> = await Promise.all(
-          newJobs.map(async (job) => {
-            const evaluation =
-              await server.agentServices.evaluateJobMatch(profile, job);
-            const result: JobMatchEvaluation = evaluation.finalOutput;
-
-            return {
-              profile_id: profileIdNum,
-              job_id: job.id,
-              job_hash: job.hash,
-              score: result.score.toUpperCase(),
-              explanation: result.explanation,
-              first_skill_match: result.first_skill_match,
-              second_skill_match: result.second_skill_match,
-              third_skill_match: result.third_skill_match,
-              summary: result.summary,
-            };
-          })
-        );
-
-        await server.profileJobService.bulkInsertProfileJobs(newProfileJobs);
-
-        await server.refreshStatusService.updateRefreshStatus(refreshStatus.id, {
-          description: `Fetched and saved ${savedJobs.length} jobs for profile ${profileIdNum}.`,
-        });
-      },
-      (description: string) =>
-        server.refreshStatusService.updateRefreshStatus(refreshStatus.id, {
-          description,
-        }),
-      (summary: string) =>
-        server.refreshStatusService.endSuccess(refreshStatus.id, summary),
-      (error: string) =>
-        server.refreshStatusService.endFailure(refreshStatus.id, error)
-    );
-
-    await server.refreshStatusService.updateRefreshStatus(refreshStatus.id, {
-      status: 'IN_PROGRESS',
-      step: 'FETCHING_JOBS',
-      description: 'Started job fetch.',
-    });
-
-    reply.code(200).send({ refreshStatusId: refreshStatus.id });
-  } catch (error) {
-    server.log.error(error, 'Error running job fetch:');
-    reply.code(500).send({ error: 'Failed to run job fetch.' });
+  profileId: number,
+): Promise<void> {
+  const owns = await request.server.profileService.profileBelongsToUser(
+    profileId,
+    currentUserId(request),
+  );
+  if (!owns) {
+    throw new ProfileNotFoundError(profileId);
   }
 }
 
+/**
+ * Starts a refresh for a profile.
+ *
+ * The pipeline itself lives in `services/jobHunt/jobRefreshService`; this
+ * handler only starts it and hands back the id of the refresh row to poll.
+ */
+export async function runRefreshJobsForProfile(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<unknown> {
+  try {
+    const { profileId } = request.params as { profileId: string };
+    const profileIdNum = parseInt(profileId, 10);
+
+    if (Number.isNaN(profileIdNum)) {
+      return reply.code(400).send({ error: 'Invalid profile ID' });
+    }
+
+    await assertOwnsProfile(request, profileIdNum);
+
+    const { refreshStatusId } = await request.server.jobRefreshService.start({
+      profileId: profileIdNum,
+    });
+
+    return reply.code(202).send({ refreshStatusId });
+  } catch (error) {
+    if (error instanceof ProfileNotFoundError) {
+      return reply.code(404).send({ error: 'Profile not found' });
+    }
+    if (error instanceof RefreshInProgressError) {
+      return reply.code(409).send({ error: 'A refresh is already running for this profile.' });
+    }
+    request.log.error({ err: error }, 'Error running job fetch');
+    return reply.code(500).send({ error: 'Failed to run job fetch.' });
+  }
+}
+
+/**
+ * Returns the progress of a refresh.
+ *
+ * The refresh row must belong to the profile in the path; otherwise a caller
+ * could read another profile's refresh by guessing an id.
+ */
 export async function getRefreshStatus(
   request: FastifyRequest,
-  reply: FastifyReply
+  reply: FastifyReply,
 ): Promise<unknown> {
-  const server = request.server as FastifyInstance & SixSevenService;
-
   try {
-    const { refreshId } = request.params as { profileId: string; refreshId: string };
+    const { profileId, refreshId } = request.params as {
+      profileId: string;
+      refreshId: string;
+    };
+    const profileIdNum = parseInt(profileId, 10);
+    const refreshIdNum = parseInt(refreshId, 10);
+
+    if (Number.isNaN(profileIdNum) || Number.isNaN(refreshIdNum)) {
+      return reply.code(400).send({ error: 'Invalid profile or refresh ID' });
+    }
 
     const refreshStatus: RefreshStatus | null =
-      await server.refreshStatusService.getRefreshStatus(parseInt(refreshId));
+      await request.server.refreshStatusService.getRefreshStatus(refreshIdNum);
 
-    if (!refreshStatus) {
-      reply.code(404);
-      return { error: 'Refresh status not found' };
+    if (!refreshStatus || refreshStatus.profileId !== profileIdNum) {
+      return reply.code(404).send({ error: 'Refresh status not found' });
     }
+
+    await assertOwnsProfile(request, profileIdNum);
 
     return reply.code(200).send({ refreshStatus });
   } catch (error) {
-    server.log.error(error, 'Error fetching refresh status:');
-    reply.code(500).send({ error: 'Failed to fetch refresh status.' });
+    if (error instanceof ProfileNotFoundError) {
+      return reply.code(404).send({ error: 'Refresh status not found' });
+    }
+    request.log.error({ err: error }, 'Error fetching refresh status');
+    return reply.code(500).send({ error: 'Failed to fetch refresh status.' });
   }
 }
 
 export async function getJobsForProfile(
   request: FastifyRequest,
-  reply: FastifyReply
+  reply: FastifyReply,
 ): Promise<unknown> {
-  const server = request.server as FastifyInstance & SixSevenService;
-
   try {
     const { profileId } = request.params as { profileId: string };
+    const profileIdNum = parseInt(profileId, 10);
+
+    if (Number.isNaN(profileIdNum)) {
+      return reply.code(400).send({ error: 'Invalid profile ID' });
+    }
+
+    await assertOwnsProfile(request, profileIdNum);
 
     const jobs: ProfileJob[] =
-      await server.profileJobService.getJobsForProfile(parseInt(profileId));
+      await request.server.profileJobService.getJobsForProfile(profileIdNum);
 
     return reply.code(200).send({ jobs });
   } catch (error) {
-    server.log.error(error, 'Error fetching jobs for profile:');
-    reply.code(500).send({ error: 'Failed to fetch jobs for profile.' });
+    if (error instanceof ProfileNotFoundError) {
+      return reply.code(404).send({ error: 'Profile not found' });
+    }
+    request.log.error({ err: error }, 'Error fetching jobs for profile');
+    return reply.code(500).send({ error: 'Failed to fetch jobs for profile.' });
   }
 }

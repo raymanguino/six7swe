@@ -5,10 +5,12 @@ import fastifyCors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import { FastifyReply, FastifyRequest } from 'fastify';
 import { UnauthenticatedUser } from './constants';
-import { ContextUser } from './types';
 import { getSafeEnv } from './config/env';
 import * as plugins from './plugins';
+import authPlugin from './plugins/auth';
 import routes from './routes';
+import { PUBLIC_ROUTE } from './routes/access';
+import { reapStaleRefreshes } from './services/jobHunt/standalone';
 import path from 'path';
 
 const Fastify = require('fastify');
@@ -28,7 +30,7 @@ const fastify = Fastify({
 
 declare module '@fastify/request-context' {
   interface RequestContextData {
-    user: ContextUser;
+    user: import('./types').ContextUser;
   }
 }
 
@@ -52,36 +54,27 @@ fastify.register(fastifyRequestContext, {
   }
 });
 
+// Register the auth plugin first: it populates the request context user that
+// the route guard below reads.
+fastify.register(authPlugin);
+
 // Register service plugins
 for (const plugin of Object.values(plugins)) {
   fastify.register(plugin);
 }
 
-// Register service hook for setting user context
-fastify.addHook('onRequest', async (req: FastifyRequest, reply: FastifyReply) => {
-  requestContext.set(
-    // TODO: Replace with real authentication logic
-    'user', { 
-      id: 1,
-      email: 'john@example.com',
-    } as unknown as ContextUser);
-});
-
 // Register service authentication preHandler
-// Public routes don't require authentication (portfolio routes)
-const publicRoutes = ['/chat', '/job-match', '/fitcheck', '/contact', '/jobs', '/portfolio', '/', '/resume'];
+// Routes are private by default and opt out via the `public` route config
+// (see src/routes/access.ts). Reading the flag from the registered route means
+// adding an endpoint can never accidentally expose it.
 fastify.addHook('preHandler', async (req: FastifyRequest, reply: FastifyReply) => {
-  const url = req.url.split('?')[0]; // Remove query params
-  const isPublicRoute = publicRoutes.some(route => 
-    url === route || url.startsWith(route + '/') || url.startsWith('/public/')
-  );
-  
-  if (!isPublicRoute) {
-    const user = requestContext.get('user');
-    if (user == UnauthenticatedUser) {
-      reply.code(401);
-      return reply.send({ error: 'Unauthorized' });
-    }
+  const { public: isPublic } = req.routeOptions.config;
+  if (isPublic === true) return;
+
+  const user = requestContext.get('user');
+  if (!user || user === UnauthenticatedUser) {
+    reply.code(401);
+    return reply.send({ error: 'Unauthorized' });
   }
 });
 
@@ -90,7 +83,7 @@ fastify.register(routes);
 
 // Register health check route
 // Exposes only allowlisted, non-sensitive values. Never spread process.env here.
-fastify.get('/', async (_req: FastifyRequest, _reply: FastifyReply) => {
+fastify.get('/', PUBLIC_ROUTE, async (_req: FastifyRequest, _reply: FastifyReply) => {
   return { hello: 'world', status: 'ok', env: getSafeEnv() };
 });
 
@@ -98,7 +91,14 @@ const start = async () => {
   try {
     const port = parseInt(process.env.PORT || '3000');
     const host = process.env.HOST || '0.0.0.0';
-    
+
+    // Refreshes abandoned by a previous process would otherwise stay
+    // IN_PROGRESS forever, since there is no queue to recover them.
+    const reaped = await reapStaleRefreshes();
+    if (reaped > 0) {
+      fastify.log.warn({ reaped }, 'Marked stale job refreshes as failed');
+    }
+
     await fastify.listen({ port, host });
     fastify.log.info(`Server listening on port ${port}`);
   } catch (err) {

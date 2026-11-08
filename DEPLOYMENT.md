@@ -19,6 +19,12 @@ Before deploying, complete the local setup steps in `SETUP.md` (install dependen
    - `MINIMAX_API_KEY` - MiniMax API key
    - `MINIMAX_API_KEY_SECONDARY` - Optional MiniMax key used for one retry when the primary request receives HTTP 429
    - `RESEND_API_KEY` - Resend API key (contact form)
+   - `SUPABASE_URL` - Supabase project URL; the JWKS endpoint is derived from it. Required for the job-hunter routes
+   - `SUPABASE_JWKS_URL` - Optional explicit JWKS endpoint
+   - `JOB_REFRESH_STALE_MINUTES` - Optional; how long a refresh may run before it is considered abandoned (default 30)
+
+> `AUTH_DEV_BYPASS` must **not** be set in production. The server refuses to
+> start with it enabled when `NODE_ENV=production`.
 
 > Set production values in the Railway dashboard, not in a committed file. `backend/.env` and `backend/.env.*` are gitignored and never deployed.
 
@@ -32,6 +38,8 @@ Before deploying, complete the local setup steps in `SETUP.md` (install dependen
 4. Railway will automatically detect the `railway.json` configuration
 5. Set environment variables:
    - `VITE_API_URL` - URL of your backend service (e.g., `https://your-backend.railway.app`)
+   - `VITE_SUPABASE_URL` - Supabase project URL, for job-hunter sign-in
+   - `VITE_SUPABASE_ANON_KEY` - Supabase anon key, for job-hunter sign-in
 
 ### 3. Apply the Schema to the Remote Database
 
@@ -55,8 +63,24 @@ The frontend downloads the resume from the backend via `GET /resume`. The backen
 
 ### 5. Update Resume / Portfolio Data
 
-1. Copy `backend/scripts/seed-portfolio.example.ts` to `backend/scripts/seed-portfolio.ts`, fill in your data, then run `pnpm run db:seed-portfolio` in backend—or update `portfolio_profile` directly in the database
+1. Copy `backend/scripts/seed-portfolio.example.ts` to `backend/scripts/seed-portfolio.ts`, fill in your data, then run `pnpm run db:seed-portfolio` from `backend/`—or update `portfolio_profile` directly in the database
 2. Contact info is served from the portfolio API; no frontend edits needed
+
+### 6. Job Refreshes (optional)
+
+The job-hunter can trigger a refresh over HTTP, but a refresh started that way
+does not survive a backend restart. For scheduled refreshes, add a **Cron** to
+the backend service in Railway:
+
+```bash
+pnpm run jobs:refresh -- --profile 1
+```
+
+`profileId` is the id of the search profile to refresh. The command uses the
+same pipeline as the HTTP trigger and records progress in `refresh_status`.
+
+Refreshes abandoned by a crashed process are marked failed on the next backend
+startup, so a stale run never blocks the next one.
 
 ## Monorepo Structure
 
