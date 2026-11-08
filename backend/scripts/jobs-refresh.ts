@@ -4,9 +4,12 @@ import {
   reapStaleRefreshes,
 } from '../src/services/jobHunt/standalone';
 import * as refreshStatusService from '../src/db/api/refreshStatus';
+import type { RefreshUpdateStatus } from '../src/db/schema/jobHunt';
 
 interface Args {
   profileIds: number[];
+  /** True when the caller asked to wait for the refreshes to finish. */
+  wait: boolean;
 }
 
 /**
@@ -44,7 +47,7 @@ function parseArgs(argv: string[]): Args {
     throw new Error('At least one --profile <id> is required');
   }
 
-  return { profileIds };
+  return { profileIds, wait };
 }
 
 async function main(): Promise<void> {
@@ -78,12 +81,11 @@ async function main(): Promise<void> {
 
   // Poll until every refresh reaches a terminal state, unless the caller
   // asked to fire and forget.
-  const waitForCompletion = process.argv.includes('--wait') || process.argv.includes('-w');
-  if (!waitForCompletion) {
+  if (!args.wait) {
     return;
   }
 
-  const terminal = new Set(['COMPLETED', 'FAILED']);
+  const terminal = new Set<RefreshUpdateStatus>(['COMPLETED', 'FAILED']);
   const pending = new Set(refreshIds);
 
   while (pending.size > 0) {
@@ -98,7 +100,7 @@ async function main(): Promise<void> {
 
       process.stdout.write(`Refresh ${id}: ${status.status} - ${status.description ?? ''}\n`);
 
-      if (terminal.has(status.status)) {
+      if (status.status !== null && terminal.has(status.status)) {
         pending.delete(id);
         if (status.status === 'FAILED') {
           process.exitCode = 1;
