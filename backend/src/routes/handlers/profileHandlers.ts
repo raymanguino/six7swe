@@ -2,11 +2,27 @@ import { FastifyRequest, FastifyReply } from 'fastify';
 import { requestContext } from '@fastify/request-context';
 import { z } from 'zod';
 import { UnauthenticatedUser } from '../../constants';
+import { LINKEDIN_GEO_ID_PATTERN } from '../../domain/jobHunt';
+
+/**
+ * The LinkedIn region id used to search for postings.
+ *
+ * It has to be a numeric region id, not a city name: a city name produces a
+ * search that silently returns nothing. Validating it here means the profile
+ * is rejected at save time rather than failing later during a refresh.
+ */
+const locationSchema = z
+  .string()
+  .trim()
+  .max(255)
+  .regex(LINKEDIN_GEO_ID_PATTERN, 'LinkedIn geo id must be a numeric region id')
+  .nullable()
+  .default(null);
 
 const createProfileSchema = z.object({
   name: z.string().min(1).max(255),
   keywords: z.array(z.string().min(1)).max(50).default([]),
-  location: z.string().min(1).max(255).nullable().default(null),
+  location: locationSchema,
   additionalContext: z.string().max(10_000).nullable().default(null),
   resume: z.string().max(200_000).nullable().default(null),
 });

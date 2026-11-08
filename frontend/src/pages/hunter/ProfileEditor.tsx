@@ -2,10 +2,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { apiRequest } from '../../utils/api';
 import type { SearchProfile } from './types';
+import { parseNumericParam } from './params';
 
 /** Edits a single search profile. */
 export default function ProfileEditor() {
   const { profileId } = useParams<{ profileId: string }>();
+  const numericId = parseNumericParam(profileId);
   const [profile, setProfile] = useState<SearchProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -19,11 +21,11 @@ export default function ProfileEditor() {
   const [resume, setResume] = useState('');
 
   const load = useCallback(async () => {
-    if (!profileId) return;
+    if (numericId === null) return;
     try {
       setLoading(true);
       setError(null);
-      const data = await apiRequest(`/job-hunt/profiles/${profileId}`);
+      const data = await apiRequest(`/job-hunt/profiles/${numericId}`);
       const loaded = data.profile as SearchProfile;
       setProfile(loaded);
       setName(loaded.name);
@@ -36,7 +38,7 @@ export default function ProfileEditor() {
     } finally {
       setLoading(false);
     }
-  }, [profileId]);
+  }, [numericId]);
 
   useEffect(() => {
     void load();
@@ -49,7 +51,7 @@ export default function ProfileEditor() {
     setSaved(false);
 
     try {
-      const data = await apiRequest(`/job-hunt/profiles/${profileId}`, {
+      const data = await apiRequest(`/job-hunt/profiles/${numericId}`, {
         method: 'PATCH',
         body: JSON.stringify({
           name: name.trim(),
@@ -70,6 +72,14 @@ export default function ProfileEditor() {
       setSaving(false);
     }
   };
+
+  if (numericId === null) {
+    return (
+      <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/40 dark:text-red-200">
+        This profile link is not valid.
+      </p>
+    );
+  }
 
   if (loading) {
     return <p className="text-sm text-gray-500">Loading profile...</p>;
@@ -141,6 +151,8 @@ export default function ProfileEditor() {
           value={geoId}
           onChange={(e) => setGeoId(e.target.value)}
           placeholder="105149290"
+          pattern="[0-9]*"
+          title="Numeric region id, not a city name."
           className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
         />
       </div>

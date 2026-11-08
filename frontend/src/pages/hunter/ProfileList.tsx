@@ -134,6 +134,8 @@ export default function ProfileList() {
               value={geoId}
               onChange={(e) => setGeoId(e.target.value)}
               placeholder="105149290"
+              pattern="[0-9]*"
+              title="Numeric region id, not a city name."
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
             />
             <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
