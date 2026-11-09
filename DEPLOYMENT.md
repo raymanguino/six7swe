@@ -10,7 +10,9 @@ Before deploying, complete the local setup steps in `SETUP.md` (install dependen
 
 1. Create a new service in Railway
 2. Connect your GitHub repository
-3. Set the **Root Directory** to `backend` in Railway service settings
+3. Leave the **Root Directory** at the default (`/`), the repository root. The commands in
+   `railway.json` already `cd` into `backend`, so a root directory of `backend` would make them
+   fail.
 4. Railway will automatically detect the `railway.json` configuration
 5. Set environment variables on the service:
    - `DATABASE_URL` - PostgreSQL connection string
@@ -34,7 +36,8 @@ Before deploying, complete the local setup steps in `SETUP.md` (install dependen
 
 1. Create a new service in Railway
 2. Connect the same GitHub repository
-3. Set the **Root Directory** to `frontend` in Railway service settings
+3. Leave the **Root Directory** at the default (`/`), the repository root, for the same reason as
+   the backend service.
 4. Railway will automatically detect the `railway.json` configuration
 5. Set environment variables:
    - `VITE_API_URL` - URL of your backend service (e.g., `https://your-backend.railway.app`)
@@ -77,6 +80,28 @@ without a profile.
 
 To only apply the schema without dropping anything, use `pnpm run db:push` with
 `DOTENV_CONFIG_PATH=.env.remote`.
+
+### 3a. Schema on Deploy
+
+The backend service runs the schema push as a **pre-deploy** command, so every deploy brings the
+hosted database in line with `src/db/schema/`:
+
+```json
+"deploy": {
+  "preDeployCommand": "cd backend && pnpm db:push --force"
+}
+```
+
+`preDeployCommand` runs after the build succeeds and before the new version starts, so the schema
+is in place before the code that depends on it. The frontend service does not need one.
+
+> **`--force` matters.** Without it, `drizzle-kit push` prompts before any change that drops a
+> table or a column that still holds rows. Railway has no terminal to answer that prompt, so the
+> command would sit there until the deploy times out, and the schema would not be applied. With
+> `--force` the change is applied without asking.
+>
+> That means a schema change that drops data is applied to the hosted database automatically.
+> Take a backup before deploying one.
 
 `backend/.env.remote` holds the remote `DATABASE_URL` and is gitignored.
 
