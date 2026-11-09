@@ -30,7 +30,7 @@ invalidate a value that has already been disclosed.
 |---|---|---|---|---|
 | 1 | `MINIMAX_API_KEY` | minimax.io | Account → API keys → revoke + regenerate | `backend/.env`, Railway backend variables |
 | 2 | `RESEND_API_KEY` | resend.com | Account → API Keys → revoke + regenerate | `backend/.env`, Railway backend variables |
-| 3 | `SUPABASE_SECRET_KEY` | Supabase project | Project → Settings → API Keys | `backend/.env`, Railway backend variables |
+| 3 | `SUPABASE_SECRET_KEY` | Supabase project | Project → Settings → API Keys | Railway backend variables (if still set) |
 | 4 | `DATABASE_URL` (password) | Supabase project | Project → Settings → Database → reset password | `backend/.env`, Railway backend variables |
 | 5 | Second Supabase project password | Supabase project (us-west-2) | Project → Settings → Database → reset password | `backend/.env` (remove if unused) |
 | 6 | MCP `x-brain-key` | MCP edge function | Open-brain MCP server → key management | `backend/.env` (`MCP_PORTFOLIO_HEADERS_JSON`, `MCP_PORTFOLIO_ARGS_JSON`) |
@@ -39,16 +39,20 @@ invalidate a value that has already been disclosed.
 > duplicates by **last occurrence wins**, so a stale line silently overrides
 > the intended one.
 
-### Unused variables that still hold live values
+### Variables that were removed
 
-`backend/.env` contains `SUPABASE_URL`, `SUPABASE_SECRET_KEY` and
-`SUPABASE_STORAGE_BUCKET`. **No code path reads them** — `@supabase/supabase-js`
-is not a dependency, and the resume is served from `backend/public/` on the
-local filesystem. `DEPLOYMENT.md` previously described a Storage-based resume
-flow that does not exist in the code.
+`SUPABASE_SECRET_KEY` and `SUPABASE_STORAGE_BUCKET` used to sit in
+`backend/.env` and **nothing read them** — `@supabase/supabase-js` is not a
+dependency, and the resume is served from `backend/public/` on the local
+filesystem. `DEPLOYMENT.md` previously described a Storage-based resume flow
+that does not exist in the code.
 
-Rotate `SUPABASE_SECRET_KEY` along with the items above, and either remove these
-variables or implement the Storage path before relying on them.
+They have been removed from `backend/.env`, `backend/.env.remote` and
+`backend/.env.example`. `SUPABASE_SECRET_KEY` still has to be rotated, because
+it was exposed, and it may still be set on Railway.
+
+`SUPABASE_URL` stays. It is not a secret, and `backend/src/config/auth.ts` reads
+it to fetch the JWKS that verifies the Supabase JWTs.
 
 ### Environment file layout
 
@@ -176,10 +180,6 @@ a browser: PostgREST authenticates a request as `anon`, `authenticated` or
 ---
 
 ## 6. Reporting a suspected leak
-
----
-
-## 5. Reporting a suspected leak
 
 1. Rotate the affected credential first (containment before investigation).
 2. Check the audit steps in section 3.

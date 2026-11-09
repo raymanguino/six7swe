@@ -88,12 +88,17 @@ hosted database in line with `src/db/schema/`:
 
 ```json
 "deploy": {
-  "preDeployCommand": "cd backend && pnpm db:push --force"
+  "preDeployCommand": "cd backend && pnpm db:push --force && pnpm db:secure -- --remote"
 }
 ```
 
 `preDeployCommand` runs after the build succeeds and before the new version starts, so the schema
 is in place before the code that depends on it. The frontend service does not need one.
+
+The two steps are in that order on purpose. `db:push` applies the schema, and a table that the
+push recreated starts out with the default Supabase grants, so `db:secure` has to run after it to
+turn row level security back on and revoke the public grants. `docs/SECURITY.md` describes what
+that does and why it matters.
 
 > **`--force` matters.** Without it, `drizzle-kit push` prompts before any change that drops a
 > table or a column that still holds rows. Railway has no terminal to answer that prompt, so the
