@@ -39,7 +39,7 @@
     "ts-jest": "^29.4.4",
     "ts-node": "^10.9.2",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "typescript": "^7.0.2"
   },
   "dependencies": {
     "@fastify/cors": "^11.0.0",
