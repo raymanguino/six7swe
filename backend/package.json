@@ -43,14 +43,14 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@fastify/cors": "^11.0.0",
+    "@fastify/cors": "^11.4.1",
     "@fastify/request-context": "^6.2.1",
-    "@fastify/static": "^9.0.0",
+    "@fastify/static": "^9.3.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/puppeteer": "^7.0.4",
     "dotenv": "^17.2.3",
     "drizzle-orm": "^0.45.4",
-    "fastify": "^5.6.1",
+    "fastify": "^5.12.8",
     "fastify-plugin": "^5.1.0",
     "jose": "^4.15.9",
     "pg": "^8.16.3",
