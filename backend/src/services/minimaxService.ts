@@ -137,7 +137,9 @@ export async function chatCompletion(
  */
 export async function structuredCompletion<T>(
   messages: MiniMaxMessage[],
-  outputSchema: z.ZodType<T, z.ZodTypeDef, unknown>,
+  // zod 4 dropped `z.ZodTypeDef` and reordered the generics to
+  // `ZodType<Output, Input, Internals>`.
+  outputSchema: z.ZodType<T, unknown>,
   options?: CompletionOptions
 ): Promise<T> {
   const response = await chatCompletion(messages, {
