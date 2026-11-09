@@ -4,8 +4,8 @@ packages:
   - packages
 
 overrides:
+  source-map-js: ^1.2.2
   # cookie 2 is ESM only. light-my-request still requires it from CommonJS,
   # which Node resolves through `require(esm)` but Jest cannot parse. The
   # 1.x line has the same `stringifySetCookie` export and is CommonJS.
   'light-my-request>cookie': ^1.1.1
-
