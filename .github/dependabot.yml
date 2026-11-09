@@ -11,7 +11,9 @@ updates:
       time: '07:00'
       timezone: America/Bogota
     versioning-strategy: increase-if-necessary
-    open-pull-requests-limit: 5
+    # Dependabot opens a separate pull request per group, and it will happily
+    # exceed a limit of five.
+    open-pull-requests-limit: 10
     groups:
       typescript-tooling:
         patterns:
@@ -48,6 +50,35 @@ updates:
     ignore:
       # Ships its own types; the stub package only shadows them.
       - dependency-name: '@types/puppeteer'
+      # Major upgrades are deliberate, not automatic. Each of these has a
+      # known blocker, so Dependabot proposes the minor and patch upgrades
+      # and the majors are raised by hand.
+      #
+      # typescript 7: typescript-eslint does not support the TS 7 API yet and
+      #   fails to load. See typescript-eslint issue 10940.
+      - dependency-name: typescript
+        update-types:
+          - version-update:semver-major
+      # zod 4: v4 removed `z.ZodTypeDef` and reordered the generics on
+      #   `z.ZodType`. `structuredCompletion` needs its signature updated
+      #   before the upgrade can land.
+      - dependency-name: zod
+        update-types:
+          - version-update:semver-major
+      # vite 6: wants a matching @vitejs/plugin-react major.
+      - dependency-name: vite
+        update-types:
+          - version-update:semver-major
+      # The fastify plugins move to new majors together with fastify itself.
+      - dependency-name: fastify-plugin
+        update-types:
+          - version-update:semver-major
+      - dependency-name: '@fastify/static'
+        update-types:
+          - version-update:semver-major
+      - dependency-name: '@fastify/request-context'
+        update-types:
+          - version-update:semver-major
 
   # Keep the action versions in .github/workflows current.
   - package-ecosystem: github-actions
