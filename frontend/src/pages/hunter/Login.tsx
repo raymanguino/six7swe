@@ -4,7 +4,7 @@ import { useAuth } from '../../contexts/AuthContext';
 
 /** Sign-in screen for the job-hunter. */
 export default function Login() {
-  const { session, signIn, signUp, configured, loading } = useAuth();
+  const { session, signIn, signUp, configured, loading, linkError } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
@@ -30,8 +30,12 @@ export default function Login() {
       if (mode === 'signin') {
         await signIn(email, password);
       } else {
-        await signUp(email, password);
-        setNotice('Account created. You can sign in now.');
+        const { requiresEmailConfirmation } = await signUp(email, password);
+        setNotice(
+          requiresEmailConfirmation
+            ? 'Account created. Check your email for the confirmation link, then sign in.'
+            : 'Account created. You can sign in now.',
+        );
         setMode('signin');
       }
     } catch (err) {
@@ -93,6 +97,11 @@ export default function Login() {
             />
           </div>
 
+          {linkError && (
+            <p className="rounded-lg bg-red-50 p-2 text-sm text-red-700 dark:bg-red-900/40 dark:text-red-200">
+              {linkError}
+            </p>
+          )}
           {error && (
             <p className="rounded-lg bg-red-50 p-2 text-sm text-red-700 dark:bg-red-900/40 dark:text-red-200">
               {error}

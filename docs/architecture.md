@@ -244,6 +244,8 @@ imports:
 | `DATABASE_URL` | backend | PostgreSQL connection string |
 | `MINIMAX_API_KEY` | backend | AI provider key |
 | `RESEND_API_KEY` | backend | Contact form delivery |
+| `RESEND_FROM_EMAIL` | backend | Sender address for outbound mail |
+| `RESEND_FROM_NAME` | backend | Display name for the sender (optional) |
 | `PORTFOLIO_CACHE_TTL_MS` | backend | Portfolio cache TTL (default 600000) |
 | `SUPABASE_URL` | backend | Auth provider; derives the JWKS endpoint |
 | `SUPABASE_JWKS_URL` | backend | Explicit JWKS endpoint (optional) |
