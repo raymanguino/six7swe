@@ -13,7 +13,9 @@ export default function HunterLayout() {
 
   const handleSignOut = async () => {
     await signOut();
-    navigate('/hunter/login');
+    // react-router 7 returns a promise from `navigate`. The navigation is
+    // deliberately not awaited, so the result is marked as ignored.
+    void navigate('/hunter/login');
   };
 
   return (
