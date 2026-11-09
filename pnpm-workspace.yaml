@@ -9,3 +9,28 @@ overrides:
   # which Node resolves through `require(esm)` but Jest cannot parse. The
   # 1.x line has the same `stringifySetCookie` export and is CommonJS.
   'light-my-request>cookie': ^1.1.1
+
+  # These are transitive dependencies that the parents pin to a vulnerable
+  # version. The patched release is inside the range the parent already
+  # allows, so the override only moves the resolved version forward.
+  #
+  # js-yaml 4.1.1 -> 4.3.2: quadratic CPU and merge-key DoS. Needed by
+  #   cosmiconfig, which accepts ^4.1.0.
+  'js-yaml@4.1.1': 4.3.2
+  # brace-expansion 1.1.12 -> 1.1.21: a series of expansion DoS. Needed
+  #   by minimatch 3, which accepts ^1.1.7.
+  'brace-expansion@1.1.12': 1.1.21
+  # minimatch 3.1.2 -> 3.1.5: ReDoS via repeated wildcards and nested
+  #   extglobs. Needed by nodemon, which accepts ^3.1.2.
+  'minimatch@3.1.2': 3.1.5
+  # basic-ftp 5.1.0 -> 5.3.1: path traversal in downloadTo, plus CRLF
+  #   injection. Needed by get-uri, which accepts ^5.0.2.
+  'basic-ftp@5.1.0': 5.3.1
+  # yaml 2.8.2 -> 2.8.3: stack overflow via deeply nested mappings.
+  'yaml@2.8.2': 2.8.3
+  # ws 8.19.0 -> 8.21.1: memory disclosure and exhaustion from tiny
+  #   fragments. Needed by puppeteer-core, which accepts ^8.19.0.
+  'ws@8.19.0': 8.21.1
+  # @babel/core 7.29.0 -> 7.29.6: arbitrary file read via sourceMappingURL.
+  '@babel/core@7.29.0': 7.29.6
+
