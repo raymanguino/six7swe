@@ -29,7 +29,6 @@
     "@typescript-eslint/parser": "^8.54.0",
     "eslint": "^10.14.0",
     "globals": "^14.0.0",
-    "lerna": "^9.0.3",
     "prettier": "^3.8.1"
   }
 }

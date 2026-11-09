@@ -11,5 +11,5 @@ Portfolio + job-matching SWE platform. Full architecture in `docs/architecture.m
 - **`auth_id` is the identity key, not the email.** A local user row is bound to exactly one authenticated subject and is never re-bound (`backend/src/domain/jobHunt/identity.ts`). `users.email` is nullable because a token may carry no email claim.
 - Portfolio data is private and gitignored: `backend/scripts/portfolio-data.json` (template: `portfolio-data.example.json`) and `backend/content/`. Seed it with `pnpm run db:seed-portfolio`.
 - `portfolioService.ts` caches in memory; TTL via `PORTFOLIO_CACHE_TTL_MS` (default 10 min)
-- Lerna is present (`lerna.json`) but unused; pnpm workspace scripts are authoritative
+- Lerna was removed: it was never used, and it pulled in `nx` and `axios`, which accounted for most of the dependency advisories. pnpm workspace scripts are authoritative
 - `packages/` is empty; no shared packages yet
