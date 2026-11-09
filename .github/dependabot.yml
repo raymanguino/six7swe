@@ -1,0 +1,63 @@
+version: 2
+
+updates:
+  # pnpm is handled by the `npm` ecosystem: Dependabot reads the pnpm
+  # lockfile and the pnpm workspace to find the manifests to update.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '07:00'
+      timezone: America/Bogota
+    versioning-strategy: increase-if-necessary
+    open-pull-requests-limit: 5
+    groups:
+      typescript-tooling:
+        patterns:
+          - typescript
+          - '@typescript-eslint/*'
+      linting:
+        patterns:
+          - eslint
+          - '@eslint/*'
+          - eslint-plugin-*
+      fastify:
+        patterns:
+          - fastify
+          - '@fastify/*'
+          - fastify-plugin
+      react:
+        patterns:
+          - react
+          - react-dom
+          - react-router-dom
+          - '@types/react'
+          - '@types/react-dom'
+      drizzle:
+        patterns:
+          - drizzle-orm
+          - drizzle-kit
+      testing:
+        patterns:
+          - jest
+          - ts-jest
+          - '@types/jest'
+          - supertest
+          - '@types/supertest'
+    ignore:
+      # Ships its own types; the stub package only shadows them.
+      - dependency-name: '@types/puppeteer'
+
+  # Keep the action versions in .github/workflows current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '07:00'
+      timezone: America/Bogota
+    groups:
+      actions:
+        patterns:
+          - '*'

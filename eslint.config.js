@@ -1,6 +1,14 @@
 import js from '@eslint/js';
 import tseslint from '@typescript-eslint/eslint-plugin';
 import tsparser from '@typescript-eslint/parser';
+import globals from 'globals';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// The project paths below are resolved against this directory, not against the
+// working directory, so `pnpm lint` behaves the same from the repo root and
+// from inside a workspace package.
+const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
 const backendGlobals = {
   console: 'readonly',
@@ -71,7 +79,7 @@ export default [
       parserOptions: {
         ecmaVersion: 2022,
         sourceType: 'module',
-        project: './backend/tsconfig.scripts.json',
+        project: path.join(rootDir, 'backend/tsconfig.scripts.json'),
       },
       globals: {
         ...backendGlobals,
@@ -98,7 +106,7 @@ export default [
       parserOptions: {
         // The build tsconfig excludes the tests, so they need a project of
         // their own for the type-aware rules to resolve against them.
-        project: './backend/tsconfig.test.json',
+        project: path.join(rootDir, 'backend/tsconfig.test.json'),
       },
       globals: { ...backendGlobals, ...jestGlobals },
     },
@@ -114,11 +122,8 @@ export default [
         jsx: true,
       },
       globals: {
-        console: 'readonly',
+        ...globals.browser,
         React: 'readonly',
-        fetch: 'readonly',
-        window: 'readonly',
-        document: 'readonly',
       },
     },
     plugins: {
@@ -131,6 +136,33 @@ export default [
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/explicit-function-return-type': 'off',
       '@typescript-eslint/explicit-module-boundary-types': 'off',
+      '@typescript-eslint/no-floating-promises': 'error',
+      'no-console': ['warn', { allow: ['warn', 'error'] }],
+    },
+  },
+  {
+    // `vite.config.ts` lives outside `frontend/tsconfig.json` (which only
+    // includes `src`), so it needs its own project for the type-aware rules.
+    files: ['frontend/vite.config.ts'],
+    languageOptions: {
+      parser: tsparser,
+      parserOptions: {
+        ecmaVersion: 2022,
+        sourceType: 'module',
+        project: path.join(rootDir, 'frontend/tsconfig.node.json'),
+      },
+      globals: {
+        ...globals.node,
+      },
+    },
+    plugins: {
+      '@typescript-eslint': tseslint,
+    },
+    rules: {
+      ...js.configs.recommended.rules,
+      ...tseslint.configs.recommended.rules,
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/no-floating-promises': 'error',
       'no-console': ['warn', { allow: ['warn', 'error'] }],
     },

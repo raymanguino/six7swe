@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+coverage/
+*.tsbuildinfo
+
+# Lockfile
+pnpm-lock.yaml
+
+# Generated / gitignored local data
+backend/content/
+backend/scripts/portfolio-data.json
+backend/drizzle/
+
+# Binary assets
+backend/public/

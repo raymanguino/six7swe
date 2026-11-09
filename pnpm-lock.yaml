@@ -20,9 +20,15 @@ importers:
       eslint:
         specifier: ^9.39.2
         version: 9.39.2(jiti@2.6.1)
+      globals:
+        specifier: ^14.0.0
+        version: 14.0.0
       lerna:
         specifier: ^9.0.3
         version: 9.0.3(@types/node@24.10.11)
+      prettier:
+        specifier: ^3.8.1
+        version: 3.8.1
 
   backend:
     dependencies:
