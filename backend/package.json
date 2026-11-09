@@ -45,7 +45,7 @@
   "dependencies": {
     "@fastify/cors": "^11.4.1",
     "@fastify/request-context": "^6.2.1",
-    "@fastify/static": "^9.3.0",
+    "@fastify/static": "^10.1.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/puppeteer": "^7.0.4",
     "dotenv": "^17.2.3",
