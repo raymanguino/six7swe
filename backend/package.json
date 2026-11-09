@@ -13,6 +13,7 @@
     "test:coverage": "jest --coverage",
     "db:push": "drizzle-kit push",
     "db:reset": "tsx scripts/db-reset.ts",
+    "db:secure": "tsx scripts/db-secure.ts",
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx scripts/seed-job-hunt.ts",
     "db:seed-portfolio": "tsx scripts/seed-portfolio.ts",

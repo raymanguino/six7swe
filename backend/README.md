@@ -160,6 +160,7 @@ the Supabase CLI) was removed because the two inevitably drifted apart.
 ```bash
 # In backend directory:
 pnpm run db:push            # Apply the schema to the database
+pnpm run db:secure          # Revoke the public grants and enable row level security
 pnpm run db:reset           # Drop everything in `public`, re-apply the schema, re-seed
 pnpm run db:reset -- --remote   # The same, against the hosted database
 pnpm run db:studio          # Open Drizzle Studio GUI
@@ -169,6 +170,26 @@ pnpm run db:seed-portfolio  # Seed the portfolio profile and content sections
 
 `db:reset` drops and recreates everything in the `public` schema. The Supabase-managed schemas
 (`auth`, `storage`, `graphql_public`) are left alone, so Supabase Auth users survive a reset.
+
+### Database access lockdown
+
+Supabase grants the `anon` and `authenticated` roles full privileges on every table in `public`,
+and row level security is off unless it is turned on. Since the frontend ships the anon key in
+the browser bundle, that would leave the portfolio data (resume, email, phone) and the
+job-hunter tables readable and writable by anyone, without authenticating.
+
+`db:secure` turns row level security on for every application table and revokes the
+`anon` and `authenticated` grants. No policies are created, so the default is to deny every
+row. Function execution is revoked as well, since a function in an exposed schema is an RPC
+endpoint that the anon key could otherwise call. The backend is unaffected: it connects as the
+table owner, and an owner bypasses RLS.
+
+**Run `db:secure` after every `drizzle-kit push`.** The Drizzle schema is the source of truth
+for the tables, but Drizzle ORM 0.33 cannot express row level security or role grants, so the
+rules live in `src/db/security.ts` and are applied separately. `db:reset` applies them
+automatically, and the Railway deploy runs `db:push` followed by `db:secure`.
+
+See [`docs/SECURITY.md`](../docs/SECURITY.md) for the full rationale.
 
 ### Portfolio Data (Supabase)
 

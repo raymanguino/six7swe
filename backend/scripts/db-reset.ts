@@ -23,6 +23,7 @@ import { spawnSync } from 'node:child_process';
 import readline from 'node:readline/promises';
 import path from 'node:path';
 import postgres from 'postgres';
+import { applyDatabaseSecurity } from '../src/db/security';
 import { assumesYes, resolveDatabaseTarget, sslOptions, wantsSeed } from './db-env';
 
 /**
@@ -84,6 +85,25 @@ function pushSchema(): void {
 }
 
 /**
+ * Applies the access rules the Drizzle schema cannot express.
+ *
+ * The schema is the source of truth for the tables, but row level security
+ * and the role grants live outside it, so they have to be applied after
+ * every push. See src/db/security.ts.
+ */
+async function lockDownSchema(): Promise<void> {
+  const target = resolveDatabaseTarget();
+  const sql = postgres(target.databaseUrl, { ...sslOptions(target.remote), max: 1 });
+
+  try {
+    const result = await applyDatabaseSecurity(sql);
+    process.stdout.write(`Locked down ${result.tables.length} table(s) with row level security.\n`);
+  } finally {
+    await sql.end();
+  }
+}
+
+/**
  * Confirms a destructive reset of the hosted database.
  *
  * The reset drops every table in the public schema, so a mistake destroys
@@ -139,6 +159,10 @@ async function main(): Promise<void> {
 
   pushSchema();
   process.stdout.write('Schema applied from src/db/schema/.\n');
+
+  // A freshly pushed schema is wide open: the `anon` role has full grants
+  // and row level security is off. Lock it down before anything else runs.
+  await lockDownSchema();
 
   if (wantsSeed) {
     // Imported after the schema is in place: the seed creates the Drizzle
