@@ -83,11 +83,14 @@ Rules:
 ## Database & Data Modeling
 
 - Use **Drizzle**
-- Migrations are required
+- The Drizzle schema is the single source of truth; there are **no migration files**.
+  `pnpm run db:push` reconciles the database with it, `pnpm run db:reset` rebuilds from scratch
 - Tables and columns use `snake_case`
 - Database models live in **infrastructure**
 - Domain entities must be mapped explicitly from DB models
 - Transactions must be explicit (no implicit behavior)
+- Constraints that protect invariants belong in the schema (e.g. partial unique indexes),
+  not only in application logic
 
 ---
 

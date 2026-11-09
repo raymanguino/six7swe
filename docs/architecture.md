@@ -1,255 +1,266 @@
 # System Architecture
 
-This document describes the high-level architecture of the `six7swe` application, including the frontend portfolio site, backend API, data layer, and AI-powered chat assistant.
+Six7SWE contains **two products** that share one backend process, one PostgreSQL
+database and one AI client, but are kept apart by an explicit boundary.
+
+- **Portfolio** — the public personal site and its AI assistant. Read-only for
+  visitors, no authentication.
+- **Job Hunter** — a signed-in tool for scraping job postings and scoring them
+  against search profiles. Everything it exposes lives under `/job-hunt/*` and
+  requires authentication.
+
+The two share exactly one piece of business logic: the canonical job matcher.
+Everything else — schema, routes, services, tables — is product-specific.
 
 ## High-Level Overview
 
-The system is a full-stack TypeScript application consisting of:
-
-- **Frontend**: React SPA built with Vite (in `frontend/`).
-- **Backend**: Fastify HTTP API server (in `backend/`).
-- **Database**: PostgreSQL accessed via Drizzle ORM.
-- **AI Assistant**: Chat endpoint backed by `agents`, enriched with portfolio and resume content from the database.
-
-The main user-facing experience is a portfolio website with:
-
-- A landing page and sections for projects and contact information.
-- A floating chat widget (`ChatAssistant`) that lets visitors converse with an AI agent configured to speak as Ray.
-
-## Architecture Diagram
-
 ```mermaid
-flowchart LR
-  subgraph Browser["User Browser"]
-    UI["React SPA (Vite)"]
+flowchart TB
+  subgraph Browser["Browser"]
+    UI["Portfolio SPA (Vite)"]
     Chat["ChatAssistant widget"]
+    Hunter["/hunter pages (signed in)"]
   end
 
   subgraph Backend["Backend (Fastify, Node.js)"]
     Fastify["Fastify HTTP Server\nbackend/src/index.ts"]
-    Routes["Route Handlers\nbackend/src/routes"]
-    Plugins["Service Plugins\nbackend/src/plugins"]
-    Static["Static Files (/public)\nResume PDF & assets"]
-    Agent["Agent\nagents SDK"]
+    Auth["Auth plugin\nJWT -> request context user"]
+    Routes["Route modules\nbackend/src/routes"]
+    Guard["Access guard\nprivate by default"]
+  end
+
+  subgraph Portfolio["Portfolio product"]
+    PRoutes["routes/portfolio.ts"]
+    PSvc["services/ai/\nchat, fitcheck, jobMatch"]
+    PService["services/portfolioService.ts"]
+  end
+
+  subgraph Hunter["Job Hunter product"]
+    HRoutes["routes/jobHunt.ts"]
+    HService["services/jobHunt/\njobRefreshService"]
+    HFetcher["services/jobFetchers/\nPuppeteer"]
+    HDomain["domain/jobHunt/\nscore, refresh, filtering, jobs"]
   end
 
   subgraph Data["Data Layer"]
-    DB["PostgreSQL"]
+    DB[("PostgreSQL")]
     Drizzle["Drizzle ORM\nbackend/src/db"]
-    PortfolioSvc["Portfolio Service\nbackend/src/services/portfolioService.ts"]
   end
 
-  UI -->|"Navigation & page loads"| Fastify
-  Chat -->|"POST /chat via apiRequest"| Fastify
-  Fastify --> Routes
-  Routes --> Plugins
+  subgraph AI["AI"]
+    MiniMax["MiniMax client\nservices/minimaxService.ts"]
+  end
 
-  Fastify -->|"CORS, static /public"| Static
-  Routes -->|"DB access via Drizzle"| Drizzle
-  Drizzle --> DB
-
-  Routes -->|"Portfolio queries"| PortfolioSvc
-  PortfolioSvc --> Drizzle
-
-  Routes -->|"chatHandler, jobMatch, etc."| Agent
-  Agent -->|"Context (resume + content)"| PortfolioSvc
+  UI --> Fastify
+  Chat --> Fastify
+  Hunter --> Fastify
+  Fastify --> Auth --> Guard --> Routes
+  Routes --> Portfolio
+  Routes --> Hunter
+  PRoutes --> PSvc --> PService --> Drizzle --> DB
+  PSvc --> MiniMax
+  HService --> HDomain
+  HService --> HFetcher
+  HService --> PSvc
+  HService --> Drizzle --> DB
 ```
+
+## The boundary
+
+The boundary is expressed in four places, and all four are checked by tests or
+by the compiler.
+
+| Boundary | Where |
+|---|---|
+| Database tables | `backend/src/db/schema/portfolio.ts` and `backend/src/db/schema/jobHunt.ts` |
+| HTTP surface | `/job-hunt/*` vs the public portfolio paths |
+| Services | `backend/src/services/ai/` (shared) vs `backend/src/services/jobHunt/` and `backend/src/services/jobFetchers/` |
+| Frontend | `/` (public) vs `/hunter/*` (signed in) |
+
+There is no query that joins the two table families, and no service that both
+products call except the AI client.
+
+## Authentication & Authorization
+
+Routes are **private by default**. Each route declares whether it is public via
+the `public` route config (`backend/src/routes/access.ts`), and the guard in
+`backend/src/index.ts` reads that flag off the registered route. Adding an
+endpoint therefore cannot accidentally expose it.
+
+```text
+Authorization: Bearer <supabase access token>
+        │
+        ▼
+plugins/auth.ts ──► verifies the JWT against the Supabase JWKS endpoint
+        │
+        ▼
+requestContext user { id, email, authId }
+        │
+        ▼
+routes/access.ts ──► private routes require a real user, else 401
+```
+
+The verified identity is linked to a local `users` row through
+`users.auth_id`. The row is created on first sign-in. `users.id` stays a serial
+because `profiles.user_id` references it.
+
+Every job-hunter query that takes a profile id is scoped by the authenticated
+user, so a caller cannot reach another user's profile by guessing an id.
+
+> `AUTH_DEV_BYPASS=true` impersonates the seeded user for local development.
+> It is refused when `NODE_ENV=production`.
 
 ## Frontend
 
 **Stack & location**
 
-- **Framework**: React, TypeScript.
+- **Framework**: React 18, TypeScript.
 - **Bundler**: Vite.
 - **Key files**:
   - `frontend/src/main.tsx` – bootstraps the React app.
-  - `frontend/src/App.tsx` – top-level routing and layout.
+  - `frontend/src/App.tsx` – routing; the public portfolio and the job-hunter.
   - `frontend/src/components/ChatAssistant.tsx` – floating chat widget.
-  - `frontend/src/utils/api.ts` – small API client helper.
-
-**Routing & layout**
-
-- Uses `react-router-dom` for client-side routing.
-- `App.tsx` renders:
-  - `Header` with navigation/highlight state.
-  - `Routes` for:
-    - `/` → landing page (`Landing`), which contains portfolio sections.
-    - `/work` and `/contacts` → redirects that anchor into sections on `/`.
-  - `ChatAssistant` – fixed-position chat button and window rendered on all routes.
-
-**API communication**
-
-- `apiRequest(endpoint, options)` constructs the backend URL:
-  - If `VITE_API_URL` is set, requests go to `VITE_API_URL + endpoint`.
-  - Otherwise, they fall back to `/api{endpoint}` (for local proxy setups).
-- `ChatAssistant` uses `apiRequest('/chat', { method: 'POST', body: JSON.stringify({ message, history }) })`.
-
-## Backend
-
-**Entry point**
-
-- `backend/src/index.ts`:
-  - Loads environment (`dotenv/config`).
-  - Creates a Fastify instance with logging.
-  - Registers:
-    - **CORS** via `@fastify/cors` (open origin in dev, configurable for prod).
-    - **Static file serving** via `@fastify/static` from `../public` under `/public/` (used for resume PDF and other assets).
-    - **Request context** via `@fastify/request-context`, providing a per-request `user` object.
-    - **Service plugins** from `backend/src/plugins`.
-    - **Routes** from `backend/src/routes`.
-  - Defines an `onRequest` hook that currently stubs `requestContext.user` to a fixed user (to be replaced with real auth).
-  - Defines a `preHandler` hook that enforces authentication for non-public routes based on `requestContext.user`.
-  - Registers a root health check route at `/` returning basic status and an allowlisted subset of non-sensitive environment values (`NODE_ENV`, `PORT`, `HOST`). Secrets are never exposed.
-  - Listens on `PORT` (default 3000) and `HOST` (default `0.0.0.0`).
+  - `frontend/src/contexts/AuthContext.tsx` – Supabase session for the job-hunter.
+  - `frontend/src/pages/hunter/` – the job-hunter pages.
+  - `frontend/src/utils/api.ts` – API client; attaches the access token.
 
 **Routing**
 
-- `backend/src/routes/index.ts` defines HTTP routes:
-  - **Public portfolio & content routes**:
-    - `GET /portfolio` – returns portfolio data.
-    - `GET /resume` – serves resume PDF or related content.
-    - `POST /chat` – AI chat endpoint.
-    - `POST /job-match` – job matching endpoint.
-    - `POST /fitcheck` – role fit-check endpoint.
-    - `POST /contact` – contact form handler.
-    - `GET /jobs` and `GET /jobs/:source_id/:source_job_id` – job listings and detail.
-  - **Protected routes** (require authenticated `user` via request context):
-    - `POST /profiles/:profileId/jobs/refresh`
-    - `GET /profiles/:profileId/jobs/refresh/:refreshId`
-    - `GET /profiles/:profileId/jobs`
-    - `GET /profiles`
-    - `GET /profiles/:profileId`
-    - `GET /users`
-    - `GET /users/:id`
+| Route | Rendering |
+|---|---|
+| `/` | Portfolio landing page (highlights, projects, skills, job matcher, fit check, contact) |
+| `/work`, `/contacts` | Redirects into anchors on `/` |
+| `/hunter/login` | Sign in |
+| `/hunter/profiles` | Search profile list and creation |
+| `/hunter/profiles/:id` | Refresh controls and scored matches |
+| `/hunter/profiles/:id/edit` | Profile editor |
 
-**Plugins & services**
+**API communication**
 
-- `backend/src/plugins/index.ts` re-exports service modules such as:
-  - `jobService`, `profileService`, `profileJobService`, `refreshStatusService`, `userService`, `agentServices`, etc.
-- These services encapsulate business logic and data access, keeping route handlers thin.
+`apiRequest(endpoint, options)` builds the URL from `VITE_API_URL`, falling
+back to the `/api` proxy prefix, and attaches the current access token when the
+auth context has registered one.
+
+## Backend
+
+**Entry point** — `backend/src/index.ts`:
+
+- Loads environment (`dotenv/config`).
+- Creates a Fastify instance with pino logging and header redaction.
+- Registers CORS, static file serving from `../public` under `/public/`, and
+  `@fastify/request-context`.
+- Registers the auth plugin, then the service plugins, then the routes.
+- Registers a health check at `/` returning only allowlisted env values.
+- Marks abandoned refreshes as failed on startup, then listens.
+
+**Route modules**
+
+| Module | Routes |
+|---|---|
+| `routes/portfolio.ts` | `GET /portfolio`, `GET /resume`, `POST /chat`, `POST /job-match`, `POST /fitcheck`, `POST /contact` |
+| `routes/jobHunt.ts` | `/job-hunt/jobs`, `/job-hunt/profiles` (CRUD), `/job-hunt/profiles/:id/jobs`, `/job-hunt/profiles/:id/jobs/refresh[/:refreshId]`, `/job-hunt/users` |
+
+**AI layer** — `backend/src/services/ai/`:
+
+| Module | Purpose |
+|---|---|
+| `chat.ts` | Chat assistant, grounded in the portfolio |
+| `fitcheck.ts` | First-person fit assessment |
+| `jobMatch.ts` | **The canonical matcher.** Profile-source agnostic. |
+
+Prompts live in `backend/src/services/ai/prompts/`. `minimaxService.ts` is
+transport only: it sends the request, parses the response and applies the
+supplied Zod schema. A malformed model response is an error, never a
+fabricated result.
 
 ## Data Layer
 
-**Database & ORM**
+**Schema** — split by product:
 
-- **Database**: PostgreSQL (connection via `postgres` driver).
-- **ORM**: Drizzle ORM.
-- `backend/src/db/index.ts`:
-  - Reads `DATABASE_URL` from environment and creates a `postgres` client.
-  - Instantiates a Drizzle `db` client bound to the schema.
-  - Re-exports:
-    - The `db` instance.
-    - All schema types and tables from `schema.ts`.
-    - Additional API helpers from `api.ts` (if present).
+| File | Tables |
+|---|---|
+| `db/schema/portfolio.ts` | `portfolio_profile` (singleton), `content_sections` |
+| `db/schema/jobHunt.ts` | `users`, `profiles`, `jobs`, `profile_jobs`, `refresh_status` |
 
-**Schema**
+Enums: `job_source`, `refresh_update_status`, `refresh_update_status_step`,
+`match_band`.
 
-- `backend/src/db/schema.ts` defines:
-  - **Enums**:
-    - `job_source` (`LINKEDIN`, `INDEED`, etc.).
-    - `refresh_update_status`, `refresh_update_status_step`.
-    - `match_score` (`LOW`, `MEDIUM`, `HIGH`, `TOP`).
-  - **Core tables**:
-    - `users` – application users.
-    - `profiles` – per-user job search profiles (keywords, location, resume, etc.).
-    - `jobs` – ingested job postings, with deduplication via hash and source ID.
-    - `refresh_status` – status records for job refresh operations.
-    - `profile_jobs` – join table tying profiles to jobs with match scores and explanations.
-  - **Portfolio tables**:
-    - `portfolio_profile` – single-row table for the portfolio owner (name, title, contact, skills, experience, projects, and full resume text).
-    - `content_sections` – structured content sections (e.g., additional portfolio pages) loaded into the chat context and portfolio UI.
-  - Strong foreign keys and indexes for integrity and query performance.
+**Portfolio service & caching** — `backend/src/services/portfolioService.ts`
+reads `portfolio_profile` and `content_sections` through Drizzle and caches the
+result in memory for `PORTFOLIO_CACHE_TTL_MS` (default 10 minutes).
 
-**Portfolio service & caching**
+## Job Refresh Pipeline
 
-- `backend/src/services/portfolioService.ts`:
-  - Reads `portfolio_profile` (id 1) and ordered `content_sections` via Drizzle.
-  - Shapes the data into `PortfolioData` (profile + sections).
-  - Caches results in memory with TTL:
-    - `PORTFOLIO_CACHE_TTL_MS` (env) or default 10 minutes.
-  - Exposes `getPortfolioData()` (read with cache) and `clearPortfolioCache()` (cache invalidation).
+```mermaid
+sequenceDiagram
+  participant C as Client / CLI
+  participant S as jobRefreshService
+  participant F as jobFetchers (Puppeteer)
+  participant M as canonical matcher
+  participant D as PostgreSQL
 
-## AI Chat Assistant Flow
+  C->>S: start(profileId)
+  S->>D: create refresh_status row (PENDING)
+  S->>D: check for an existing active refresh
+  S-->>C: refreshStatusId (202)
+  S->>F: runJobFetch(keywords, geoId)
+  F->>F: scrape search results, then each posting
+  F->>S: onJobsFetched(batch)  (awaited)
+  S->>D: bulkInsertJobs(batch)
+  S->>D: getProfileJobs(profileId)
+  S->>S: selectJobsToScore (new or changed hash)
+  S->>M: matchJob(job, profileContext) per job
+  M-->>S: { score, band, analysis, skills, gaps }
+  S->>D: bulkInsertProfileJobs(rows)
+  F-->>S: done
+  S->>D: mark COMPLETED
+  C->>S: GET /job-hunt/profiles/:id/jobs/refresh/:refreshId
+```
 
-**Frontend flow**
+The fetch callback is **awaited**, so `COMPLETED` is only written once the
+last batch has actually been scored and stored. Any failure marks the refresh
+`FAILED` rather than leaving it `IN_PROGRESS`.
 
-1. User opens the chat widget and sends a message.
-2. `ChatAssistant`:
-   - Maintains message history (user/assistant messages with timestamps).
-   - Calls `apiRequest('/chat', { method: 'POST', body: JSON.stringify({ message, history }) })`.
-3. On success, it appends the assistant’s response to the conversation; on error, it shows a fallback error message.
+Jobs are re-scored when their content hash changed, so an edited posting is not
+left with a stale score forever.
 
-**Backend flow**
+## Domain layer
 
-- `POST /chat` is handled by `backend/src/routes/handlers/chatHandlers.ts`:
-  - Validates the incoming `message` and enforces an input length limit from `INPUT_LIMITS.chatMessage`.
-  - Builds a **context string** composed of:
-    - Resume and portfolio content from `getChatContext()` (which uses `getPortfolioData()`).
-    - Recent chat history (up to `MAX_HISTORY_MESSAGES`), formatted for the agent.
-    - The user’s current question.
-  - Instantiates an `Agent` from the `agents` SDK with instructions that:
-    - Make the assistant speak as Ray in first person.
-    - Restrict topics to professional background, skills, experience, etc.
-    - Enforce short answers by default unless the user asks for more detail.
-    - Add light snark in clearly sarcastic cases.
-  - Calls `run(chatAgent, context)` and returns `{ response }` to the client.
+`backend/src/domain/jobHunt/` holds the pure logic, with no IO and no framework
+imports:
 
-**Chat context construction**
-
-- `backend/src/data/chatContext.ts`:
-  - Uses `getPortfolioData()` to load:
-    - `profile.fullResumeText` (if available) – included as `"Resume Information:\n..."`.
-    - All `content_sections` – converted into markdown-style sections (`## Title\n\ncontent`).
-  - Joins these into a single string used as base context for the agent.
-
-## Authentication & Authorization
-
-- **Request context**:
-  - `@fastify/request-context` is configured so each request has a `user` in its context.
-  - Currently, `onRequest` sets a hard-coded user `{ id: 1, email: 'john@example.com' }` as a placeholder.
-- **Route protection**:
-  - `preHandler` hook:
-    - Computes whether a route is public based on its path (`/chat`, `/job-match`, `/fitcheck`, `/contact`, `/jobs`, `/portfolio`, `/`, `/resume`, and `/public/*`).
-    - For non-public routes, checks `requestContext.get('user')` against `UnauthenticatedUser`.
-    - Returns `401 Unauthorized` if the user is not authenticated.
-- In production, the stubbed user should be replaced with a real authentication mechanism (e.g., sessions, JWT, or reverse-proxy auth) that populates `requestContext.user`.
-
-## Static Assets & Resume Delivery
-
-- The backend serves static files from `backend/public` (resolved as `../public` from the compiled output) under the `/public/` URL prefix.
-- The resume PDF and potentially other public assets should live there.
-- The `/resume` route can either:
-  - Redirect to a static file under `/public/`, or
-  - Stream/serve a file based on DB-backed metadata (`resumeFilename`).
+| Module | Purpose |
+|---|---|
+| `score.ts` | Score to band thresholds (`scoreBand`) |
+| `refresh.ts` | Refresh status state machine |
+| `filtering.ts` | Which jobs still need scoring (`selectJobsToScore`) |
+| `jobs.ts` | Search query construction and geoId validation |
+| `identity.ts` | Which local row an authenticated subject maps to |
 
 ## Environment & Configuration
 
-Key environment variables:
-
-- **Backend**
-  - `PORT` – HTTP port (default: `3000`).
-  - `HOST` – bind host (default: `0.0.0.0`).
-  - `DATABASE_URL` – PostgreSQL connection string (required).
-  - `PORTFOLIO_CACHE_TTL_MS` – TTL for portfolio cache in milliseconds (default: `600000` / 10 minutes).
-- **Frontend**
-  - `VITE_API_URL` – optional absolute base URL for API calls. If omitted, frontend uses `/api` as a prefix and relies on local proxying.
+| Variable | Scope | Purpose |
+|---|---|---|
+| `DATABASE_URL` | backend | PostgreSQL connection string |
+| `MINIMAX_API_KEY` | backend | AI provider key |
+| `RESEND_API_KEY` | backend | Contact form delivery |
+| `PORTFOLIO_CACHE_TTL_MS` | backend | Portfolio cache TTL (default 600000) |
+| `SUPABASE_URL` | backend | Auth provider; derives the JWKS endpoint |
+| `SUPABASE_JWKS_URL` | backend | Explicit JWKS endpoint (optional) |
+| `SUPABASE_JWT_SECRET` | backend | Legacy HS256 mode (optional) |
+| `AUTH_DEV_BYPASS` | backend | Dev-only user impersonation |
+| `JOB_REFRESH_STALE_MINUTES` | backend | Abandoned refresh threshold (default 30) |
+| `VITE_API_URL` | frontend | Backend base URL |
+| `VITE_SUPABASE_URL` | frontend | Supabase project URL |
+| `VITE_SUPABASE_ANON_KEY` | frontend | Supabase anon key |
 
 ## Deployment Considerations
 
-- **Local development**
-  - Run the backend Fastify server and PostgreSQL locally (or via Docker).
-  - Run the frontend via Vite dev server, configured either with:
-    - `VITE_API_URL` pointing at the backend URL, or
-    - A dev proxy from `/api` to the backend.
-- **Production**
-  - Build the frontend (`frontend/dist`) and serve it via:
-    - A static file host (e.g., CDN, object storage + CDN), or
-    - A reverse proxy/web server along with the backend.
-  - Place the Fastify backend behind a reverse proxy (e.g., Nginx) that:
-    - Terminates TLS.
-    - Forwards `VITE_API_URL` traffic to the Fastify server.
-    - Optionally serves the frontend static assets from `frontend/dist`.
-  - Provision and manage a managed PostgreSQL instance.
-
-This document should give you enough context to navigate the codebase, understand the main components, and reason about where to make changes when extending the system.
-
+- **Local development** — run the backend (`pnpm dev`) and the frontend
+  (`pnpm dev`); the Vite dev server proxies `/api` to the backend.
+- **Production** — build the frontend to `frontend/dist` and serve it from a
+  static host or behind a reverse proxy; deploy the backend to Railway with
+  `DATABASE_URL` pointing at Supabase's IPv4 connection string.
+- **Refreshes** — schedule `pnpm jobs:refresh -- --profile <id>` as a Railway
+  Cron so a refresh survives a process restart. The HTTP trigger remains
+  available for manual runs.

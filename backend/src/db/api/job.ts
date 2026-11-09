@@ -1,17 +1,17 @@
-import { eq, and, sql, asc } from 'drizzle-orm';
+import { eq, and, sql, asc, isNull } from 'drizzle-orm';
 import { db } from '../index';
-import { jobs, type Job } from '../schema';
+import { jobs, type Job, type JobSource } from '../schema/jobHunt';
 import { hashData } from '../../util';
 
 export interface JobService {
   getAllJobs(filter?: JobFilter): Promise<Job[]>;
   getJobById(id: number): Promise<Job | null>;
-  getJobBySourceId(sourceId: string, sourceJobId: string): Promise<Job | null>;
+  getJobBySourceId(sourceId: JobSource, sourceJobId: string): Promise<Job | null>;
   bulkInsertJobs(items: JobInput[]): Promise<Job[]>;
 }
 
 export interface JobFilter {
-  source: string | null;
+  source: JobSource | null;
 }
 
 /** Input for bulk insert: accepts scraper output with `title` (mapped to `position`) */
@@ -24,29 +24,32 @@ export interface JobInput {
   position?: string;
   description: string;
   location?: string;
-  [key: string]: unknown;
+  datePosted?: string;
 }
 
 export async function getAllJobs(
   filter: JobFilter = { source: 'LINKEDIN' }
 ): Promise<Job[]> {
+  const sourceFilter =
+    filter.source === null
+      ? isNull(jobs.sourceId)
+      : eq(jobs.sourceId, filter.source);
+
   return await db
     .select()
     .from(jobs)
-    .where(eq(jobs.sourceId, filter.source as 'LINKEDIN'))
+    .where(sourceFilter)
     .orderBy(asc(jobs.id));
 }
 
 export async function getJobBySourceId(
-  sourceId: string,
+  sourceId: JobSource,
   sourceJobId: string
 ): Promise<Job | null> {
   const [job] = await db
     .select()
     .from(jobs)
-    .where(
-      and(eq(jobs.sourceId, sourceId as 'LINKEDIN'), eq(jobs.sourceJobId, sourceJobId))
-    );
+    .where(and(eq(jobs.sourceId, sourceId), eq(jobs.sourceJobId, sourceJobId)));
   return job ?? null;
 }
 
@@ -61,12 +64,7 @@ export async function bulkInsertJobs(items: JobInput[]): Promise<Job[]> {
   }
 
   const values = items.map((job) => {
-    const sourceId = (job.source_id ?? 'LINKEDIN').toString().toUpperCase() as
-      | 'LINKEDIN'
-      | 'INDEED'
-      | 'GLASSDOOR'
-      | 'COMPANY_WEBSITE'
-      | 'OTHER';
+    const sourceId = normalizeSourceId(job.source_id);
     const position = job.position ?? job.title ?? '';
     const hash = hashJob(job);
     return {
@@ -76,6 +74,8 @@ export async function bulkInsertJobs(items: JobInput[]): Promise<Job[]> {
       company: job.company,
       position,
       description: job.description,
+      location: job.location ?? null,
+      datePosted: job.datePosted ?? null,
       hash,
     };
   });
@@ -90,6 +90,8 @@ export async function bulkInsertJobs(items: JobInput[]): Promise<Job[]> {
         company: sql`excluded.company`,
         position: sql`excluded.position`,
         description: sql`excluded.description`,
+        location: sql`excluded.location`,
+        datePosted: sql`excluded.date_posted`,
         hash: sql`excluded.hash`,
         updatedAt: new Date(),
       },
@@ -99,7 +101,35 @@ export async function bulkInsertJobs(items: JobInput[]): Promise<Job[]> {
   return results;
 }
 
+const JOB_SOURCE_IDS: readonly JobSource[] = [
+  'LINKEDIN',
+  'INDEED',
+  'GLASSDOOR',
+  'COMPANY_WEBSITE',
+  'OTHER',
+];
+
+/** Maps a scraper source name onto the stored enum, defaulting to LINKEDIN. */
+export function normalizeSourceId(sourceId: string | undefined): JobSource {
+  const normalized = (sourceId ?? 'LINKEDIN').trim().toUpperCase();
+  const match = JOB_SOURCE_IDS.find((candidate) => candidate === normalized);
+  return match ?? 'OTHER';
+}
+
+/**
+ * Content fingerprint of a posting.
+ *
+ * Includes the fields that decide whether a posting is still the same job,
+ * so a change in any of them re-triggers a match score.
+ */
 function hashJob(job: JobInput): string {
   const position = job.position ?? job.title ?? '';
-  return hashData(`${job.company}|${position}|${job.description}`);
+  return hashData(
+    [
+      job.company,
+      position,
+      job.location ?? '',
+      job.description,
+    ].join('|'),
+  );
 }

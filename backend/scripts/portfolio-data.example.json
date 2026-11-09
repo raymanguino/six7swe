@@ -1,0 +1,15 @@
+{
+  "name": "Your Name",
+  "title": "Your Title (e.g. Software Engineer)",
+  "email": "you@example.com",
+  "phone": null,
+  "location": null,
+  "linkedinUrl": null,
+  "githubUrl": null,
+  "summary": "Your professional summary...",
+  "skills": [],
+  "experience": [],
+  "projects": [],
+  "fullResumeText": "Your Name - Your Title\n\nSUMMARY\nYour professional summary for AI context...\n\nSKILLS\n- Skill 1\n- Skill 2\n\nEXPERIENCE\nCompany - Role\n- Bullet points...\n\nPROJECTS\nProject name - Description",
+  "resumeFilename": "resume.pdf"
+}

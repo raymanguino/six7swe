@@ -4,4 +4,6 @@ export * as profileJobService from './profileJobService';
 export * as profileService from './profileService';
 export * as refreshStatusService from './refreshStatusService';
 export * as userService from './userService';
-export * as agentServices from './agentServices'
+
+// Registered last: it depends on the decorators above.
+export * as jobRefreshService from './jobRefreshService';

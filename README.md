@@ -1,6 +1,17 @@
-# Six7SWE - Personal Portfolio & Job Application Platform
+# Six7SWE - Personal Portfolio & Job Hunter
 
-Six7SWE is a monorepo that combines a Fastify + Supabase backend for managing job applications with a React-based personal portfolio frontend.
+Six7SWE is a monorepo containing **two products** that share one backend
+process, one PostgreSQL database and one AI client:
+
+- **Portfolio** — a public personal site with an AI chat assistant, a job
+  match score and a fit assessment.
+- **Job Hunter** — a signed-in tool that scrapes job postings and scores them
+  against search profiles.
+
+The two are separated by an explicit boundary: their own tables, their own
+route namespaces (`/` vs `/job-hunt/*`) and their own frontend route groups
+(`/` vs `/hunter/*`). They share exactly one piece of business logic — the
+canonical job matcher.
 
 <p align="center">
   <img src="images/chat.png" width="75%" />
@@ -10,8 +21,12 @@ Six7SWE is a monorepo that combines a Fastify + Supabase backend for managing jo
 
 ## Monorepo Structure
 
-- `backend/` - Fastify + TypeScript API for job application management and interview prep, backed by Supabase (PostgreSQL) and Drizzle ORM.
-- `frontend/` - Vite + React + TypeScript portfolio site with an AI chat assistant. See `frontend/README.md` for frontend-specific details and commands.
+- `backend/` - Fastify + TypeScript API for both products, backed by Supabase
+  (PostgreSQL) and Drizzle ORM.
+- `frontend/` - Vite + React + TypeScript app serving the public portfolio and
+  the signed-in job-hunter.
+- `docs/architecture.md` - How the two products fit together, and where the
+  boundary sits.
 
 ## Prerequisites
 
@@ -20,27 +35,32 @@ Six7SWE is a monorepo that combines a Fastify + Supabase backend for managing jo
 - Docker Desktop (the Supabase CLI runs Postgres in a container)
 - (Optional) Railway account for hosting the frontend
 
-## Frontend - Personal Portfolio Website
+## Portfolio (public)
 
-The frontend is a Vite + React + TypeScript application styled with Tailwind CSS. It powers the personal portfolio site, including:
+The public site at `/`:
 
-- Landing page with highlights, achievements, and job matcher
-- Work page showcasing projects (including Job Hunter)
+- Landing page with highlights, achievements, projects and skills
+- Job match score — paste a job description for a 0-100 score, matching skills
+  and gaps
+- Honest fit assessment — a first-person fit assessment for a role
 - Contact page with contact info and a message form
-- AI chat assistant available across pages to answer questions about professional background
+- AI chat assistant answering questions about professional background
 
-See `frontend/README.md` for full frontend development and deployment instructions.
+## Job Hunter (signed in)
 
-## Backend - Job Application Management Platform
+The tool at `/hunter`:
 
-A modular monolith application for managing job applications with a Fastify backend and Supabase (PostgreSQL) database.
-
-For full backend setup, database configuration, and API documentation, see `backend/README.md`.
+- Sign in with Supabase Auth
+- Create and edit search profiles (keywords, LinkedIn geo id, resume text)
+- Start a job refresh and watch it progress
+- Review scored matches with score, band and reasoning
 
 ## Local Setup
 
-For full local setup instructions (environment, dependencies, seeding, and dev servers), see `SETUP.md`.
+For full local setup instructions (environment, dependencies, seeding, and dev
+servers), see `SETUP.md`.
 
 ## Deployment
 
-For Railway deployment instructions and production configuration, see `DEPLOYMENT.md`.
+For Railway deployment instructions and production configuration, see
+`DEPLOYMENT.md`.

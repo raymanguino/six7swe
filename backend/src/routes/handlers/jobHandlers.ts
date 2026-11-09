@@ -1,24 +1,31 @@
-import { FastifyRequest, FastifyReply, FastifyInstance } from 'fastify';
-import { SixSevenService } from '../service';
+import { FastifyRequest, FastifyReply } from 'fastify';
+import type { JobSource } from '../../db/schema/jobHunt';
+
+const SOURCE_ALIASES: Record<string, JobSource> = {
+  linkedin: 'LINKEDIN',
+  li: 'LINKEDIN',
+  indeed: 'INDEED',
+  glassdoor: 'GLASSDOOR',
+  company_website: 'COMPANY_WEBSITE',
+  other: 'OTHER',
+};
+
+/** Maps a source name or alias onto the stored enum value. */
+export function normalizeSourceId(sourceId: string): JobSource | null {
+  return SOURCE_ALIASES[sourceId.trim().toLowerCase()] ?? null;
+}
 
 export async function getAllJobs(request: FastifyRequest, reply: FastifyReply) {
-  const server = request.server as FastifyInstance & SixSevenService;
-
   try {
-    const jobs = await server.jobService.getAllJobs();
-    reply.code(200).send({ jobs });
+    const jobs = await request.server.jobService.getAllJobs();
+    return reply.code(200).send({ jobs });
   } catch (error) {
-    server.log.error(error, 'Error calling getAllJobs():');
-    reply.code(500).send({ error: 'Failed to fetch jobs' });
+    request.log.error({ err: error }, 'Error calling getAllJobs()');
+    return reply.code(500).send({ error: 'Failed to fetch jobs' });
   }
 }
 
-export async function getJobBySourceId(
-  request: FastifyRequest,
-  reply: FastifyReply
-) {
-  const server = request.server as FastifyInstance & SixSevenService;
-
+export async function getJobBySourceId(request: FastifyRequest, reply: FastifyReply) {
   try {
     const { source_id, source_job_id } = request.params as {
       source_id: string;
@@ -26,31 +33,24 @@ export async function getJobBySourceId(
     };
 
     if (!source_id || !source_job_id) {
-      reply.code(400).send({
+      return reply.code(400).send({
         error: 'Invalid or missing source_id or source_job_id',
       });
-      return;
     }
 
-    let sourceId = source_id.trim().toLowerCase();
-    const sourceJobId = source_job_id.trim().toLowerCase();
-
-    if (['linkedin', 'li'].includes(sourceId)) {
-      sourceId = 'LINKEDIN';
-    } else {
-      reply.code(400).send({ error: 'Unsupported source_id' });
-      return;
+    const sourceId = normalizeSourceId(source_id);
+    if (!sourceId) {
+      return reply.code(400).send({ error: 'Unsupported source_id' });
     }
 
-    const job = await server.jobService.getJobBySourceId(sourceId, sourceJobId);
+    const job = await request.server.jobService.getJobBySourceId(sourceId, source_job_id);
     if (!job) {
-      reply.code(404).send({ error: 'Job not found' });
-      return;
+      return reply.code(404).send({ error: 'Job not found' });
     }
 
     return reply.code(200).send({ job });
   } catch (error) {
-    server.log.error(error, 'Error calling getJobBySourceId():');
-    reply.code(500).send({ error: 'Failed to fetch job' });
+    request.log.error({ err: error }, 'Error calling getJobBySourceId()');
+    return reply.code(500).send({ error: 'Failed to fetch job' });
   }
 }

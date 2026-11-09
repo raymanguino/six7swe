@@ -1,6 +1,7 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { INPUT_LIMITS } from '../../constants';
-import { chatWithContext, MiniMaxApiError } from '../../services/minimaxService';
+import { chatWithContext } from '../../services/ai';
+import { MiniMaxApiError } from '../../services/minimaxService';
 
 export async function chatHandler(request: FastifyRequest, reply: FastifyReply) {
   try {

@@ -43,6 +43,9 @@ This backend lives in the `backend/` directory of the Six7SWE monorepo. See the 
    ```bash
    cd backend
    pnpm run db:push
+   # The profile data is gitignored, so copy the example first:
+   cp scripts/portfolio-data.example.json scripts/portfolio-data.json
+   # Edit scripts/portfolio-data.json with your own profile data, then:
    pnpm run db:seed-portfolio
    ```
 
@@ -71,16 +74,20 @@ This backend lives in the `backend/` directory of the Six7SWE monorepo. See the 
 
 ### Choosing between local and remote
 
-The environment is selected by **which file dotenv loads**, not by commenting lines out. Every entry point (`src/index.ts`, `drizzle.config.ts`, `scripts/seed-portfolio.ts`) uses `dotenv/config`, which honours `DOTENV_CONFIG_PATH`:
+The environment is selected by **which file dotenv loads**, not by commenting lines out. The server
+(`src/index.ts`) and the Drizzle config use `dotenv/config`, which honours `DOTENV_CONFIG_PATH`.
+The maintenance scripts take an explicit `--remote` flag instead, because they load the env file
+themselves:
 
 ```bash
 # Local database (default - .env)
 pnpm dev
 pnpm run db:push
+pnpm run db:seed
 
 # Remote database (.env.remote)
-DOTENV_CONFIG_PATH=.env.remote pnpm run db:push
-DOTENV_CONFIG_PATH=.env.remote pnpm run db:seed-portfolio
+pnpm run db:reset -- --remote
+pnpm run db:seed-portfolio -- --remote
 ```
 
 > **Two rules that cause most `.env` bugs:**
@@ -106,7 +113,6 @@ This project uses **Supabase** (PostgreSQL) with Drizzle ORM. You can use either
    NODE_ENV=development
    PORT=3000
    DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres?sslmode=disable
-   DATABASE_MIGRATIONS_DIR=./migrations
    ```
 
 3. Apply the schema:
@@ -126,13 +132,12 @@ This project uses **Supabase** (PostgreSQL) with Drizzle ORM. You can use either
    NODE_ENV=production
    PORT=3000
    DATABASE_URL=your_supabase_connection_string
-   DATABASE_MIGRATIONS_DIR=./migrations
    ```
 
 4. Apply the schema to the remote database:
    ```bash
    cd backend
-   DOTENV_CONFIG_PATH=.env.remote pnpm run db:push
+   pnpm run db:reset -- --remote
    ```
 
 ### Drizzle Studio (Database GUI)
@@ -148,27 +153,38 @@ Opens at `https://local.drizzle.studio`
 
 ### Database Scripts
 
+There are **no migration files**. The Drizzle schema in `src/db/schema/` is the single source of
+truth, and `drizzle-kit push` reconciles the database with it. A second copy of the schema (for
+the Supabase CLI) was removed because the two inevitably drifted apart.
+
 ```bash
 # In backend directory:
-pnpm run db:generate   # Generate migration files from schema
-pnpm run db:migrate    # Apply migrations to database
-pnpm run db:push       # Push schema directly (dev only)
-pnpm run db:studio     # Open Drizzle Studio GUI
-pnpm run db:seed-portfolio  # Seed portfolio (requires seed-portfolio.ts; copy from seed-portfolio.example.ts)
+pnpm run db:push            # Apply the schema to the database
+pnpm run db:reset           # Drop everything in `public`, re-apply the schema, re-seed
+pnpm run db:reset -- --remote   # The same, against the hosted database
+pnpm run db:studio          # Open Drizzle Studio GUI
+pnpm run db:seed            # Seed the users and search profiles
+pnpm run db:seed-portfolio  # Seed the portfolio profile and content sections
 ```
+
+`db:reset` drops and recreates everything in the `public` schema. The Supabase-managed schemas
+(`auth`, `storage`, `graphql_public`) are left alone, so Supabase Auth users survive a reset.
 
 ### Portfolio Data (Supabase)
 
 Portfolio profile and content are stored in Supabase for public-repo safety:
 
-1. Apply migrations: `pnpm run db:push`
+1. Apply the schema: `pnpm run db:push`
 2. Seed portfolio data:
-   - Copy `scripts/seed-portfolio.example.ts` to `scripts/seed-portfolio.ts`
-   - Edit `seed-portfolio.ts` with your profile data
+   - Copy `scripts/portfolio-data.example.json` to `scripts/portfolio-data.json`
+   - Edit `scripts/portfolio-data.json` with your profile data
    - Run `pnpm run db:seed-portfolio`
    - Seeds `portfolio_profile` (id=1) and `content_sections`
    - If `backend/content/` exists, reads .md/.txt files into content_sections
 3. **Resume PDF**: With `PORTFOLIO_DATA_SOURCE=mcp`, implement `get_resume_pdf` on your MCP server (see `.env.example`). Otherwise place the PDF in `backend/public/` (e.g. `resume.pdf`) for local serving.
+
+The data file is gitignored (`backend/scripts/portfolio-data.json`), as is `backend/content/`.
+Only the example JSON and the seed logic are tracked.
 
 ## Development
 
@@ -222,24 +238,49 @@ Tests cover:
 
 ### AI (public)
 - `POST /chat` - Conversational assistant grounded in the portfolio
-- `POST /job-match` - Score a job description against the profile
+- `POST /job-match` - Score a job description against the profile. Returns `{ score, analysis, band, matchedSkills, gaps, summary }`
 - `POST /fitcheck` - Fit assessment for a role
 - `POST /contact` - Contact form submission (delivered via Resend)
 
-### Jobs (public)
-- `GET /jobs` - List all jobs
-- `GET /jobs/:source_id/:source_job_id` - Get a job by source
+### Job Hunter (requires authentication)
 
-### Profiles & Users (protected)
-- `GET /profiles` - List all profiles
-- `GET /profiles/:profileId` - Get profile by ID
-- `GET /profiles/:profileId/jobs` - Jobs matched to a profile
-- `POST /profiles/:profileId/jobs/refresh` - Trigger a job refresh
-- `GET /profiles/:profileId/jobs/refresh/:refreshId` - Refresh status
-- `GET /users` - List all users
-- `GET /users/:id` - Get user by ID
+All job-hunter routes live under `/job-hunt` and require a Supabase access
+token. Every profile-scoped route is limited to the signed-in user's own
+profiles.
 
-> Routes outside the public allowlist require authentication. Auth is currently stubbed — see the `TODO` in `src/index.ts`.
+- `GET /job-hunt/jobs` - List all scraped jobs
+- `GET /job-hunt/jobs/:source_id/:source_job_id` - Get a job by source
+- `GET /job-hunt/profiles` - List the caller's search profiles
+- `POST /job-hunt/profiles` - Create a search profile
+- `GET /job-hunt/profiles/:profileId` - Get a profile by ID
+- `PATCH /job-hunt/profiles/:profileId` - Update a profile
+- `DELETE /job-hunt/profiles/:profileId` - Delete a profile
+- `GET /job-hunt/profiles/:profileId/jobs` - Scored matches for a profile
+- `POST /job-hunt/profiles/:profileId/jobs/refresh` - Start a job refresh (returns `202` with `refreshStatusId`)
+- `GET /job-hunt/profiles/:profileId/jobs/refresh/:refreshId` - Refresh status
+- `GET /job-hunt/users` - The caller's own user record
+- `GET /job-hunt/users/:id` - A user by ID (only the caller's own)
+
+> Routes are **private by default**. Each route declares its access in
+> `src/routes/access.ts`; the guard in `src/index.ts` reads that flag, so a new
+> endpoint cannot be exposed by accident.
+>
+> Authentication is verified against the Supabase JWKS endpoint. See
+> [`.env.example`](.env.example) for `SUPABASE_URL` and `AUTH_DEV_BYPASS`.
+
+### Job refresh
+
+```bash
+# Start a refresh from the command line and wait for it to finish.
+pnpm run jobs:refresh -- --profile 1 --wait
+
+# Fire and forget.
+pnpm run jobs:refresh -- --profile 1
+```
+
+The CLI uses the same pipeline as the HTTP trigger. Schedule it as a Railway
+Cron so a refresh survives a process restart. Refreshes abandoned by a crashed
+process are marked failed on the next startup.
 
 ## Project Structure
 
@@ -248,30 +289,37 @@ src/
 ├── index.ts                   # App entry point, hooks, health check
 ├── constants.ts
 ├── config/
+│   ├── auth.ts                # Auth provider configuration
 │   ├── env.ts                 # Allowlisted env values safe to expose
 │   └── portfolioMcp.ts        # MCP source configuration
 ├── data/
 │   └── chatContext.ts
 ├── db/
 │   ├── index.ts               # postgres.js client + Drizzle instance
-│   ├── schema.ts              # Table definitions
-│   ├── examples.ts
-│   ├── test-connection.ts
-│   └── api/                   # Data access per domain
-├── plugins/                   # Fastify service decorators
+│   ├── api/                   # Data access per domain
+│   └── schema/
+│       ├── portfolio.ts       # Portfolio tables
+│       └── jobHunt.ts         # Job-hunter tables
+├── domain/
+│   └── jobHunt/               # Pure logic: score, refresh, filtering, jobs
+├── plugins/                   # Fastify decorators (auth, services)
 ├── routes/
 │   ├── index.ts               # Route registration
-│   ├── service.ts             # Service interface
-│   ├── currentUser.ts
+│   ├── access.ts              # Public / private route declarations
+│   ├── portfolio.ts           # Public portfolio routes
+│   ├── jobHunt.ts             # /job-hunt/* routes
 │   └── handlers/              # Request handlers
 ├── services/
+│   ├── ai/                    # Chat, fitcheck and the canonical matcher
+│   │   └── prompts/           # Prompts as files
+│   ├── auth/                  # Supabase JWT verification
+│   ├── jobHunt/               # Refresh orchestration
+│   ├── jobFetchers/           # Puppeteer job scrapers
 │   ├── portfolioService.ts
-│   ├── minimaxService.ts
-│   ├── mcpPortfolioClient.ts
-│   ├── agents/                # AI agent implementations
-│   └── jobFetchers/           # Puppeteer job scrapers
+│   ├── minimaxService.ts      # AI transport only
+│   └── mcpPortfolioClient.ts
 ├── types/
-├── util/                      # retry, hash, decode, redact
+├── util/                      # retry, hash, decode, redact, concurrency
 └── __tests__/                 # Unit tests
 ```
 
@@ -288,12 +336,14 @@ src/
 
 ## Database Schema
 
-All tables live in `src/db/schema.ts`.
+Tables are split by product: `src/db/schema/portfolio.ts` and
+`src/db/schema/jobHunt.ts`.
 
 ### `users`
 - `id` - Primary key
 - `name` - User's full name
 - `email` - Unique email address
+- `auth_id` - Unique external auth provider id (Supabase)
 - `created_at` / `updated_at` - Timestamps
 
 ### `profiles`
@@ -301,7 +351,7 @@ All tables live in `src/db/schema.ts`.
 - `user_id` - Foreign key to `users` (cascade delete)
 - `name` - Profile name (unique per user)
 - `keywords` - Text array
-- `location` - User location
+- `location` - LinkedIn numeric region id (geoId), not a city name
 - `additional_context` - Additional profile information
 - `resume` - Resume text/data
 - `created_at` / `updated_at` - Timestamps
@@ -311,7 +361,9 @@ All tables live in `src/db/schema.ts`.
 - `source_id` - Enum: `LINKEDIN`, `INDEED`, `GLASSDOOR`, `COMPANY_WEBSITE`, `OTHER`
 - `source_job_id` - Identifier from the source
 - `link`, `company`, `position`, `description`
-- `hash` - Content hash for change detection
+- `location` - Location as displayed by the source
+- `date_posted` - Relative label from the source (e.g. "2 days ago")
+- `hash` - SHA-256 content fingerprint for change detection
 - `created_at` / `updated_at` - Timestamps
 - Unique on `(source_id, source_job_id)`
 
@@ -319,7 +371,8 @@ All tables live in `src/db/schema.ts`.
 - `id` - Primary key
 - `profile_id` / `job_id` - Foreign keys (cascade delete)
 - `job_hash` - Hash of the job at match time
-- `score` - Enum: `LOW`, `MEDIUM`, `HIGH`, `TOP`
+- `score` - Match score, 0-100
+- `band` - Enum: `LOW`, `MEDIUM`, `HIGH`, `TOP` (derived from the score)
 - `explanation`, `summary` - Human-readable reasoning
 - `first_skill_match`, `second_skill_match`, `third_skill_match`
 - Unique on `(profile_id, job_id)`
@@ -377,9 +430,10 @@ curl -X POST http://localhost:3000/contact \
   -d '{"name": "Jane Doe", "email": "jane@example.com", "message": "Hello"}'
 ```
 
-### List jobs
+### List jobs (requires authentication)
 ```bash
-curl http://localhost:3000/jobs
+curl http://localhost:3000/job-hunt/jobs \
+  -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN"
 ```
 
 ## Security
