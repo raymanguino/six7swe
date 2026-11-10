@@ -93,7 +93,7 @@ single file.
 
 Supabase grants the `anon` and `authenticated` roles full privileges on every
 table in the `public` schema, and row level security is **off** unless it is
-turned on. Tables created by `drizzle-kit push` do not get RLS automatically.
+turned on. Tables created by a migration do not get RLS automatically.
 
 The frontend ships `VITE_SUPABASE_ANON_KEY` in the JavaScript bundle, and
 `supabase/config.toml` exposes the `public` schema to PostgREST. The result
@@ -107,7 +107,7 @@ delete rows in `users`, `profiles`, `jobs`, `profile_jobs` and
 Row level security is enabled on every application table, and the `anon` and
 `authenticated` grants are revoked. No policies are created, so the default
 is to deny every row. The default privileges are revoked as well, so a table
-created later by `drizzle-kit push` does not inherit the grants back.
+created later by a migration does not inherit the grants back.
 
 Function execution is revoked too, including the default privilege. A function
 in an exposed schema is an RPC endpoint for PostgREST, so one left executable
@@ -127,11 +127,11 @@ pnpm run db:secure                # local database
 pnpm run db:secure -- --remote    # the hosted database
 ```
 
-**This must run after every `drizzle-kit push`.** The Drizzle schema is the
+**This must run after every migration.** The Drizzle schema is the
 source of truth for the tables, but Drizzle ORM 0.33 cannot express row level
 security or role grants, so the rules live in `backend/src/db/security.ts`
 and have to be applied separately. `db:reset` applies them automatically, and
-the Railway `preDeployCommand` runs `db:push` followed by `db:secure`.
+the Railway `preDeployCommand` runs `db:migrate` followed by `db:secure`.
 
 ### Verifying it
 

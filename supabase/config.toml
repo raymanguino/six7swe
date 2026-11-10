@@ -51,9 +51,9 @@ max_client_conn = 100
 # secret_key = "env(SECRET_VALUE)"
 
 [db.migrations]
-# Disabled: the schema is owned by Drizzle (backend/src/db/schema/) and
-# applied with `pnpm run db:push` / `pnpm run db:reset`. Keeping a second
-# copy of the schema here only created drift.
+# Disabled: the schema is owned by Drizzle (backend/src/db/schema/). Migrations
+# are generated from it with `pnpm run db:generate` and applied with
+# `pnpm run db:migrate`.
 enabled = false
 # Specifies an ordered list of schema files that describe your database.
 # Supports glob patterns relative to supabase directory: "./schemas/*.sql"

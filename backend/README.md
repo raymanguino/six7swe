@@ -42,7 +42,7 @@ This backend lives in the `backend/` directory of the Six7SWE monorepo. See the 
 4. Apply the schema and seed portfolio data:
    ```bash
    cd backend
-   pnpm run db:push
+   pnpm run db:migrate
    # The profile data is gitignored, so copy the example first:
    cp scripts/portfolio-data.example.json scripts/portfolio-data.json
    # Edit scripts/portfolio-data.json with your own profile data, then:
@@ -82,7 +82,7 @@ themselves:
 ```bash
 # Local database (default - .env)
 pnpm dev
-pnpm run db:push
+pnpm run db:migrate
 pnpm run db:seed
 
 # Remote database (.env.remote)
@@ -118,7 +118,7 @@ This project uses **Supabase** (PostgreSQL) with Drizzle ORM. You can use either
 3. Apply the schema:
    ```bash
    cd backend
-   pnpm run db:push
+   pnpm run db:migrate
    ```
 
 ### Remote Supabase (Production)
@@ -137,7 +137,7 @@ This project uses **Supabase** (PostgreSQL) with Drizzle ORM. You can use either
 4. Apply the schema to the remote database:
    ```bash
    cd backend
-   pnpm run db:reset -- --remote
+   pnpm run db:migrate -- --remote
    ```
 
 ### Drizzle Studio (Database GUI)
@@ -153,15 +153,14 @@ Opens at `https://local.drizzle.studio`
 
 ### Database Scripts
 
-There are **no migration files**. The Drizzle schema in `src/db/schema/` is the single source of
-truth, and `drizzle-kit push` reconciles the database with it. A second copy of the schema (for
-the Supabase CLI) was removed because the two inevitably drifted apart.
+Migrations are generated from the schema in `src/db/schema/` and applied in order.
 
 ```bash
 # In backend directory:
-pnpm run db:push            # Apply the schema to the database
+pnpm run db:generate        # Generate a migration from a schema change
+pnpm run db:migrate         # Apply the pending migrations
 pnpm run db:secure          # Revoke the public grants and enable row level security
-pnpm run db:reset           # Drop everything in `public`, re-apply the schema, re-seed
+pnpm run db:reset           # Drop everything in `public`, replay the migrations, re-seed
 pnpm run db:reset -- --remote   # The same, against the hosted database
 pnpm run db:studio          # Open Drizzle Studio GUI
 pnpm run db:seed            # Seed the users and search profiles
@@ -184,10 +183,10 @@ row. Function execution is revoked as well, since a function in an exposed schem
 endpoint that the anon key could otherwise call. The backend is unaffected: it connects as the
 table owner, and an owner bypasses RLS.
 
-**Run `db:secure` after every `drizzle-kit push`.** The Drizzle schema is the source of truth
+**Run `db:secure` after every migration.** The Drizzle schema is the source of truth
 for the tables, but Drizzle ORM 0.33 cannot express row level security or role grants, so the
 rules live in `src/db/security.ts` and are applied separately. `db:reset` applies them
-automatically, and the Railway deploy runs `db:push` followed by `db:secure`.
+automatically, and the Railway deploy runs `db:migrate` followed by `db:secure`.
 
 See [`docs/SECURITY.md`](../docs/SECURITY.md) for the full rationale.
 
@@ -195,7 +194,7 @@ See [`docs/SECURITY.md`](../docs/SECURITY.md) for the full rationale.
 
 Portfolio profile and content are stored in Supabase for public-repo safety:
 
-1. Apply the schema: `pnpm run db:push`
+1. Apply the schema: `pnpm run db:migrate`
 2. Seed portfolio data:
    - Copy `scripts/portfolio-data.example.json` to `scripts/portfolio-data.json`
    - Edit `scripts/portfolio-data.json` with your profile data
