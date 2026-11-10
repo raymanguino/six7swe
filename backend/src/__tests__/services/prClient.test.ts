@@ -1,4 +1,5 @@
 import {
+  AGENT_BOT_LOGINS,
   getPullRequest,
   GitHubApiError,
   listChangedFiles,
@@ -146,6 +147,28 @@ describe('github pr client', () => {
 
       expect(files).toEqual([]);
     });
+
+    it('carries the path a renamed file came from', async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse([filePayload({ filename: 'new.ts', previous_filename: 'old.ts' })]),
+      );
+
+      const files = await listChangedFiles('raymanguino', 'six7swe', 63, TOKEN);
+
+      expect(files[0].previousFilename).toBe('old.ts');
+    });
+
+    it('fails rather than returning a truncated file list', async () => {
+      const fullPage = Array.from({ length: 100 }, () => filePayload());
+      for (let page = 0; page < 30; page += 1) {
+        fetchMock.mockResolvedValueOnce(jsonResponse(fullPage));
+      }
+
+      await expect(listChangedFiles('raymanguino', 'six7swe', 63, TOKEN)).rejects.toBeInstanceOf(
+        GitHubApiError,
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(30);
+    });
   });
 
   describe('submitReview', () => {
@@ -183,6 +206,18 @@ describe('github pr client', () => {
 
       expect(reviews).toHaveLength(2);
       expect(reviews[1].id).toBe(2);
+    });
+
+    it('follows pagination to the end', async () => {
+      const fullPage = Array.from({ length: 100 }, (_, index) => ({ id: index, body: 'r' }));
+      fetchMock.mockResolvedValueOnce(jsonResponse(fullPage));
+      fetchMock.mockResolvedValueOnce(jsonResponse([{ id: 100, body: 'last' }]));
+
+      const reviews = await listReviews('raymanguino', 'six7swe', 63, TOKEN);
+
+      expect(reviews).toHaveLength(101);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls[1][0]).toContain('page=2');
     });
   });
 
@@ -224,8 +259,8 @@ describe('github pr client', () => {
     it('replaces the agent previous review instead of stacking a new one', async () => {
       fetchMock.mockResolvedValueOnce(
         jsonResponse([
-          { id: 1, body: 'a human review' },
-          { id: 2, body: `${REVIEW_MARKER}\nold body` },
+          { id: 1, body: 'a human review', user: { login: 'raymanguino' } },
+          { id: 2, body: `${REVIEW_MARKER}\nold body`, user: { login: 'github-actions[bot]' } },
         ]),
       );
       fetchMock.mockResolvedValueOnce(jsonResponse({ id: 2 }, 200));
@@ -248,8 +283,8 @@ describe('github pr client', () => {
     it('updates the most recent agent review when there are several', async () => {
       fetchMock.mockResolvedValueOnce(
         jsonResponse([
-          { id: 2, body: `${REVIEW_MARKER}\noldest` },
-          { id: 5, body: `${REVIEW_MARKER}\nnewest` },
+          { id: 2, body: `${REVIEW_MARKER}\noldest`, user: { login: 'github-actions[bot]' } },
+          { id: 5, body: `${REVIEW_MARKER}\nnewest`, user: { login: 'github-actions[bot]' } },
         ]),
       );
       fetchMock.mockResolvedValueOnce(jsonResponse({ id: 5 }, 200));
@@ -261,6 +296,57 @@ describe('github pr client', () => {
 
       expect(action).toBe('updated');
       expect(fetchMock.mock.calls[1][0]).toContain('/reviews/5');
+    });
+
+    it('ignores a review that carries the marker but was written by someone else', async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse([
+          { id: 3, body: `${REVIEW_MARKER}\nspoofed`, user: { login: 'some-random-user' } },
+        ]),
+      );
+      fetchMock.mockResolvedValueOnce(jsonResponse({ id: 9 }, 200));
+
+      const action = await upsertReviewComment('raymanguino', 'six7swe', 63, TOKEN, {
+        commit_id: 'abc123',
+        body: `${REVIEW_MARKER}\nfresh`,
+      });
+
+      expect(action).toBe('created');
+      const [url, init] = fetchMock.mock.calls[1];
+      expect(url).toBe('https://api.github.com/repos/raymanguino/six7swe/pulls/63/reviews');
+      expect(init?.method).toBe('POST');
+    });
+
+    it('ignores a review with no author information at all', async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse([{ id: 3, body: REVIEW_MARKER }]));
+      fetchMock.mockResolvedValueOnce(jsonResponse({ id: 9 }, 200));
+
+      const action = await upsertReviewComment('raymanguino', 'six7swe', 63, TOKEN, {
+        commit_id: 'abc123',
+        body: `${REVIEW_MARKER}\nfresh`,
+      });
+
+      expect(action).toBe('created');
+    });
+
+    it('recognises the app bot as the agent', async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse([
+          {
+            id: 4,
+            body: `${REVIEW_MARKER}\napp`,
+            user: { login: AGENT_BOT_LOGINS[1] },
+          },
+        ]),
+      );
+      fetchMock.mockResolvedValueOnce(jsonResponse({ id: 4 }, 200));
+
+      const action = await upsertReviewComment('raymanguino', 'six7swe', 63, TOKEN, {
+        commit_id: 'abc123',
+        body: `${REVIEW_MARKER}\nfresh`,
+      });
+
+      expect(action).toBe('updated');
     });
   });
 

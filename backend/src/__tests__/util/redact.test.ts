@@ -23,6 +23,18 @@ describe('redactSecrets', () => {
     );
   });
 
+  it('masks a GitHub App installation token', () => {
+    expect(redactSecrets('token ghs_abcdefghijklmnopqrstuvwxyz012345')).toContain('[redacted]');
+  });
+
+  it('masks every classic GitHub token prefix', () => {
+    for (const prefix of ['ghp_', 'gho_', 'ghu_', 'ghs_', 'ghr_']) {
+      expect(redactSecrets(`token ${prefix}abcdefghijklmnopqrstuvwxyz012345`)).toContain(
+        '[redacted]',
+      );
+    }
+  });
+
   it('leaves ordinary text alone', () => {
     expect(redactSecrets('nothing secret here')).toBe('nothing secret here');
   });
