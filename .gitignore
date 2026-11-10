@@ -142,3 +142,12 @@ vite.config.ts.timestamp-*
 backend/content/*
 backend/public/*.pdf
 backend/scripts/portfolio-data.json
+
+# Private keys and certificates
+# The QA agent's GitHub App private key (issue #52). Never commit these.
+*.pem
+*.key
+*.pfx
+*.p12
+*.jks
+*.keystore
