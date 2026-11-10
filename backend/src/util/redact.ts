@@ -5,6 +5,10 @@ const SECRET_PATTERNS: RegExp[] = [
   /re_[A-Za-z0-9_-]{16,}/g,
   /sb_secret_[A-Za-z0-9_-]{16,}/g,
   /x-brain-key["':=\s]+[A-Za-z0-9_-]{16,}/gi,
+  // GitHub personal access tokens: classic (ghp_/gho_/ghu_/ghs_/ghr_) and
+  // fine-grained (github_pat_).
+  /gh[pousr]_[A-Za-z0-9]{20,}/g,
+  /github_pat_[A-Za-z0-9_]{20,}/g,
 ];
 
 /** Truncates an upstream response body and masks known secret formats. */
