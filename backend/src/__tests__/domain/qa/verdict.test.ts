@@ -1,6 +1,8 @@
 import {
+  decideGate,
   decideReviewEvent,
   sanitizeFindings,
+  touchesProtectedPath,
   type ReviewFinding,
 } from '../../../domain/qa/verdict';
 
@@ -84,5 +86,198 @@ describe('sanitizeFindings', () => {
     const findings = [finding({ file: 'backend/src/index.ts' }), general];
 
     expect(sanitizeFindings(findings, [])).toEqual([general]);
+  });
+});
+
+describe('decideGate', () => {
+  it('fails closed when the review could not be completed', () => {
+    expect(
+      decideGate({
+        findings: [],
+        changedFiles: [],
+        mode: 'comment-only',
+        reviewCompleted: false,
+      }),
+    ).toBe('fail-closed');
+
+    expect(
+      decideGate({
+        findings: [],
+        changedFiles: [],
+        mode: 'enforce',
+        reviewCompleted: false,
+      }),
+    ).toBe('fail-closed');
+  });
+
+  it('fails closed even when the findings look clean', () => {
+    expect(
+      decideGate({
+        findings: [finding({ severity: 'nit' })],
+        changedFiles: ['backend/src/index.ts'],
+        mode: 'enforce',
+        reviewCompleted: false,
+      }),
+    ).toBe('fail-closed');
+  });
+
+  it('passes for every input in comment-only mode', () => {
+    expect(
+      decideGate({
+        findings: [],
+        changedFiles: [],
+        mode: 'comment-only',
+        reviewCompleted: true,
+      }),
+    ).toBe('pass');
+
+    expect(
+      decideGate({
+        findings: [finding({ severity: 'blocker' })],
+        changedFiles: ['.github/workflows/qa-review.yml'],
+        mode: 'comment-only',
+        reviewCompleted: true,
+      }),
+    ).toBe('pass');
+  });
+
+  it('passes a clean pull request in enforce mode', () => {
+    expect(
+      decideGate({
+        findings: [],
+        changedFiles: ['backend/src/index.ts'],
+        mode: 'enforce',
+        reviewCompleted: true,
+      }),
+    ).toBe('pass');
+  });
+
+  it('passes when only minor and nit findings are present in enforce mode', () => {
+    expect(
+      decideGate({
+        findings: [finding({ severity: 'minor' }), finding({ severity: 'nit' })],
+        changedFiles: ['backend/src/index.ts'],
+        mode: 'enforce',
+        reviewCompleted: true,
+      }),
+    ).toBe('pass');
+  });
+
+  it('fails on a blocking finding in enforce mode', () => {
+    expect(
+      decideGate({
+        findings: [finding({ severity: 'major' })],
+        changedFiles: ['backend/src/index.ts'],
+        mode: 'enforce',
+        reviewCompleted: true,
+      }),
+    ).toBe('fail');
+
+    expect(
+      decideGate({
+        findings: [finding({ severity: 'blocker' })],
+        changedFiles: ['backend/src/index.ts'],
+        mode: 'enforce',
+        reviewCompleted: true,
+      }),
+    ).toBe('fail');
+  });
+
+  it('asks for a human when a protected path was touched', () => {
+    expect(
+      decideGate({
+        findings: [],
+        changedFiles: ['.github/workflows/qa-review.yml'],
+        mode: 'enforce',
+        reviewCompleted: true,
+      }),
+    ).toBe('manual-review');
+  });
+
+  it('asks for a human even when the model found a blocker', () => {
+    expect(
+      decideGate({
+        findings: [finding({ severity: 'blocker' })],
+        changedFiles: ['package.json'],
+        mode: 'enforce',
+        reviewCompleted: true,
+      }),
+    ).toBe('manual-review');
+  });
+
+  it('accepts a custom protected path list', () => {
+    expect(
+      decideGate({
+        findings: [],
+        changedFiles: ['docs/readme.md'],
+        mode: 'enforce',
+        protectedPaths: ['docs/**'],
+        reviewCompleted: true,
+      }),
+    ).toBe('manual-review');
+  });
+});
+
+describe('touchesProtectedPath', () => {
+  it('matches a workflow file against the workflows glob', () => {
+    expect(touchesProtectedPath(['.github/workflows/qa-review.yml'])).toBe(true);
+    expect(touchesProtectedPath(['.github/workflows/ci.yml'])).toBe(true);
+  });
+
+  it('does not match an ordinary source file', () => {
+    expect(touchesProtectedPath(['backend/src/routes/portfolio.ts'])).toBe(false);
+    expect(touchesProtectedPath(['frontend/src/App.tsx'])).toBe(false);
+  });
+
+  it('does not match the agent code against the workflows glob', () => {
+    expect(
+      touchesProtectedPath(['backend/src/domain/qa/verdict.ts'], ['.github/workflows/**']),
+    ).toBe(false);
+  });
+
+  it('matches the agent code and the client it uses', () => {
+    expect(touchesProtectedPath(['backend/src/domain/qa/diff.ts'])).toBe(true);
+    expect(touchesProtectedPath(['backend/src/services/github/prClient.ts'])).toBe(true);
+    expect(touchesProtectedPath(['backend/src/services/ai/prReview.ts'])).toBe(true);
+  });
+
+  it('matches the review script', () => {
+    expect(touchesProtectedPath(['backend/scripts/review-pr.ts'])).toBe(true);
+  });
+
+  it('matches the schema and the auth code', () => {
+    expect(touchesProtectedPath(['backend/src/db/schema/jobHunt.ts'])).toBe(true);
+    expect(touchesProtectedPath(['backend/src/plugins/auth.ts'])).toBe(true);
+    expect(touchesProtectedPath(['backend/src/config/auth.ts'])).toBe(true);
+  });
+
+  it('matches the dependency manifest at the repository root', () => {
+    expect(touchesProtectedPath(['package.json'])).toBe(true);
+    expect(touchesProtectedPath(['pnpm-lock.yaml'])).toBe(true);
+  });
+
+  it('does not match a package.json in a subdirectory', () => {
+    expect(touchesProtectedPath(['backend/package.json'])).toBe(false);
+  });
+
+  it('matches a pattern that names a directory without a glob', () => {
+    expect(
+      touchesProtectedPath(['backend/src/db/schema/users.ts'], ['backend/src/db/schema']),
+    ).toBe(true);
+  });
+
+  it('does not match a prefix of a longer path', () => {
+    expect(
+      touchesProtectedPath(['backend/src/services/ai-extra/x.ts'], ['backend/src/services/ai']),
+    ).toBe(false);
+  });
+
+  it('matches a single star within one segment only', () => {
+    expect(touchesProtectedPath(['backend/src/ai.ts'], ['backend/src/*.ts'])).toBe(true);
+    expect(touchesProtectedPath(['backend/src/ai/prReview.ts'], ['backend/src/*.ts'])).toBe(false);
+  });
+
+  it('returns false for an empty file list', () => {
+    expect(touchesProtectedPath([])).toBe(false);
   });
 });
