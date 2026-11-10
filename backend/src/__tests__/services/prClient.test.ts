@@ -2,7 +2,11 @@ import {
   getPullRequest,
   GitHubApiError,
   listChangedFiles,
+  listReviews,
+  REVIEW_MARKER,
   submitReview,
+  updateReview,
+  upsertReviewComment,
 } from '../../services/github/prClient';
 
 const TOKEN = 'ghp_testtoken0123456789abcdefghijklmnop';
@@ -163,6 +167,100 @@ describe('github pr client', () => {
         body: '## QA agent review',
         event: 'COMMENT',
       });
+    });
+  });
+
+  describe('listReviews', () => {
+    it('returns the reviews on the pull request', async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse([
+          { id: 1, body: 'first' },
+          { id: 2, body: 'second' },
+        ]),
+      );
+
+      const reviews = await listReviews('raymanguino', 'six7swe', 63, TOKEN);
+
+      expect(reviews).toHaveLength(2);
+      expect(reviews[1].id).toBe(2);
+    });
+  });
+
+  describe('updateReview', () => {
+    it('patches the review body', async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse({ id: 7 }, 200));
+
+      await updateReview('raymanguino', 'six7swe', 63, 7, TOKEN, 'new body');
+
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe('https://api.github.com/repos/raymanguino/six7swe/pulls/63/reviews/7');
+      expect(init?.method).toBe('PATCH');
+      expect(JSON.parse(init?.body as string)).toEqual({ body: 'new body' });
+    });
+  });
+
+  describe('upsertReviewComment', () => {
+    it('posts a new comment review when the agent has not reviewed yet', async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse([]));
+      fetchMock.mockResolvedValueOnce(jsonResponse({ id: 9 }, 200));
+
+      const action = await upsertReviewComment('raymanguino', 'six7swe', 63, TOKEN, {
+        commit_id: 'abc123',
+        body: `${REVIEW_MARKER}\n## QA agent review`,
+      });
+
+      expect(action).toBe('created');
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const [url, init] = fetchMock.mock.calls[1];
+      expect(url).toBe('https://api.github.com/repos/raymanguino/six7swe/pulls/63/reviews');
+      expect(init?.method).toBe('POST');
+      expect(JSON.parse(init?.body as string)).toEqual({
+        commit_id: 'abc123',
+        body: `${REVIEW_MARKER}\n## QA agent review`,
+        event: 'COMMENT',
+      });
+    });
+
+    it('replaces the agent previous review instead of stacking a new one', async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse([
+          { id: 1, body: 'a human review' },
+          { id: 2, body: `${REVIEW_MARKER}\nold body` },
+        ]),
+      );
+      fetchMock.mockResolvedValueOnce(jsonResponse({ id: 2 }, 200));
+
+      const action = await upsertReviewComment('raymanguino', 'six7swe', 63, TOKEN, {
+        commit_id: 'abc123',
+        body: `${REVIEW_MARKER}\nnew body`,
+      });
+
+      expect(action).toBe('updated');
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const [url, init] = fetchMock.mock.calls[1];
+      expect(url).toBe('https://api.github.com/repos/raymanguino/six7swe/pulls/63/reviews/2');
+      expect(init?.method).toBe('PATCH');
+      expect(JSON.parse(init?.body as string)).toEqual({
+        body: `${REVIEW_MARKER}\nnew body`,
+      });
+    });
+
+    it('updates the most recent agent review when there are several', async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse([
+          { id: 2, body: `${REVIEW_MARKER}\noldest` },
+          { id: 5, body: `${REVIEW_MARKER}\nnewest` },
+        ]),
+      );
+      fetchMock.mockResolvedValueOnce(jsonResponse({ id: 5 }, 200));
+
+      const action = await upsertReviewComment('raymanguino', 'six7swe', 63, TOKEN, {
+        commit_id: 'abc123',
+        body: `${REVIEW_MARKER}\nfresh`,
+      });
+
+      expect(action).toBe('updated');
+      expect(fetchMock.mock.calls[1][0]).toContain('/reviews/5');
     });
   });
 

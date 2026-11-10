@@ -64,10 +64,15 @@ interface GitHubPullRequestFilePayload {
   patch?: string;
 }
 
+interface GitHubReviewPayload {
+  id?: number;
+  body?: string | null;
+}
+
 async function githubFetch(
   url: string,
   token: string,
-  options: { method?: 'GET' | 'POST'; body?: unknown } = {},
+  options: { method?: 'GET' | 'POST' | 'PATCH'; body?: unknown } = {},
 ): Promise<Response> {
   const headers: Record<string, string> = {
     Accept: 'application/vnd.github+json',
@@ -202,4 +207,90 @@ export async function submitReview(
     token,
     { method: 'POST', body: review },
   );
+}
+
+/**
+ * Hidden marker that identifies the agent's own review.
+ *
+ * It is an HTML comment, so GitHub renders nothing for it, and it is what
+ * lets a later run find the review it posted before.
+ */
+export const REVIEW_MARKER = '<!-- six7swe-qa-agent -->';
+
+/**
+ * Lists the reviews on a pull request.
+ *
+ * GET /repos/{owner}/{repo}/pulls/{pullNumber}/reviews
+ */
+export async function listReviews(
+  owner: string,
+  repo: string,
+  pullNumber: number,
+  token: string,
+): Promise<GitHubReviewPayload[]> {
+  const response = await githubFetch(
+    `${GITHUB_API_BASE}/repos/${owner}/${repo}/pulls/${pullNumber}/reviews?per_page=${FILES_PER_PAGE}`,
+    token,
+  );
+  const data = (await response.json()) as GitHubReviewPayload[];
+
+  return Array.isArray(data) ? data : [];
+}
+
+/**
+ * Replaces the body of an existing review.
+ *
+ * PATCH /repos/{owner}/{repo}/pulls/{pullNumber}/reviews/{reviewId}
+ */
+export async function updateReview(
+  owner: string,
+  repo: string,
+  pullNumber: number,
+  reviewId: number,
+  token: string,
+  body: string,
+): Promise<void> {
+  await githubFetch(
+    `${GITHUB_API_BASE}/repos/${owner}/${repo}/pulls/${pullNumber}/reviews/${reviewId}`,
+    token,
+    { method: 'PATCH', body: { body } },
+  );
+}
+
+/**
+ * Keeps a single, current review on a pull request.
+ *
+ * Every push to a pull request triggers a new review, and without this the
+ * pull request accumulates a stack of them: the author cannot tell which is
+ * current. This finds the agent's previous review by its hidden marker and
+ * replaces its body, so there is exactly one authoritative review.
+ *
+ * Returns `updated` when an existing review was replaced and `created` when
+ * a new one was posted.
+ */
+export async function upsertReviewComment(
+  owner: string,
+  repo: string,
+  pullNumber: number,
+  token: string,
+  review: { commit_id: string; body: string },
+): Promise<'updated' | 'created'> {
+  const reviews = await listReviews(owner, repo, pullNumber, token);
+
+  const existing = [...reviews]
+    .reverse()
+    .find((candidate) => candidate.body?.includes(REVIEW_MARKER) && candidate.id !== undefined);
+
+  if (existing?.id !== undefined) {
+    await updateReview(owner, repo, pullNumber, existing.id, token, review.body);
+    return 'updated';
+  }
+
+  await submitReview(owner, repo, pullNumber, token, {
+    commit_id: review.commit_id,
+    body: review.body,
+    event: 'COMMENT',
+  });
+
+  return 'created';
 }
