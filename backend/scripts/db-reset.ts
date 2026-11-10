@@ -16,12 +16,10 @@
  *   pnpm run db:reset -- --remote --yes  # hosted database, no prompt
  */
 
-import { spawnSync } from 'node:child_process';
 import readline from 'node:readline/promises';
-import path from 'node:path';
 import postgres from 'postgres';
 import { applyDatabaseSecurity } from '../src/db/security';
-import { assumesYes, resolveDatabaseTarget, sslOptions, wantsSeed } from './db-env';
+import { assumesYes, resolveDatabaseTarget, runMigrations, sslOptions, wantsSeed } from './db-env';
 
 /**
  * Drops every table and enum in the `public` schema.
@@ -59,31 +57,6 @@ async function dropPublicSchema(sql: postgres.Sql): Promise<string[]> {
   }
 
   return dropped;
-}
-
-/**
- * Replays the migration history.
- *
- * `drizzle-kit migrate` applies the files in order and records them in
- * `drizzle.__drizzle_migrations`. It does not prompt, so it is safe to run
- * unattended.
- */
-function migrateSchema(): void {
-  const target = resolveDatabaseTarget();
-
-  const result = spawnSync('npx', ['drizzle-kit', 'migrate'], {
-    cwd: path.join(__dirname, '..'),
-    stdio: 'inherit',
-    // The URL is passed through explicitly rather than relying on the
-    // environment: dotenv does not override a variable that is already set,
-    // so the local .env would otherwise win over the --remote target.
-    env: { ...process.env, DATABASE_URL: target.databaseUrl },
-    shell: true,
-  });
-
-  if (result.status !== 0) {
-    throw new Error(`drizzle-kit migrate failed with exit code ${result.status ?? 'unknown'}`);
-  }
 }
 
 /**
@@ -164,7 +137,7 @@ async function main(): Promise<void> {
     await sql.end();
   }
 
-  migrateSchema();
+  runMigrations(target);
   process.stdout.write('Migrations applied.\n');
 
   // A freshly migrated schema is wide open: the `anon` role has full grants

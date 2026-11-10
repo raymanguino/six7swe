@@ -85,6 +85,10 @@ pnpm run db:migrate -- --remote
 The migrations are generated from `src/db/schema/` and applied in order. `db:migrate` applies
 only the ones that have not been applied yet, so it is safe to run at any time.
 
+A database that was created before the migration history existed has the tables but no
+migration ledger, so `db:migrate` cannot apply anything to it. Run `db:reset` on such a
+database once to rebuild it from the history.
+
 To rebuild the database from scratch instead, drop everything in the `public` schema and replay
 the migrations:
 

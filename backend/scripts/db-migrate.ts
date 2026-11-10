@@ -10,26 +10,10 @@
  *   pnpm run db:migrate -- --remote    # the hosted database
  */
 
-import { spawnSync } from 'node:child_process';
-import path from 'node:path';
-import { resolveDatabaseTarget } from './db-env';
+import { resolveDatabaseTarget, runMigrations } from './db-env';
 
 function main(): void {
-  const target = resolveDatabaseTarget();
-
-  const result = spawnSync('npx', ['drizzle-kit', 'migrate'], {
-    cwd: path.join(__dirname, '..'),
-    stdio: 'inherit',
-    // The URL is passed through explicitly rather than relying on the
-    // environment: dotenv does not override a variable that is already set,
-    // so the local .env would otherwise win over the --remote target.
-    env: { ...process.env, DATABASE_URL: target.databaseUrl },
-    shell: true,
-  });
-
-  if (result.status !== 0) {
-    throw new Error(`drizzle-kit migrate failed with exit code ${result.status ?? 'unknown'}`);
-  }
+  runMigrations(resolveDatabaseTarget());
 }
 
 try {

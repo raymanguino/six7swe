@@ -85,7 +85,7 @@ Rules:
 - Use **Drizzle**
 - The schema in `backend/src/db/schema/` is the source of truth. Migrations are generated
   from it with `pnpm run db:generate` and applied with `pnpm run db:migrate`
-  - Tables and columns use `snake_case`
+- Tables and columns use `snake_case`
 - Database models live in **infrastructure**
 - Domain entities must be mapped explicitly from DB models
 - Transactions must be explicit (no implicit behavior)

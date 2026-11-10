@@ -12,7 +12,9 @@ pnpm-lock.yaml
 # Generated / gitignored local data
 backend/content/
 backend/scripts/portfolio-data.json
-backend/drizzle/
+
+# Generated migration files
+backend/migrations/
 
 # Binary assets
 backend/public/

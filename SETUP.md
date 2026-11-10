@@ -221,9 +221,9 @@ schema and replay the migrations:
 
 ```bash
 cd backend
-pnpm run db:migrate           # local
-pnpm run db:migrate -- --remote   # hosted
-pnpm run db:seed-portfolio    # portfolio profile and content sections
+pnpm run db:reset                # local
+pnpm run db:reset -- --remote    # hosted
+pnpm run db:seed-portfolio       # portfolio profile and content sections
 ```
 
 The Supabase-managed schemas (`auth`, `storage`, `graphql_public`) are left alone, so Supabase

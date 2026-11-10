@@ -160,15 +160,21 @@ Migrations are generated from the schema in `src/db/schema/` and applied in orde
 pnpm run db:generate        # Generate a migration from a schema change
 pnpm run db:migrate         # Apply the pending migrations
 pnpm run db:secure          # Revoke the public grants and enable row level security
-pnpm run db:reset           # Drop everything in `public`, replay the migrations, re-seed
+pnpm run db:reset           # Drop everything in `public` and replay the migrations
+pnpm run db:reset -- --seed # The same, and insert the development data
 pnpm run db:reset -- --remote   # The same, against the hosted database
 pnpm run db:studio          # Open Drizzle Studio GUI
 pnpm run db:seed            # Seed the users and search profiles
 pnpm run db:seed-portfolio  # Seed the portfolio profile and content sections
 ```
 
-`db:reset` drops and recreates everything in the `public` schema. The Supabase-managed schemas
+`db:reset` drops and recreates everything in the `public` schema, then replays the migration
+history. It leaves the database empty unless `--seed` is passed. The Supabase-managed schemas
 (`auth`, `storage`, `graphql_public`) are left alone, so Supabase Auth users survive a reset.
+
+A database that was created before the migration history existed has the tables but no
+migration ledger, so `db:migrate` cannot apply anything to it. Run `db:reset` on such a
+database once to rebuild it from the history.
 
 ### Database access lockdown
 
