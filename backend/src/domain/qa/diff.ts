@@ -10,6 +10,15 @@
 
 export interface ChangedFile {
   filename: string;
+  /**
+   * The path the file had before a rename or a move.
+   *
+   * GitHub reports the new path in `filename` and the old one in
+   * `previous_filename`. A pull request that moves a protected file out of
+   * a protected directory is still a change to that protected file, so both
+   * paths have to be checked.
+   */
+  previousFilename?: string;
   status: string;
   additions: number;
   deletions: number;
@@ -29,19 +38,162 @@ export interface DiffBudget {
  * Lockfiles are listed but never patched.
  *
  * They are noise for a review - they are generated, they are usually the
- * bulk of the diff, and reading them teaches the model nothing.
+ * bulk of the diff, and reading them teaches the model nothing. The match
+ * is on the file name, so a nested lockfile is skipped too.
  */
 export const LOCKFILES: readonly string[] = ['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock'];
 
 /** Marker written in place of a patch that was deliberately not included. */
 export const PATCH_SKIPPED_MARKER = '[patch not included]';
 
+/**
+ * Marker written for a file that has no patch at all.
+ *
+ * Pure renames, mode changes and binary files have no diff. That is not
+ * truncation: there was nothing to show in the first place.
+ */
+export const NO_PATCH_MARKER = '[no patch available]';
+
 function isLockfile(filename: string): boolean {
-  return LOCKFILES.includes(filename);
+  const base = filename.split('/').pop() ?? filename;
+  return LOCKFILES.includes(base);
 }
 
 function header(file: ChangedFile): string {
-  return `### ${file.filename} (${file.status}) +${file.additions} -${file.deletions}`;
+  const previous = file.previousFilename ? ` (moved from ${file.previousFilename})` : '';
+  return `### ${file.filename}${previous} (${file.status}) +${file.additions} -${file.deletions}`;
+}
+
+/**
+ * Every path a pull request touches.
+ *
+ * For a renamed file this is both the new path and the old one. Anything
+ * that reasons about "which paths did this pull request change" has to see
+ * both, otherwise moving a protected file out of a protected directory
+ * hides the change.
+ */
+export function allTouchedPaths(files: readonly ChangedFile[]): string[] {
+  const paths: string[] = [];
+
+  for (const file of files) {
+    paths.push(file.filename);
+    if (file.previousFilename) {
+      paths.push(file.previousFilename);
+    }
+  }
+
+  return paths;
+}
+
+/**
+ * The line numbers a patch touches, in the new revision of the file.
+ *
+ * Read from the hunk headers of a unified diff: `@@ -1,3 +10,4 @@` covers
+ * lines 10 to 13 of the new file. A finding that points at a line outside
+ * that set points at code the model cannot have read.
+ */
+export function addedLineNumbers(patch: string): Set<number> {
+  const lines = new Set<number>();
+  const hunkHeader = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm;
+
+  let match = hunkHeader.exec(patch);
+  while (match !== null) {
+    const start = Number(match[1]);
+    const count = match[2] === undefined ? 1 : Number(match[2]);
+
+    for (let offset = 0; offset < count; offset += 1) {
+      lines.add(start + offset);
+    }
+
+    match = hunkHeader.exec(patch);
+  }
+
+  return lines;
+}
+
+interface DiffBlock {
+  text: string;
+  /** The patch was deliberately withheld (lockfile, or explicitly skipped). */
+  skipped: boolean;
+  /** The file has no patch at all (binary, rename, mode change). */
+  missing: boolean;
+  /** The patch was cut short to fit the per-file budget. */
+  shortened: boolean;
+}
+
+function buildBlocks(files: readonly ChangedFile[], budget: DiffBudget): DiffBlock[] {
+  const blocks: DiffBlock[] = [];
+
+  for (const file of files) {
+    const patch = file.patch ?? '';
+
+    if (budget.skipPatchesFor.includes(file.filename) || isLockfile(file.filename)) {
+      blocks.push({
+        text: `${header(file)}\n${PATCH_SKIPPED_MARKER}`,
+        skipped: true,
+        missing: false,
+        shortened: false,
+      });
+      continue;
+    }
+
+    if (patch.length === 0) {
+      blocks.push({
+        text: `${header(file)}\n${NO_PATCH_MARKER}`,
+        skipped: false,
+        missing: true,
+        shortened: false,
+      });
+      continue;
+    }
+
+    const shortened = patch.length > budget.perFileChars;
+    const text = shortened ? patch.slice(0, budget.perFileChars) : patch;
+
+    blocks.push({
+      text: shortened
+        ? `${header(file)}\n${text}\n[patch shortened to ${budget.perFileChars} characters]`
+        : `${header(file)}\n${text}`,
+      skipped: false,
+      missing: false,
+      shortened,
+    });
+  }
+
+  return blocks;
+}
+
+function plural(count: number, singular: string, pluralForm: string): string {
+  return count === 1 ? singular : pluralForm;
+}
+
+function buildNotices(kept: readonly DiffBlock[], omitted: number): string[] {
+  const notices: string[] = [];
+
+  if (omitted > 0) {
+    notices.push(`[diff truncated: ${omitted} ${plural(omitted, 'file', 'files')} omitted]`);
+  }
+
+  const skipped = kept.filter((block) => block.skipped).length;
+  if (skipped > 0) {
+    notices.push(
+      `[diff truncated: ${skipped} ${plural(skipped, 'patch', 'patches')} not included]`,
+    );
+  }
+
+  const shortened = kept.filter((block) => block.shortened).length;
+  if (shortened > 0) {
+    notices.push(
+      `[diff truncated: ${shortened} ${plural(shortened, 'patch', 'patches')} shortened]`,
+    );
+  }
+
+  const missing = kept.filter((block) => block.missing).length;
+  if (missing > 0) {
+    notices.push(`[diff note: ${missing} ${plural(missing, 'file', 'files')} have no patch]`);
+  }
+
+  return notices;
 }
 
 /**
@@ -49,93 +201,51 @@ function header(file: ChangedFile): string {
  *
  * Every file is listed in order with a short status header. Lockfiles are
  * listed without their patch, remaining patches are truncated to
- * `perFileChars`, and the whole thing is truncated to `totalChars`. Whenever
- * something is dropped the output says so, so the model can tell the
- * difference between "no problems here" and "never looked here".
+ * `perFileChars`, and the whole thing is truncated to `totalChars`.
+ * Whenever something is dropped the output says so, so the model can tell
+ * the difference between "no problems here" and "never looked here".
+ *
+ * A file that does not fit the remaining budget is skipped and the ones
+ * after it are still considered. Dropping every remaining file because the
+ * first one was large would hide the small files behind it.
  */
 export function buildReviewDiff(files: readonly ChangedFile[], budget: DiffBudget): string {
-  const blocks: string[] = [];
-  let skippedPatches = 0;
-  let shortenedPatches = 0;
+  const blocks = buildBlocks(files, budget);
 
-  for (const file of files) {
-    const patch = file.patch ?? '';
-    const skip = budget.skipPatchesFor.includes(file.filename) || isLockfile(file.filename);
+  const kept: DiffBlock[] = [];
+  let used = 0;
+  let omitted = 0;
 
-    if (skip || patch.length === 0) {
-      skippedPatches += 1;
-      blocks.push(`${header(file)}\n${PATCH_SKIPPED_MARKER}`);
+  for (const block of blocks) {
+    const cost = block.text.length + (kept.length > 0 ? 1 : 0);
+
+    if (used + cost > budget.totalChars) {
+      omitted += 1;
       continue;
     }
 
-    const shortened = patch.length > budget.perFileChars;
-    const text = shortened ? patch.slice(0, budget.perFileChars) : patch;
-    if (shortened) {
-      shortenedPatches += 1;
-    }
-
-    blocks.push(
-      shortened
-        ? `${header(file)}\n${text}\n[patch shortened to ${budget.perFileChars} characters]`
-        : `${header(file)}\n${text}`,
-    );
-  }
-
-  // Fill the total budget with as many whole files as fit, in order.
-  const kept: string[] = [];
-  let used = 0;
-
-  for (const block of blocks) {
-    const cost = block.length + (kept.length > 0 ? 1 : 0);
-    if (used + cost > budget.totalChars) {
-      break;
-    }
     kept.push(block);
     used += cost;
   }
 
   for (;;) {
-    const body = kept.join('\n');
-    const omitted = blocks.length - kept.length;
-    const notices = buildNotices(omitted, skippedPatches, shortenedPatches);
-    const text = notices.length > 0 ? `${body}\n${notices.join('\n')}` : body;
+    const notices = buildNotices(kept, omitted);
+    const noticeText = notices.join('\n');
+    const body = kept.map((block) => block.text).join('\n');
+    const combined =
+      body.length === 0 ? noticeText : noticeText.length > 0 ? `${body}\n${noticeText}` : body;
 
-    if (text.length <= budget.totalChars || kept.length === 0) {
-      return text.slice(0, budget.totalChars);
+    if (combined.length <= budget.totalChars) {
+      return combined;
     }
 
-    // The notices do not fit alongside every file: drop the last one and
-    // recompute, so the output never claims more than it delivered.
+    if (kept.length === 0) {
+      // Nothing fits, but the notices are the most valuable part of the
+      // output: they are what tells the model it did not see everything.
+      return noticeText.slice(0, budget.totalChars);
+    }
+
     kept.pop();
+    omitted += 1;
   }
-}
-
-function plural(count: number, singular: string, pluralForm: string): string {
-  return count === 1 ? singular : pluralForm;
-}
-
-function buildNotices(
-  omittedFiles: number,
-  skippedPatches: number,
-  shortenedPatches: number,
-): string[] {
-  const notices: string[] = [];
-
-  if (omittedFiles > 0) {
-    notices.push(
-      `[diff truncated: ${omittedFiles} ${plural(omittedFiles, 'file', 'files')} omitted]`,
-    );
-  }
-  if (skippedPatches > 0) {
-    notices.push(
-      `[diff truncated: ${skippedPatches} ${plural(skippedPatches, 'patch', 'patches')} not included]`,
-    );
-  }
-  if (shortenedPatches > 0) {
-    notices.push(
-      `[diff truncated: ${shortenedPatches} ${plural(shortenedPatches, 'patch', 'patches')} shortened]`,
-    );
-  }
-
-  return notices;
 }

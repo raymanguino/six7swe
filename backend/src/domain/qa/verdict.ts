@@ -2,8 +2,8 @@
  * Review verdicts.
  *
  * Pure domain logic: no IO, no framework imports, no model calls. The
- * agent's findings are turned into a single GitHub review event and a single
- * gate outcome here, so both decisions are unit-testable and the
+ * agent's findings are turned into a single gate outcome and a single
+ * review event here, so both decisions are unit-testable and the
  * Phase 1 -> Phase 2 flip is a single argument at the call site.
  *
  * The path policy lives here rather than in the workflow file on purpose: a
@@ -11,7 +11,17 @@
  * code the workflow checks out from `base.sha`.
  */
 
-export type ReviewEvent = 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
+import { addedLineNumbers, allTouchedPaths, type ChangedFile } from './diff';
+
+/**
+ * The GitHub review events this agent is allowed to post.
+ *
+ * `APPROVE` is deliberately absent. An approval posted by the agent can
+ * satisfy the "require approving reviews" branch-protection rule, and the
+ * whole point of the status-check gate is that a human still owns that
+ * approval. The agent reports; it never rubber-stamps.
+ */
+export type ReviewEvent = 'COMMENT' | 'REQUEST_CHANGES';
 
 export type FindingSeverity = 'blocker' | 'major' | 'minor' | 'nit';
 
@@ -25,8 +35,9 @@ export interface ReviewFinding {
 /**
  * How the agent's output is applied.
  *
- * `comment-only` is Phase 1: the agent reports and never approves.
- * `enforce` is Phase 2: the agent approves clean PRs and blocks the rest.
+ * `comment-only` is Phase 1: the agent reports and never blocks.
+ * `enforce` is Phase 2: the agent blocks a pull request that has a
+ * blocking finding.
  */
 export type ReviewMode = 'comment-only' | 'enforce';
 
@@ -47,25 +58,33 @@ export const BLOCKING_SEVERITIES: readonly FindingSeverity[] = ['blocker', 'majo
 /**
  * Decides which GitHub review event the findings justify.
  *
- * The default is `comment-only`, so the safe behaviour is what you get if
- * nobody passes a mode. Phase 2 flips the *caller*, not the default.
+ * The event is derived from the gate outcome, never computed separately.
+ * Two independent decisions about the same pull request could disagree,
+ * and an agent that approves a pull request the gate wants a human to
+ * look at is exactly the kind of bug this module exists to prevent.
  */
-export function decideReviewEvent(
-  findings: readonly ReviewFinding[],
-  mode: ReviewMode = 'comment-only',
-): ReviewEvent {
-  if (mode === 'comment-only') {
-    return 'COMMENT';
+export function reviewEventForGate(gate: GateOutcome): ReviewEvent {
+  if (gate === 'fail') {
+    return 'REQUEST_CHANGES';
   }
 
-  return findings.some((finding) => BLOCKING_SEVERITIES.includes(finding.severity))
-    ? 'REQUEST_CHANGES'
-    : 'APPROVE';
+  // `manual-review` and `fail-closed` are not the agent asking for
+  // changes: the first needs a human, the second is the agent broken.
+  // Both are explained in the review body.
+  return 'COMMENT';
 }
 
 export interface GateInput {
+  /** Raw findings from the model. They are sanitized inside this function. */
   findings: readonly ReviewFinding[];
-  changedFiles: readonly string[];
+  /**
+   * The files the pull request changed.
+   *
+   * The file objects are needed, not just their names: a rename carries
+   * the path it came from, and the patches carry the line numbers a
+   * finding can legitimately point at.
+   */
+  changedFiles: readonly ChangedFile[];
   mode: ReviewMode;
   protectedPaths?: readonly string[];
   /** False when the review could not be completed. */
@@ -82,6 +101,10 @@ export interface GateInput {
  * 2. `comment-only` always passes. Phase 1 observes; it never blocks.
  * 3. A pull request that touches a protected path needs a human.
  * 4. Otherwise a blocking finding fails, and everything else passes.
+ *
+ * The findings are sanitized here rather than being expected to arrive
+ * sanitized, so a caller that forgets the step cannot have a hallucinated
+ * path block a merge.
  */
 export function decideGate(input: GateInput): GateOutcome {
   if (!input.reviewCompleted) {
@@ -92,13 +115,40 @@ export function decideGate(input: GateInput): GateOutcome {
     return 'pass';
   }
 
-  if (touchesProtectedPath(input.changedFiles, input.protectedPaths)) {
+  if (touchesProtectedPath(allTouchedPaths(input.changedFiles), input.protectedPaths)) {
     return 'manual-review';
   }
 
-  return input.findings.some((finding) => BLOCKING_SEVERITIES.includes(finding.severity))
+  const findings = sanitizeFindings(input.findings, input.changedFiles);
+
+  return findings.some((finding) => BLOCKING_SEVERITIES.includes(finding.severity))
     ? 'fail'
     : 'pass';
+}
+
+/**
+ * Decides which GitHub review event the findings justify.
+ *
+ * The default is `comment-only`, so the safe behaviour is what you get if
+ * nobody passes a mode. Phase 2 flips the *caller*, not the default.
+ */
+export function decideReviewEvent(
+  findings: readonly ReviewFinding[],
+  mode: ReviewMode = 'comment-only',
+  options: {
+    changedFiles?: readonly ChangedFile[];
+    protectedPaths?: readonly string[];
+  } = {},
+): ReviewEvent {
+  return reviewEventForGate(
+    decideGate({
+      findings,
+      changedFiles: options.changedFiles ?? [],
+      mode,
+      protectedPaths: options.protectedPaths,
+      reviewCompleted: true,
+    }),
+  );
 }
 
 /**
@@ -108,6 +158,10 @@ export function decideGate(input: GateInput): GateOutcome {
  * client, the schema, the auth code or the dependency manifest is changing
  * the thing that judges it, or the thing that runs it. Those pull requests
  * get a red check and a human decision.
+ *
+ * `backend/package.json` and `pnpm-workspace.yaml` are here for the same
+ * reason as the root `package.json`: their scripts and their dependency
+ * and registry settings are what the agent itself runs under.
  *
  * This is defence in depth, not a hard boundary: a pull request that edits
  * `.github/workflows/qa-review.yml` can also edit the exit-code mapping in
@@ -126,8 +180,17 @@ export const DEFAULT_PROTECTED_PATTERNS: readonly string[] = [
   'backend/src/plugins/auth.ts',
   'backend/src/services/auth/**',
   'backend/src/config/auth.ts',
+  'backend/migrations/**',
+  'backend/drizzle.config.ts',
+  'backend/jest.config.js',
+  'backend/tsconfig*.json',
+  'backend/package.json',
   'package.json',
+  'pnpm-workspace.yaml',
   'pnpm-lock.yaml',
+  'tsconfig.base.json',
+  'eslint.config.js',
+  '.npmrc',
 ];
 
 const REGEXP_SPECIALS = /[.*+?^${}()|[\]\\]/g;
@@ -140,7 +203,8 @@ function escapeRegExp(text: string): string {
  * Compiles a glob into a regular expression.
  *
  * `**` matches any number of path segments, `*` matches within one
- * segment. A trailing `/**` also matches the directory itself.
+ * segment. A trailing `/**` also matches the directory itself, and a bare
+ * `**` matches every path.
  */
 function globToRegExp(pattern: string): RegExp {
   const segments = pattern.split('/');
@@ -152,7 +216,11 @@ function globToRegExp(pattern: string): RegExp {
 
     if (segment === '**') {
       if (isLast) {
-        source = source.replace(/\/$/, '') + '(?:/.*)?';
+        if (source.endsWith('/')) {
+          source = `${source.slice(0, -1)}(?:/.*)?`;
+        } else {
+          source = source.length > 0 ? `${source}(?:/.*)?` : '.*';
+        }
       } else {
         source += '(?:[^/]+/)*';
       }
@@ -170,21 +238,21 @@ function globToRegExp(pattern: string): RegExp {
 }
 
 /**
- * Reports whether any changed file matches a protected path.
+ * Reports whether any changed path matches a protected path.
  *
  * A pattern matches when it matches the whole path, or when the path starts
  * with the pattern as a directory prefix, so `backend/src/db/schema` covers
  * the files inside it even without a `/**` suffix.
  */
 export function touchesProtectedPath(
-  changedFiles: readonly string[],
+  changedPaths: readonly string[],
   patterns: readonly string[] = DEFAULT_PROTECTED_PATTERNS,
 ): boolean {
   for (const pattern of patterns) {
     const matcher = globToRegExp(pattern);
 
-    for (const file of changedFiles) {
-      if (matcher.test(file) || file.startsWith(`${pattern}/`)) {
+    for (const path of changedPaths) {
+      if (matcher.test(path) || path.startsWith(`${pattern}/`)) {
         return true;
       }
     }
@@ -194,18 +262,58 @@ export function touchesProtectedPath(
 }
 
 /**
- * Drops findings that reference a file the pull request did not touch.
+ * Removes the findings that cannot be trusted.
  *
- * The model can invent a path that is not in the diff. Such a finding is a
- * hallucination and must never reach a reviewer, so it is dropped here
- * rather than being softened into a general comment. Findings without a file
- * are general observations about the change and are kept.
+ * A finding that references a file the pull request did not touch is a
+ * hallucination and is dropped outright: there is nothing left of it.
+ *
+ * A finding that references a line the diff does not contain keeps its
+ * message but loses its line number. The line is wrong, the observation
+ * may not be, and a wrong line number would make GitHub reject an inline
+ * comment outright.
+ *
+ * Findings without a file are general observations about the change and
+ * are kept as they are.
  */
 export function sanitizeFindings(
   findings: readonly ReviewFinding[],
-  changedFiles: readonly string[],
+  changedFiles: readonly ChangedFile[],
 ): ReviewFinding[] {
-  const known = new Set(changedFiles);
+  const touched = new Set(allTouchedPaths(changedFiles));
+  const linesByPath = new Map<string, Set<number>>();
 
-  return findings.filter((finding) => finding.file === null || known.has(finding.file));
+  for (const file of changedFiles) {
+    const lines = addedLineNumbers(file.patch ?? '');
+
+    if (!linesByPath.has(file.filename)) {
+      linesByPath.set(file.filename, lines);
+    }
+    if (file.previousFilename && !linesByPath.has(file.previousFilename)) {
+      linesByPath.set(file.previousFilename, lines);
+    }
+  }
+
+  const sanitized: ReviewFinding[] = [];
+
+  for (const finding of findings) {
+    if (finding.file === null) {
+      sanitized.push(finding);
+      continue;
+    }
+
+    if (!touched.has(finding.file)) {
+      continue;
+    }
+
+    if (finding.line === null) {
+      sanitized.push(finding);
+      continue;
+    }
+
+    const validLines = linesByPath.get(finding.file);
+
+    sanitized.push(validLines?.has(finding.line) === true ? finding : { ...finding, line: null });
+  }
+
+  return sanitized;
 }

@@ -1,4 +1,12 @@
-import { buildReviewDiff, type ChangedFile, type DiffBudget } from '../../../domain/qa/diff';
+import {
+  addedLineNumbers,
+  allTouchedPaths,
+  buildReviewDiff,
+  NO_PATCH_MARKER,
+  PATCH_SKIPPED_MARKER,
+  type ChangedFile,
+  type DiffBudget,
+} from '../../../domain/qa/diff';
 
 function file(overrides: Partial<ChangedFile> = {}): ChangedFile {
   return {
@@ -46,7 +54,17 @@ describe('buildReviewDiff', () => {
 
     expect(diff).toContain('### pnpm-lock.yaml');
     expect(diff).not.toContain('lockfile noise');
-    expect(diff).toContain('[patch not included]');
+    expect(diff).toContain(PATCH_SKIPPED_MARKER);
+  });
+
+  it('skips a nested lockfile too', () => {
+    const diff = buildReviewDiff(
+      [file({ filename: 'frontend/package-lock.json', patch: 'lockfile noise' })],
+      BUDGET,
+    );
+
+    expect(diff).not.toContain('lockfile noise');
+    expect(diff).toContain(PATCH_SKIPPED_MARKER);
   });
 
   it('lists a file named in skipPatchesFor but never includes its patch', () => {
@@ -57,13 +75,25 @@ describe('buildReviewDiff', () => {
 
     expect(diff).toContain('### docs/generated.md');
     expect(diff).not.toContain('+new');
+    expect(diff).toContain(PATCH_SKIPPED_MARKER);
   });
 
-  it('omits the patch when GitHub did not return one', () => {
+  it('marks a file with no patch as having none, not as truncation', () => {
     const diff = buildReviewDiff([file({ patch: undefined })], BUDGET);
 
     expect(diff).toContain('### backend/src/index.ts');
-    expect(diff).toContain('[patch not included]');
+    expect(diff).toContain(NO_PATCH_MARKER);
+    expect(diff).not.toContain('[diff truncated');
+    expect(diff).toContain('[diff note: 1 file have no patch]');
+  });
+
+  it('names the path a file was moved from', () => {
+    const diff = buildReviewDiff(
+      [file({ filename: 'backend/src/new.ts', previousFilename: 'backend/src/old.ts' })],
+      BUDGET,
+    );
+
+    expect(diff).toContain('### backend/src/new.ts (moved from backend/src/old.ts)');
   });
 
   it('shortens a patch that exceeds the per-file budget and says so', () => {
@@ -93,6 +123,19 @@ describe('buildReviewDiff', () => {
     expect(diff).toContain('[diff truncated: 2 files omitted]');
   });
 
+  it('keeps the small files that follow one that does not fit', () => {
+    const diff = buildReviewDiff(
+      [
+        file({ filename: 'huge.ts', patch: 'p'.repeat(500) }),
+        file({ filename: 'small.ts', patch: 'tiny' }),
+      ],
+      { ...BUDGET, totalChars: 200 },
+    );
+
+    expect(diff).toContain('### small.ts');
+    expect(diff).toContain('[diff truncated: 1 file omitted]');
+  });
+
   it('never exceeds the total budget', () => {
     const diff = buildReviewDiff(
       Array.from({ length: 20 }, (_, index) =>
@@ -104,6 +147,17 @@ describe('buildReviewDiff', () => {
     expect(diff.length).toBeLessThanOrEqual(500);
   });
 
+  it('reports what was left out even when nothing fits', () => {
+    const diff = buildReviewDiff([file({ filename: 'huge.ts', patch: 'p'.repeat(500) })], {
+      ...BUDGET,
+      totalChars: 40,
+    });
+
+    expect(diff.length).toBeLessThanOrEqual(40);
+    expect(diff).toContain('[diff truncated');
+    expect(diff).not.toMatch(/^\n/);
+  });
+
   it('says nothing about truncation when nothing was dropped', () => {
     const diff = buildReviewDiff([file()], BUDGET);
 
@@ -113,5 +167,41 @@ describe('buildReviewDiff', () => {
 
   it('returns an empty string when there are no files', () => {
     expect(buildReviewDiff([], BUDGET)).toBe('');
+  });
+});
+
+describe('allTouchedPaths', () => {
+  it('returns the path of every file', () => {
+    const paths = allTouchedPaths([file({ filename: 'a.ts' }), file({ filename: 'b.ts' })]);
+
+    expect(paths).toEqual(['a.ts', 'b.ts']);
+  });
+
+  it('includes the path a file was moved from', () => {
+    const paths = allTouchedPaths([file({ filename: 'new.ts', previousFilename: 'old.ts' })]);
+
+    expect(paths).toEqual(['new.ts', 'old.ts']);
+  });
+});
+
+describe('addedLineNumbers', () => {
+  it('reads the new-side line range of a hunk', () => {
+    const lines = addedLineNumbers('@@ -10,3 +10,3 @@\n context\n-old\n+new\n more');
+
+    expect([...lines].sort((a, b) => a - b)).toEqual([10, 11, 12]);
+  });
+
+  it('treats a hunk without a count as a single line', () => {
+    expect([...addedLineNumbers('@@ -1 +7 @@\n-old\n+new')]).toEqual([7]);
+  });
+
+  it('handles several hunks', () => {
+    const lines = addedLineNumbers('@@ -1,2 +1,2 @@\n a\n-b\n@@ -20,2 +30,2 @@\n c\n-d');
+
+    expect([...lines].sort((a, b) => a - b)).toEqual([1, 2, 30, 31]);
+  });
+
+  it('returns nothing for a patch with no hunks', () => {
+    expect(addedLineNumbers('').size).toBe(0);
   });
 });
