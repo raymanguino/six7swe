@@ -43,12 +43,19 @@ too old for some dependencies.
    - `MINIMAX_API_KEY` - MiniMax API key
    - `MINIMAX_API_KEY_SECONDARY` - Optional MiniMax key used for one retry when the primary request receives HTTP 429
    - `RESEND_API_KEY` - Resend API key (contact form)
+   - `RESEND_FROM_EMAIL` - Sender address for outbound mail. Must be on a domain verified in Resend, e.g. `no-reply@auth.your-domain.dev`
+   - `RESEND_FROM_NAME` - Optional display name shown next to the sender address
    - `SUPABASE_URL` - Supabase project URL; the JWKS endpoint is derived from it. Required for the job-hunter routes
    - `SUPABASE_JWKS_URL` - Optional explicit JWKS endpoint
    - `JOB_REFRESH_STALE_MINUTES` - Optional; how long a refresh may run before it is considered abandoned (default 30)
 
 > `AUTH_DEV_BYPASS` must **not** be set in production. The server refuses to
 > start with it enabled when `NODE_ENV=production`.
+
+> `RESEND_FROM_EMAIL` is required for the contact form. The backend refuses to
+> send mail without it and answers `/contact` with a 500, because the
+> Resend shared sender (`onboarding@resend.dev`) only delivers to the account
+> owner and would silently drop every message.
 
 > Set production values in the Railway dashboard, not in a committed file. `backend/.env` and `backend/.env.*` are gitignored and never deployed.
 

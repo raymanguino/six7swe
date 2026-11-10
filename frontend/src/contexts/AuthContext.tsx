@@ -2,9 +2,19 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@supabase/supabase-js';
 import { setAccessTokenProvider } from '../utils/api';
+import { describeAuthError, describeUrlAuthError } from '../utils/authErrors';
+import { AUTH_CONFIRMATION_REDIRECT_PATH } from '../constants';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? '';
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? '';
+
+export interface SignUpResult {
+  /**
+   * True when the account still needs the emailed confirmation link before
+   * it can sign in. False when the project auto-confirms addresses.
+   */
+  requiresEmailConfirmation: boolean;
+}
 
 export interface AuthContextValue {
   session: Session | null;
@@ -13,8 +23,10 @@ export interface AuthContextValue {
   loading: boolean;
   /** True when no Supabase project is configured for this environment. */
   configured: boolean;
+  /** Set when the browser arrived with a failed confirmation link. */
+  linkError: string | null;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string) => Promise<void>;
+  signUp: (email: string, password: string) => Promise<SignUpResult>;
   signOut: () => Promise<void>;
 }
 
@@ -37,10 +49,19 @@ function getClient(): SupabaseClient | null {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [linkError, setLinkError] = useState<string | null>(null);
 
   const configured = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 
   useEffect(() => {
+    // Supabase reports a failed confirmation link in the URL fragment. Read
+    // it before the client clears the fragment while consuming the session.
+    const fragmentError = describeUrlAuthError(window.location.hash);
+    if (fragmentError) {
+      setLinkError(fragmentError);
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+
     const supabase = getClient();
 
     if (!supabase) {
@@ -85,17 +106,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       userEmail: session?.user.email ?? null,
       loading,
       configured,
+      linkError,
       signIn: async (email: string, password: string) => {
         const supabase = getClient();
         if (!supabase) throw new Error('Authentication is not configured.');
         const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw new Error(error.message);
+        if (error) throw new Error(describeAuthError(error, 'Authentication failed.'));
       },
-      signUp: async (email: string, password: string) => {
+      signUp: async (email: string, password: string): Promise<SignUpResult> => {
         const supabase = getClient();
         if (!supabase) throw new Error('Authentication is not configured.');
-        const { error } = await supabase.auth.signUp({ email, password });
-        if (error) throw new Error(error.message);
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            // Where the confirmation link sends the browser back to. It must
+            // be allow-listed in the Supabase project's redirect URLs.
+            emailRedirectTo: `${window.location.origin}${AUTH_CONFIRMATION_REDIRECT_PATH}`,
+          },
+        });
+        if (error) throw new Error(describeAuthError(error, 'Could not create the account.'));
+        // A null session means the project still has to confirm the address.
+        return { requiresEmailConfirmation: data.session === null };
       },
       signOut: async () => {
         const supabase = getClient();
@@ -103,7 +135,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await supabase.auth.signOut();
       },
     }),
-    [session, loading, configured],
+    [session, loading, configured, linkError],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

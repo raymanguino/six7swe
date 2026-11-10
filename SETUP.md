@@ -138,6 +138,39 @@ Then sign in at `http://localhost:5173/hunter/login` with that email.
 > `NODE_ENV=production`. The `/hunter` pages still require `VITE_SUPABASE_*`,
 > so the UI keeps asking you to sign in.
 
+#### Hosted Supabase project: mail and redirects
+
+The local stack has no mail provider, so sign-up never sends a confirmation
+email (`enable_confirmations = false` in `supabase/config.toml`). A hosted
+project behaves differently and needs these settings in the Supabase dashboard
+(**Authentication** section):
+
+| Setting | Value | Why |
+|---|---|---|
+| **Email → SMTP Settings** | Custom SMTP | The built-in provider is capped at 2 emails/hour, shared by every project on it. Sign-up then fails with `email rate limit exceeded`. |
+| **Email → SMTP Sender** | `no-reply@auth.<your-domain>` | Must be on a domain verified in the mail provider. |
+| **URL Configuration → Site URL** | `https://<your-app-host>` | Where Supabase sends the browser when a link has no valid `redirect_to`. |
+| **URL Configuration → Redirect URLs** | `https://<your-app-host>/hunter/login` | Where the confirmation link returns to. |
+
+The SMTP host, port and credentials come from the mail provider. For Resend:
+host `smtp.resend.com`, port `465`, username `resend`, password = the API
+key.
+
+> The **Site URL** is what a broken confirmation link falls back to. If it is
+> left at the default (`http://localhost:3000`), clicking "Confirm your email"
+> appears to do nothing, because the browser is redirected off the app.
+
+Once custom SMTP is configured, the hourly email quota becomes adjustable
+under **Authentication → Rate Limits → Emails sent per hour**.
+
+The sender address is also read by the backend, so both sides agree on one
+identity. Set it in `backend/.env`:
+
+```bash
+RESEND_FROM_EMAIL=no-reply@auth.<your-domain>
+RESEND_FROM_NAME=<display name>
+```
+
 The seed data creates two users and three search profiles. A profile's
 `location` is a **LinkedIn numeric region id** (for example `105149290` for
 Ontario), not a city name — a city name produces a search that silently

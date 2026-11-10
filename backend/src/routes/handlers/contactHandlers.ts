@@ -1,6 +1,7 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
-import { Resend } from 'resend';
 import { getPortfolioData } from '../../services/portfolioService';
+import { EmailDeliveryError, sendEmail } from '../../services/emailService';
+import { EmailConfigError } from '../../config/email';
 
 const INPUT_LIMITS = {
   name: 100,
@@ -50,14 +51,6 @@ export async function contactHandler(request: FastifyRequest, reply: FastifyRepl
       return reply.code(500).send({ error: 'Failed to process contact form' });
     }
 
-    const apiKey = process.env.RESEND_API_KEY;
-    if (!apiKey) {
-      request.log.error('RESEND_API_KEY is not configured');
-      return reply.code(500).send({ error: 'Failed to process contact form' });
-    }
-
-    const resend = new Resend(apiKey);
-
     const subject = `Contact form: ${name}`;
     const bodyText = [
       `From: ${name} <${email}>`,
@@ -68,17 +61,23 @@ export async function contactHandler(request: FastifyRequest, reply: FastifyRepl
       .filter(Boolean)
       .join('\n');
 
-    const { error } = await resend.emails.send({
-      from: 'onboarding@resend.dev',
-      to: recipientEmail,
-      replyTo: email,
-      subject,
-      text: bodyText,
-    });
-
-    if (error) {
-      request.log.error({ error }, 'Resend email failed');
-      return reply.code(500).send({ error: 'Failed to send message. Please try again later.' });
+    try {
+      await sendEmail({
+        to: recipientEmail,
+        replyTo: email,
+        subject,
+        text: bodyText,
+      });
+    } catch (error) {
+      if (error instanceof EmailConfigError) {
+        request.log.error({ error: error.message }, 'Email is not configured');
+        return reply.code(500).send({ error: 'Failed to process contact form' });
+      }
+      if (error instanceof EmailDeliveryError) {
+        request.log.error({ error: error.providerMessage }, 'Resend email failed');
+        return reply.code(500).send({ error: 'Failed to send message. Please try again later.' });
+      }
+      throw error;
     }
 
     request.log.info({ name, email }, 'Contact form submission sent');
