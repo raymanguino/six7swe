@@ -6,14 +6,17 @@
 # on the repository. It exists so the credential is validated BEFORE anything
 # depends on it, and it deletes itself once it has done its job.
 #
-# It is triggered manually only. It never runs on a pull request.
+# It never runs on a pull request. It runs when this branch is pushed, so the
+# credential can be verified without merging a throwaway file into `main`.
 #
-# DELETE THIS FILE once the verification passes and the real
+# DELETE THIS FILE (and the branch) once the verification passes and the real
 # `.github/workflows/qa-review.yml` exists (issue #57).
 
 name: QA app token check
 
 on:
+  push:
+    branches: ['chore/qa-app-token-check']
   workflow_dispatch:
 
 permissions:
