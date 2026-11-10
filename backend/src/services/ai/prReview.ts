@@ -1,18 +1,23 @@
 import { z } from 'zod';
 import { structuredCompletion } from '../minimaxService';
-import type { FindingSeverity } from '../../domain/qa';
+import type { ReviewFinding } from '../../domain/qa';
 import { PR_REVIEW_SYSTEM_PROMPT } from './prompts/prReview';
 
 /**
  * The model response for a pull request review.
  *
- * The schema validates the *types*, not the presentation: capping the
- * findings list here would reject an otherwise valid response just because
- * the model listed nine findings instead of eight. The list is trimmed to
- * `MAX_FINDINGS` afterwards.
+ * The schema validates the *types*, not the presentation. There is no cap
+ * on the findings list: the completion budget already bounds how many
+ * findings a response can contain, and a cap here would reject an
+ * otherwise valid response and turn the whole review into a failure.
+ *
+ * There is no `verdict` field either. The gate is decided from the
+ * findings by the domain module, in pure code. A second, model-supplied
+ * verdict is a second source of truth that can disagree with the first,
+ * and an `approve` value in the type invites a later caller to map it
+ * straight onto a GitHub review event the agent is not allowed to post.
  */
 export const prReviewResponseSchema = z.object({
-  verdict: z.enum(['approve', 'request_changes', 'comment']),
   summary: z.string().min(1),
   findings: z
     .array(
@@ -23,27 +28,24 @@ export const prReviewResponseSchema = z.object({
         message: z.string().min(1),
       }),
     )
-    .max(20)
     .default([]),
 });
 
 export type PrReviewResponse = z.infer<typeof prReviewResponseSchema>;
 
-export interface PrReviewFinding {
-  severity: FindingSeverity;
-  file: string | null;
-  line: number | null;
-  message: string;
-}
-
 export interface PrReviewOutput {
-  verdict: PrReviewResponse['verdict'];
   summary: string;
-  findings: PrReviewFinding[];
+  /**
+   * Every finding the model returned.
+   *
+   * The list is not trimmed here. Trimming before the gate has seen the
+   * list would let a blocker written after the cut be lost entirely, and
+   * trimming before the sanitizer has run would throw away real findings
+   * that sat behind hallucinated ones. The caller trims for display, after
+   * the gate has decided.
+   */
+  findings: ReviewFinding[];
 }
-
-/** Maximum number of findings kept in the result. */
-export const MAX_FINDINGS = 8;
 
 export interface PrReviewInput {
   prTitle: string;
@@ -59,17 +61,26 @@ export interface PrReviewInput {
  * MiniMax's habit of reporting failures inside a `200` body are all handled
  * by the existing transport. A malformed model response raises: it is never
  * replaced with a fabricated result.
+ *
+ * The pull request title, description and diff are written by the pull
+ * request author, so they are the one input an attacker fully controls.
+ * They are wrapped in labelled delimiters and the system prompt says
+ * plainly that the content inside them is data under review and never
+ * instructions.
  */
 export async function reviewPullRequest(input: PrReviewInput): Promise<PrReviewOutput> {
   const prompt = [
-    `Pull request title: ${input.prTitle}`,
+    '<pull_request_title>',
+    input.prTitle,
+    '</pull_request_title>',
     '',
-    'Pull request description:',
+    '<pull_request_description>',
     input.prDescription || '(none)',
+    '</pull_request_description>',
     '',
-    '---',
-    'Diff to review:',
+    '<diff>',
     input.diff,
+    '</diff>',
   ].join('\n');
 
   const parsed = await structuredCompletion(
@@ -82,9 +93,8 @@ export async function reviewPullRequest(input: PrReviewInput): Promise<PrReviewO
   );
 
   return {
-    verdict: parsed.verdict,
     summary: parsed.summary,
-    findings: parsed.findings.slice(0, MAX_FINDINGS).map((finding) => ({
+    findings: parsed.findings.map((finding) => ({
       severity: finding.severity,
       file: finding.file,
       line: finding.line,

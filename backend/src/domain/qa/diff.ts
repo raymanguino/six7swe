@@ -43,8 +43,20 @@ export interface DiffBudget {
  */
 export const LOCKFILES: readonly string[] = ['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock'];
 
+/**
+ * The prefix every notice the builder emits carries.
+ *
+ * The notices tell the model that it did not see everything, which makes
+ * them a signal an attacker would want to forge: a pull request that
+ * claims its own diff was truncated gets the model to look less
+ * carefully. The prefix is distinctive so the prompt can tell a real
+ * notice from a fake one, and so a notice inside the reviewed content is
+ * recognisable as forged.
+ */
+export const DIFF_NOTICE_PREFIX = '[six7swe:';
+
 /** Marker written in place of a patch that was deliberately not included. */
-export const PATCH_SKIPPED_MARKER = '[patch not included]';
+export const PATCH_SKIPPED_MARKER = `${DIFF_NOTICE_PREFIX} patch not included]`;
 
 /**
  * Marker written for a file that has no patch at all.
@@ -52,7 +64,7 @@ export const PATCH_SKIPPED_MARKER = '[patch not included]';
  * Pure renames, mode changes and binary files have no diff. That is not
  * truncation: there was nothing to show in the first place.
  */
-export const NO_PATCH_MARKER = '[no patch available]';
+export const NO_PATCH_MARKER = `${DIFF_NOTICE_PREFIX} no patch available]`;
 
 function isLockfile(filename: string): boolean {
   const base = filename.split('/').pop() ?? filename;
@@ -92,7 +104,7 @@ export function allTouchedPaths(files: readonly ChangedFile[]): string[] {
  * lines 10 to 13 of the new file. A finding that points at a line outside
  * that set points at code the model cannot have read.
  */
-export function addedLineNumbers(patch: string): Set<number> {
+export function hunkLineNumbers(patch: string): Set<number> {
   const lines = new Set<number>();
   const hunkHeader = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm;
 
@@ -152,7 +164,7 @@ function buildBlocks(files: readonly ChangedFile[], budget: DiffBudget): DiffBlo
 
     blocks.push({
       text: shortened
-        ? `${header(file)}\n${text}\n[patch shortened to ${budget.perFileChars} characters]`
+        ? `${header(file)}\n${text}\n${DIFF_NOTICE_PREFIX} patch shortened to ${budget.perFileChars} characters]`
         : `${header(file)}\n${text}`,
       skipped: false,
       missing: false,
@@ -167,30 +179,44 @@ function plural(count: number, singular: string, pluralForm: string): string {
   return count === 1 ? singular : pluralForm;
 }
 
+/**
+ * The prefix every notice the builder emits carries.
+ *
+ * The notices tell the model that it did not see everything, which makes
+ * them a signal an attacker would want to forge: a pull request that
+ * claims its own diff was truncated gets the model to look less
+ * carefully. The prefix is distinctive so the prompt can tell a real
+ * notice from a fake one, and so a notice inside the reviewed content is
+ * recognisable as forged.
+ */
 function buildNotices(kept: readonly DiffBlock[], omitted: number): string[] {
   const notices: string[] = [];
 
   if (omitted > 0) {
-    notices.push(`[diff truncated: ${omitted} ${plural(omitted, 'file', 'files')} omitted]`);
+    notices.push(
+      `${DIFF_NOTICE_PREFIX} ${omitted} ${plural(omitted, 'file', 'files')} omitted from this diff]`,
+    );
   }
 
   const skipped = kept.filter((block) => block.skipped).length;
   if (skipped > 0) {
     notices.push(
-      `[diff truncated: ${skipped} ${plural(skipped, 'patch', 'patches')} not included]`,
+      `${DIFF_NOTICE_PREFIX} ${skipped} ${plural(skipped, 'patch', 'patches')} not included]`,
     );
   }
 
   const shortened = kept.filter((block) => block.shortened).length;
   if (shortened > 0) {
     notices.push(
-      `[diff truncated: ${shortened} ${plural(shortened, 'patch', 'patches')} shortened]`,
+      `${DIFF_NOTICE_PREFIX} ${shortened} ${plural(shortened, 'patch', 'patches')} shortened]`,
     );
   }
 
   const missing = kept.filter((block) => block.missing).length;
   if (missing > 0) {
-    notices.push(`[diff note: ${missing} ${plural(missing, 'file', 'files')} have no patch]`);
+    notices.push(
+      `${DIFF_NOTICE_PREFIX} ${missing} ${plural(missing, 'file', 'files')} have no patch]`,
+    );
   }
 
   return notices;

@@ -5,7 +5,6 @@ import { reviewPullRequest } from '../../services/ai/prReview';
  * Only the HTTP call is stubbed.
  */
 const VALID_RESPONSE = JSON.stringify({
-  verdict: 'request_changes',
   summary: 'The refresh path swallows a failure, so a broken profile looks healthy.',
   findings: [
     {
@@ -39,6 +38,11 @@ describe('reviewPullRequest', () => {
     });
   }
 
+  function userMessage(): string {
+    const body = JSON.parse((fetchMock.mock.calls[0][1]?.body as string) ?? '{}');
+    return body.messages.find((message: { role: string }) => message.role === 'user').content;
+  }
+
   beforeEach(() => {
     process.env.MINIMAX_API_KEY = 'test-key';
     fetchMock = jest.spyOn(globalThis, 'fetch');
@@ -55,7 +59,6 @@ describe('reviewPullRequest', () => {
 
     const result = await reviewPullRequest(INPUT);
 
-    expect(result.verdict).toBe('request_changes');
     expect(result.summary).toBe(
       'The refresh path swallows a failure, so a broken profile looks healthy.',
     );
@@ -72,7 +75,6 @@ describe('reviewPullRequest', () => {
     fetchMock.mockResolvedValueOnce(
       modelResponse(
         JSON.stringify({
-          verdict: 'comment',
           summary: 'Nothing found.',
           findings: [{ severity: 'minor', message: 'A minor observation.' }],
         }),
@@ -86,29 +88,32 @@ describe('reviewPullRequest', () => {
   });
 
   it('treats a missing findings array as no findings', async () => {
-    fetchMock.mockResolvedValueOnce(
-      modelResponse(JSON.stringify({ verdict: 'approve', summary: 'Looks clean.' })),
-    );
+    fetchMock.mockResolvedValueOnce(modelResponse(JSON.stringify({ summary: 'Looks clean.' })));
 
     const result = await reviewPullRequest(INPUT);
 
     expect(result.findings).toEqual([]);
   });
 
-  it('trims the findings list to the maximum', async () => {
+  it('returns every finding, so a blocker past the eighth is never lost', async () => {
     const findings = Array.from({ length: 15 }, (_, index) => ({
       severity: 'nit',
       file: `backend/src/file-${index}.ts`,
       line: null,
       message: `Observation ${index}.`,
     }));
-    fetchMock.mockResolvedValueOnce(
-      modelResponse(JSON.stringify({ verdict: 'comment', summary: 'Many.', findings })),
-    );
+    findings[11] = {
+      severity: 'blocker',
+      file: 'backend/src/critical.ts',
+      line: null,
+      message: 'The one that matters.',
+    };
+    fetchMock.mockResolvedValueOnce(modelResponse(JSON.stringify({ summary: 'Many.', findings })));
 
     const result = await reviewPullRequest(INPUT);
 
-    expect(result.findings).toHaveLength(8);
+    expect(result.findings).toHaveLength(15);
+    expect(result.findings[11].severity).toBe('blocker');
   });
 
   it('rejects a malformed JSON response instead of returning fake findings', async () => {
@@ -118,9 +123,7 @@ describe('reviewPullRequest', () => {
   });
 
   it('rejects a response missing the summary', async () => {
-    fetchMock.mockResolvedValueOnce(
-      modelResponse(JSON.stringify({ verdict: 'approve', findings: [] })),
-    );
+    fetchMock.mockResolvedValueOnce(modelResponse(JSON.stringify({ findings: [] })));
 
     await expect(reviewPullRequest(INPUT)).rejects.toThrow();
   });
@@ -129,7 +132,6 @@ describe('reviewPullRequest', () => {
     fetchMock.mockResolvedValueOnce(
       modelResponse(
         JSON.stringify({
-          verdict: 'approve',
           summary: 'x',
           findings: [{ severity: 'critical', message: 'too bad' }],
         }),
@@ -144,14 +146,35 @@ describe('reviewPullRequest', () => {
 
     await reviewPullRequest(INPUT);
 
-    const body = JSON.parse((fetchMock.mock.calls[0][1]?.body as string) ?? '{}');
-    const userMessage = body.messages.find(
-      (message: { role: string }) => message.role === 'user',
-    ).content;
+    const message = userMessage();
+    expect(message).toContain(INPUT.prTitle);
+    expect(message).toContain(INPUT.prDescription);
+    expect(message).toContain(INPUT.diff);
+  });
 
-    expect(userMessage).toContain(INPUT.prTitle);
-    expect(userMessage).toContain(INPUT.prDescription);
-    expect(userMessage).toContain(INPUT.diff);
+  it('wraps the untrusted content in labelled delimiters', async () => {
+    fetchMock.mockResolvedValueOnce(modelResponse(VALID_RESPONSE));
+
+    await reviewPullRequest(INPUT);
+
+    const message = userMessage();
+    expect(message).toContain('<pull_request_title>');
+    expect(message).toContain('</pull_request_title>');
+    expect(message).toContain('<pull_request_description>');
+    expect(message).toContain('</pull_request_description>');
+    expect(message).toContain('<diff>');
+    expect(message).toContain('</diff>');
+  });
+
+  it('puts the diff inside the diff delimiters', async () => {
+    fetchMock.mockResolvedValueOnce(modelResponse(VALID_RESPONSE));
+
+    await reviewPullRequest(INPUT);
+
+    const message = userMessage();
+    const diffBlock = message.slice(message.indexOf('<diff>'), message.indexOf('</diff>'));
+
+    expect(diffBlock).toContain(INPUT.diff);
   });
 
   it('never asks for a temperature, which the model ignores', async () => {

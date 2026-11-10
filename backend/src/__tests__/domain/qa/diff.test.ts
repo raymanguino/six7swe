@@ -1,7 +1,8 @@
 import {
-  addedLineNumbers,
   allTouchedPaths,
   buildReviewDiff,
+  DIFF_NOTICE_PREFIX,
+  hunkLineNumbers,
   NO_PATCH_MARKER,
   PATCH_SKIPPED_MARKER,
   type ChangedFile,
@@ -83,8 +84,8 @@ describe('buildReviewDiff', () => {
 
     expect(diff).toContain('### backend/src/index.ts');
     expect(diff).toContain(NO_PATCH_MARKER);
-    expect(diff).not.toContain('[diff truncated');
-    expect(diff).toContain('[diff note: 1 file have no patch]');
+    expect(diff).not.toContain('files omitted');
+    expect(diff).toContain(`${DIFF_NOTICE_PREFIX} 1 file have no patch]`);
   });
 
   it('names the path a file was moved from', () => {
@@ -104,7 +105,7 @@ describe('buildReviewDiff', () => {
 
     expect(diff).toContain('x'.repeat(50));
     expect(diff).not.toContain('x'.repeat(51));
-    expect(diff).toContain('[patch shortened to 50 characters]');
+    expect(diff).toContain(`${DIFF_NOTICE_PREFIX} patch shortened to 50 characters]`);
   });
 
   it('drops files that do not fit the total budget and says how many', () => {
@@ -120,7 +121,7 @@ describe('buildReviewDiff', () => {
     expect(diff.length).toBeLessThanOrEqual(200);
     expect(diff).toContain('### a.ts');
     expect(diff).not.toContain('### c.ts');
-    expect(diff).toContain('[diff truncated: 2 files omitted]');
+    expect(diff).toContain(`${DIFF_NOTICE_PREFIX} 2 files omitted from this diff]`);
   });
 
   it('keeps the small files that follow one that does not fit', () => {
@@ -133,7 +134,7 @@ describe('buildReviewDiff', () => {
     );
 
     expect(diff).toContain('### small.ts');
-    expect(diff).toContain('[diff truncated: 1 file omitted]');
+    expect(diff).toContain(`${DIFF_NOTICE_PREFIX} 1 file omitted from this diff]`);
   });
 
   it('never exceeds the total budget', () => {
@@ -154,15 +155,32 @@ describe('buildReviewDiff', () => {
     });
 
     expect(diff.length).toBeLessThanOrEqual(40);
-    expect(diff).toContain('[diff truncated');
+    expect(diff).toContain(DIFF_NOTICE_PREFIX);
     expect(diff).not.toMatch(/^\n/);
   });
 
   it('says nothing about truncation when nothing was dropped', () => {
     const diff = buildReviewDiff([file()], BUDGET);
 
-    expect(diff).not.toContain('[diff truncated');
-    expect(diff).not.toContain('[patch shortened');
+    expect(diff).not.toContain(DIFF_NOTICE_PREFIX);
+    expect(diff).not.toContain('shortened');
+  });
+
+  it('marks every notice with the prefix the prompt recognises', () => {
+    const diff = buildReviewDiff(
+      [
+        file({ filename: 'a.ts', patch: 'p'.repeat(100) }),
+        file({ filename: 'b.ts', patch: 'p'.repeat(100) }),
+        file({ filename: 'c.ts', patch: 'p'.repeat(100) }),
+      ],
+      { ...BUDGET, totalChars: 200 },
+    );
+
+    for (const line of diff.split('\n')) {
+      if (line.includes('omitted') || line.includes('shortened') || line.includes('not included')) {
+        expect(line.startsWith(DIFF_NOTICE_PREFIX)).toBe(true);
+      }
+    }
   });
 
   it('returns an empty string when there are no files', () => {
@@ -184,24 +202,24 @@ describe('allTouchedPaths', () => {
   });
 });
 
-describe('addedLineNumbers', () => {
+describe('hunkLineNumbers', () => {
   it('reads the new-side line range of a hunk', () => {
-    const lines = addedLineNumbers('@@ -10,3 +10,3 @@\n context\n-old\n+new\n more');
+    const lines = hunkLineNumbers('@@ -10,3 +10,3 @@\n context\n-old\n+new\n more');
 
     expect([...lines].sort((a, b) => a - b)).toEqual([10, 11, 12]);
   });
 
   it('treats a hunk without a count as a single line', () => {
-    expect([...addedLineNumbers('@@ -1 +7 @@\n-old\n+new')]).toEqual([7]);
+    expect([...hunkLineNumbers('@@ -1 +7 @@\n-old\n+new')]).toEqual([7]);
   });
 
   it('handles several hunks', () => {
-    const lines = addedLineNumbers('@@ -1,2 +1,2 @@\n a\n-b\n@@ -20,2 +30,2 @@\n c\n-d');
+    const lines = hunkLineNumbers('@@ -1,2 +1,2 @@\n a\n-b\n@@ -20,2 +30,2 @@\n c\n-d');
 
     expect([...lines].sort((a, b) => a - b)).toEqual([1, 2, 30, 31]);
   });
 
   it('returns nothing for a patch with no hunks', () => {
-    expect(addedLineNumbers('').size).toBe(0);
+    expect(hunkLineNumbers('').size).toBe(0);
   });
 });
