@@ -26,8 +26,8 @@ This starts Postgres on `127.0.0.1:54322`, the REST API on `54321`, and Studio o
 stack provides Supabase Auth, which the job-hunter signs in with.
 
 > The schema is **not** managed by the Supabase CLI. It is owned by Drizzle
-> (`backend/src/db/schema/`) and applied with `pnpm run db:push`. Migrations in
-> `supabase/migrations/` were removed because a second copy of the schema only drifts.
+> (`backend/src/db/schema/`); migrations are generated from it with
+> `pnpm run db:generate` and applied with `pnpm run db:migrate`.
 
 ### 3. Backend Setup
 
@@ -60,8 +60,8 @@ Set `MINIMAX_API_KEY_SECONDARY` optionally to retry once with a second key when 
 
 ```bash
 cd backend
-pnpm run db:push     # create the schema
-pnpm run db:seed     # users and search profiles
+pnpm run db:migrate    # apply the migrations
+pnpm run db:seed       # users and search profiles
 ```
 
 ### 5. Frontend Setup
@@ -205,19 +205,19 @@ The environment is selected by which file dotenv loads, not by commenting lines 
 ```bash
 # Local database (default)
 pnpm dev
-pnpm run db:push
+pnpm run db:migrate
 
 # Remote database
-pnpm run db:reset -- --remote
+pnpm run db:migrate -- --remote
 ```
 
 Both files are gitignored. Only `backend/.env.example` is tracked.
 
 ## Resetting the Database
 
-There are no migration files: the Drizzle schema in `backend/src/db/schema/` is the single source
-of truth. To rebuild a database from scratch, drop everything in the `public` schema, re-apply the
-schema and re-seed:
+The schema in `backend/src/db/schema/` is the source of truth. Migrations are generated from
+it and applied in order. To rebuild a database from scratch, drop everything in the `public`
+schema and replay the migrations:
 
 ```bash
 cd backend

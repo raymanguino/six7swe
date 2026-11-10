@@ -73,18 +73,31 @@ too old for some dependencies.
    - `VITE_SUPABASE_URL` - Supabase project URL, for job-hunter sign-in
    - `VITE_SUPABASE_ANON_KEY` - Supabase anon key, for job-hunter sign-in
 
-### 3. Apply the Schema to the Remote Database
+### 3. Apply the Migrations to the Remote Database
 
 The schema must exist before the backend can serve requests. From your machine:
 
 ```bash
 cd backend
+pnpm run db:migrate -- --remote
+```
+
+The migrations are generated from `src/db/schema/` and applied in order. `db:migrate` applies
+only the ones that have not been applied yet, so it is safe to run at any time.
+
+A database that was created before the migration history existed has the tables but no
+migration ledger, so `db:migrate` cannot apply anything to it. Run `db:reset` on such a
+database once to rebuild it from the history.
+
+To rebuild the database from scratch instead, drop everything in the `public` schema and replay
+the migrations:
+
+```bash
 pnpm run db:reset -- --remote
 ```
 
-This drops everything in the `public` schema and re-applies it from `src/db/schema/`. The
-Supabase-managed schemas (`auth`, `storage`, `graphql_public`) are left alone, so Supabase Auth
-users survive.
+This leaves the Supabase-managed schemas (`auth`, `storage`, `graphql_public`) alone, so
+Supabase Auth users survive.
 
 Because the reset destroys data, it prints the target host and asks you to type it back before it
 drops anything. Pass `--yes` to skip the prompt when you have already checked the host:
@@ -107,34 +120,28 @@ without a profile.
 > Take a backup first (`pg_dump "$DATABASE_URL" -Fc -f backup.dump`) if the hosted database holds
 > anything you want to keep.
 
-To only apply the schema without dropping anything, use `pnpm run db:push` with
-`DOTENV_CONFIG_PATH=.env.remote`.
-
 ### 3a. Schema on Deploy
 
-The backend service runs the schema push as a **pre-deploy** command, so every deploy brings the
-hosted database in line with `src/db/schema/`:
+The backend service applies the migrations as a **pre-deploy** command, so every deploy brings
+the hosted database in line with `src/db/schema/`:
 
 ```json
 "deploy": {
-  "preDeployCommand": "cd backend && pnpm db:push --force && pnpm db:secure -- --remote"
+  "preDeployCommand": "cd backend && pnpm db:migrate -- --remote && pnpm db:secure -- --remote"
 }
 ```
 
 `preDeployCommand` runs after the build succeeds and before the new version starts, so the schema
 is in place before the code that depends on it. The frontend service does not need one.
 
-The two steps are in that order on purpose. `db:push` applies the schema, and a table that the
-push recreated starts out with the default Supabase grants, so `db:secure` has to run after it to
-turn row level security back on and revoke the public grants. `docs/SECURITY.md` describes what
-that does and why it matters.
+The two steps are in that order on purpose. `db:migrate` applies the migrations, and a table that
+a migration created starts out with the default Supabase grants, so `db:secure` has to run after
+it to turn row level security back on and revoke the public grants. `docs/SECURITY.md` describes
+what that does and why it matters.
 
-> **`--force` matters.** Without it, `drizzle-kit push` prompts before any change that drops a
-> table or a column that still holds rows. Railway has no terminal to answer that prompt, so the
-> command would sit there until the deploy times out, and the schema would not be applied. With
-> `--force` the change is applied without asking.
->
-> That means a schema change that drops data is applied to the hosted database automatically.
+`db:migrate` does not prompt, so it is safe to run unattended.
+
+> A migration that drops a table or a column is applied to the hosted database automatically.
 > Take a backup before deploying one.
 
 `backend/.env.remote` holds the remote `DATABASE_URL` and is gitignored.

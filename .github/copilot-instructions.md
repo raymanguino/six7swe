@@ -83,8 +83,8 @@ Rules:
 ## Database & Data Modeling
 
 - Use **Drizzle**
-- The Drizzle schema is the single source of truth; there are **no migration files**.
-  `pnpm run db:push` reconciles the database with it, `pnpm run db:reset` rebuilds from scratch
+- The schema in `backend/src/db/schema/` is the source of truth. Migrations are generated
+  from it with `pnpm run db:generate` and applied with `pnpm run db:migrate`
 - Tables and columns use `snake_case`
 - Database models live in **infrastructure**
 - Domain entities must be mapped explicitly from DB models

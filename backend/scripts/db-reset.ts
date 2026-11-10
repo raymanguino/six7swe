@@ -1,12 +1,9 @@
 /**
  * Rebuilds the database from scratch.
  *
- * There are no migration files: the Drizzle schema in src/db/schema/ is the
- * single source of truth. This script drops everything in the `public`
- * schema and recreates it from that schema.
- *
- * The Supabase-managed schemas (auth, storage, graphql_public) are left
- * alone, so Supabase Auth users survive a reset.
+ * Drops everything in the `public` schema, then replays the migration
+ * history from the start. The Supabase-managed schemas (auth, storage,
+ * graphql_public) are left alone, so Supabase Auth users survive a reset.
  *
  * The database is left empty unless `--seed` is passed. The portfolio is
  * never seeded here: its data lives in gitignored files, so it is applied
@@ -19,12 +16,10 @@
  *   pnpm run db:reset -- --remote --yes  # hosted database, no prompt
  */
 
-import { spawnSync } from 'node:child_process';
 import readline from 'node:readline/promises';
-import path from 'node:path';
 import postgres from 'postgres';
 import { applyDatabaseSecurity } from '../src/db/security';
-import { assumesYes, resolveDatabaseTarget, sslOptions, wantsSeed } from './db-env';
+import { assumesYes, resolveDatabaseTarget, runMigrations, sslOptions, wantsSeed } from './db-env';
 
 /**
  * Drops every table and enum in the `public` schema.
@@ -65,31 +60,11 @@ async function dropPublicSchema(sql: postgres.Sql): Promise<string[]> {
 }
 
 /**
- * Applies the Drizzle schema to the database.
- *
- * `drizzle-kit push` reconciles the live database with the schema files, so
- * it works without any migration history. `--force` skips the interactive
- * confirmation, which this script does not need.
- */
-function pushSchema(): void {
-  const result = spawnSync('npx', ['drizzle-kit', 'push', '--force'], {
-    cwd: path.join(__dirname, '..'),
-    stdio: 'inherit',
-    env: process.env,
-    shell: true,
-  });
-
-  if (result.status !== 0) {
-    throw new Error(`drizzle-kit push failed with exit code ${result.status ?? 'unknown'}`);
-  }
-}
-
-/**
  * Applies the access rules the Drizzle schema cannot express.
  *
  * The schema is the source of truth for the tables, but row level security
  * and the role grants live outside it, so they have to be applied after
- * every push. See src/db/security.ts.
+ * every migration. See src/db/security.ts.
  */
 async function lockDownSchema(): Promise<void> {
   const target = resolveDatabaseTarget();
@@ -153,14 +128,19 @@ async function main(): Promise<void> {
         ? `Dropped ${dropped.length} object(s): ${dropped.join(', ')}\n`
         : 'Nothing to drop; the public schema was already empty.\n',
     );
+
+    // The migration ledger lives in its own schema, so it has to go too.
+    // Leaving it behind would make the replay believe the first migration
+    // was already applied, skip it, and leave the database empty.
+    await sql.unsafe('drop schema if exists drizzle cascade');
   } finally {
     await sql.end();
   }
 
-  pushSchema();
-  process.stdout.write('Schema applied from src/db/schema/.\n');
+  runMigrations(target);
+  process.stdout.write('Migrations applied.\n');
 
-  // A freshly pushed schema is wide open: the `anon` role has full grants
+  // A freshly migrated schema is wide open: the `anon` role has full grants
   // and row level security is off. Lock it down before anything else runs.
   await lockDownSchema();
 

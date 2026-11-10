@@ -8,10 +8,10 @@ if (!DATABASE_URL) {
 }
 
 export default defineConfig({
-  // There are no migration files. The schema in src/db/schema/ is the single
-  // source of truth and `drizzle-kit push` reconciles the database with it.
-  // `out` is still required by drizzle-kit, but nothing is generated into it.
-  out: './drizzle',
+  // Migrations are generated from the schema in src/db/schema/ and applied in
+  // order. The generated SQL is never edited by hand: change the schema and
+  // run `pnpm run db:generate` instead.
+  out: './migrations',
   schema: './src/db/schema/index.ts',
   dialect: 'postgresql',
   dbCredentials: {

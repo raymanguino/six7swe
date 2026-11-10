@@ -142,4 +142,3 @@ vite.config.ts.timestamp-*
 backend/content/*
 backend/public/*.pdf
 backend/scripts/portfolio-data.json
-backend/drizzle/
