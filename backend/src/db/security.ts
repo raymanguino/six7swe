@@ -17,7 +17,7 @@ import type postgres from 'postgres';
  *   - The `anon` and `authenticated` grants are revoked, so the REST API
  *     cannot reach the tables even if a policy were ever added by mistake.
  *   - The default privileges are revoked too. A table created later by
- *     `drizzle-kit push` would otherwise inherit the grants again.
+ *     `drizzle-kit migrate` would otherwise inherit the grants again.
  *   - Function execution is revoked, including the default privilege. A
  *     function in the `public` schema is an RPC endpoint for PostgREST, so
  *     one left executable would be callable by the public anon key. The
@@ -30,7 +30,7 @@ import type postgres from 'postgres';
  *
  * The Drizzle schema cannot express any of this. Drizzle ORM 0.33 has no
  * policy or role support, so this file is the source of truth for the
- * database's access rules and `db:secure` has to run after every push.
+ * database's access rules and `db:secure` has to run after every migration.
  */
 
 /** Roles that reach the database from a browser. */

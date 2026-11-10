@@ -13,8 +13,8 @@
  * The backend is unaffected: it connects as the table owner, and an owner
  * bypasses RLS.
  *
- * It has to run after every `drizzle-kit push`, because the schema cannot
- * express any of this and a recreated table starts out wide open.
+ * It has to run after every migration, because the schema cannot express
+ * any of this and a recreated table starts out wide open.
  *
  * Usage:
  *   pnpm run db:secure                # local database
