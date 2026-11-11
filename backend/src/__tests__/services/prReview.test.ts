@@ -237,7 +237,7 @@ describe('reviewPullRequest', () => {
 
     const body = JSON.parse((fetchMock.mock.calls[0][1]?.body as string) ?? '{}');
     expect(body.temperature).toBeUndefined();
-    expect(body.max_completion_tokens).toBe(8192);
+    expect(body.max_completion_tokens).toBe(32_768);
   });
 });
 
