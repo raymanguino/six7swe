@@ -1,6 +1,8 @@
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+
+import { REVIEW_MARKER } from '../../domain/qa';
 
 /**
  * Exercises the script end to end with the network stubbed.
@@ -49,7 +51,11 @@ globalThis.fetch = async (url, init) => {
   }
 
   if (target.includes('/reviews') && method === 'GET') {
-    return new Response('[]', { status: 200 });
+    return new Response(JSON.stringify(globalThis.__REVIEWS__), { status: 200 });
+  }
+
+  if (target.includes('/dismissals')) {
+    return new Response('{}', { status: globalThis.__DISMISS_STATUS__ });
   }
 
   if (target.includes('/reviews')) {
@@ -118,6 +124,10 @@ interface RunOptions {
   modelResponse?: string;
   headSha?: string;
   files?: unknown[];
+  /** The reviews already on the pull request. */
+  reviews?: unknown[];
+  /** The HTTP status a dismissal answers with. */
+  dismissStatus?: number;
 }
 
 /** The changed files the stubbed pull request reports. */
@@ -146,6 +156,8 @@ function runScript(env: Record<string, string>, options: RunOptions = {}): RunRe
   const modelResponse = options.modelResponse ?? MODEL_RESPONSE;
   const headSha = options.headSha ?? 'abc123';
   const files = options.files ?? [SOURCE_FILE, LOCKFILE];
+  const reviews = options.reviews ?? [];
+  const dismissStatus = options.dismissStatus ?? 200;
 
   try {
     fs.writeFileSync(
@@ -153,25 +165,23 @@ function runScript(env: Record<string, string>, options: RunOptions = {}): RunRe
       `${STUB}\nglobalThis.__MODEL_RESPONSE__ = ${JSON.stringify(modelResponse)};\n` +
         `globalThis.__HEAD_SHA__ = ${JSON.stringify(headSha)};\n` +
         `globalThis.__FILES__ = ${JSON.stringify(files)};\n` +
+        `globalThis.__REVIEWS__ = ${JSON.stringify(reviews)};\n` +
+        `globalThis.__DISMISS_STATUS__ = ${JSON.stringify(dismissStatus)};\n` +
         `require(${JSON.stringify(SCRIPT)});\n`,
     );
 
-    let stdout = '';
-    let stderr = '';
-    let status = 0;
+    // `spawnSync` rather than `execFileSync`: the latter returns stderr
+    // only when the process fails, and a run that succeeds can still log
+    // a warning worth asserting on.
+    const child = spawnSync(process.execPath, ['--import', 'tsx', stubFile], {
+      encoding: 'utf-8',
+      env: childEnv(env),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
 
-    try {
-      stdout = execFileSync(process.execPath, ['--import', 'tsx', stubFile], {
-        encoding: 'utf-8',
-        env: childEnv(env),
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-    } catch (error) {
-      const failure = error as { status?: number; stdout?: string; stderr?: string };
-      status = failure.status ?? 1;
-      stdout = failure.stdout ?? '';
-      stderr = failure.stderr ?? '';
-    }
+    const status = child.status ?? 1;
+    const stdout = child.stdout ?? '';
+    const stderr = child.stderr ?? '';
 
     const marker = stdout.indexOf('__CALLS__');
     const calls =
@@ -457,5 +467,126 @@ describe('the script does not let model output forge the log', () => {
       .filter((line) => line.includes('first line') || line.includes('add-mask'));
 
     expect(findingLines).toHaveLength(1);
+  });
+});
+
+describe('the script retires its earlier requests for changes', () => {
+  /** A response with nothing to report. */
+  const CLEAN_RESPONSE = JSON.stringify({ summary: 'The change looks fine.', findings: [] });
+
+  /** A request for changes the agent posted on an earlier push. */
+  const STALE_REQUEST = {
+    id: 41,
+    body: `${REVIEW_MARKER}\n## QA agent review`,
+    user: { login: 'github-actions[bot]' },
+    state: 'CHANGES_REQUESTED',
+  };
+
+  const ENFORCE_ENV = { ...BASE_ENV, REVIEW_MODE: 'enforce' };
+
+  function dismissals(result: RunResult): RecordedCall[] {
+    return result.calls.filter((call) => call.url.includes('/dismissals'));
+  }
+
+  it('dismisses the earlier request once the pull request passes', () => {
+    const result = runScript(ENFORCE_ENV, {
+      modelResponse: CLEAN_RESPONSE,
+      files: [SOURCE_FILE],
+      reviews: [STALE_REQUEST],
+    });
+
+    expect(result.status).toBe(0);
+    expect(dismissals(result)).toHaveLength(1);
+    expect(dismissals(result)[0].method).toBe('PUT');
+    expect(dismissals(result)[0].url).toContain('/reviews/41/dismissals');
+    expect(result.stdout).toContain('Dismissed the earlier request for changes (review 41)');
+  });
+
+  it('dismisses only after the new verdict is posted', () => {
+    // The pull request must never be left without a current verdict.
+    const result = runScript(ENFORCE_ENV, {
+      modelResponse: CLEAN_RESPONSE,
+      files: [SOURCE_FILE],
+      reviews: [STALE_REQUEST],
+    });
+
+    const postIndex = result.calls.findIndex(
+      (call) => call.method === 'POST' && call.url.includes('/reviews'),
+    );
+    const dismissIndex = result.calls.findIndex((call) => call.url.includes('/dismissals'));
+
+    expect(postIndex).toBeGreaterThanOrEqual(0);
+    expect(dismissIndex).toBeGreaterThan(postIndex);
+  });
+
+  it('posts the passing verdict as a new review rather than editing the request', () => {
+    const result = runScript(ENFORCE_ENV, {
+      modelResponse: CLEAN_RESPONSE,
+      files: [SOURCE_FILE],
+      reviews: [STALE_REQUEST],
+    });
+
+    expect(reviewPost(result).event).toBe('COMMENT');
+    const edits = result.calls.filter(
+      (call) => call.method === 'PUT' && call.url.endsWith('/reviews/41'),
+    );
+    expect(edits).toHaveLength(0);
+  });
+
+  it('dismisses the older request, not the new one, when it asks for changes again', () => {
+    const result = runScript(ENFORCE_ENV, {
+      modelResponse: BLOCKING_RESPONSE,
+      files: [SOURCE_FILE],
+      reviews: [STALE_REQUEST],
+    });
+
+    expect(reviewPost(result).event).toBe('REQUEST_CHANGES');
+    expect(dismissals(result)).toHaveLength(1);
+    expect(dismissals(result)[0].url).toContain('/reviews/41/dismissals');
+    expect(result.status).toBe(1);
+  });
+
+  it('dismisses nothing when there is no earlier request', () => {
+    const result = runScript(ENFORCE_ENV, {
+      modelResponse: CLEAN_RESPONSE,
+      files: [SOURCE_FILE],
+    });
+
+    expect(dismissals(result)).toHaveLength(0);
+  });
+
+  it('clears a stale request in comment-only mode too, so a rollback leaves nothing behind', () => {
+    const result = runScript(BASE_ENV, {
+      modelResponse: CLEAN_RESPONSE,
+      files: [SOURCE_FILE],
+      reviews: [STALE_REQUEST],
+    });
+
+    expect(dismissals(result)).toHaveLength(1);
+  });
+
+  it('dismisses the request when the review fails closed', () => {
+    const result = runScript(ENFORCE_ENV, {
+      modelResponse: 'not json at all',
+      reviews: [STALE_REQUEST],
+    });
+
+    expect(reviewPost(result).body).toContain('fail-closed');
+    expect(dismissals(result)).toHaveLength(1);
+    expect(result.status).toBe(1);
+  });
+
+  it('does not let a failed dismissal change the outcome', () => {
+    // The new verdict is already posted and the check is the gate. A
+    // dismissal the token is not allowed to make is logged, not fatal.
+    const result = runScript(ENFORCE_ENV, {
+      modelResponse: CLEAN_RESPONSE,
+      files: [SOURCE_FILE],
+      reviews: [STALE_REQUEST],
+      dismissStatus: 403,
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain('Could not dismiss review 41');
   });
 });
