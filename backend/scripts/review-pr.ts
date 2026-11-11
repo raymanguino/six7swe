@@ -7,9 +7,9 @@
  * model for a review, decides what the gate should do, and posts exactly
  * one review.
  *
- * The gate outcome decides the exit code: `pass` exits 0, everything else
- * exits 1. That is what makes the job a required status check, so the
- * check goes red when the agent finds a blocking defect.
+ * The gate outcome decides the exit code, and the mode decides whether the
+ * gate blocks at all. That is what makes the job a required status check:
+ * in phase 2 the check goes red when the agent finds a blocking defect.
  *
  * Usage:
  *   pnpm --filter @six7swe/backend qa:review
@@ -19,15 +19,18 @@
  *   GITHUB_TOKEN        required, the token the review is posted with
  *   GITHUB_REPOSITORY   required, in "owner/repo" form
  *   PR_NUMBER           required, the pull request number
- *   PR_HEAD_SHA         required, the pull request head SHA
+ *   PR_HEAD_SHA         required, the pull request head SHA at event time
  *   PR_TITLE            optional, defaults to empty
  *   PR_DESCRIPTION      optional, defaults to empty
+ *   REVIEW_MODE         optional, "comment-only" (default) or "enforce"
  */
 
 import { z } from 'zod';
 import {
   buildReviewDiff,
   decideGate,
+  flattenText,
+  gateBlocksMerge,
   renderFailureBody,
   renderReviewBody,
   reviewEventForGate,
@@ -36,7 +39,12 @@ import {
   type ChangedFile,
 } from '../src/domain/qa';
 import { reviewPullRequest } from '../src/services/ai/prReview';
-import { listChangedFiles, upsertReviewComment } from '../src/services/github/prClient';
+import {
+  getPullRequest,
+  listChangedFiles,
+  submitReview,
+  upsertReviewComment,
+} from '../src/services/github/prClient';
 
 /**
  * A variable that must be present and not empty.
@@ -77,6 +85,17 @@ const envSchema = z.object({
   PR_HEAD_SHA: required('PR_HEAD_SHA'),
   PR_TITLE: z.string().default(''),
   PR_DESCRIPTION: z.string().default(''),
+  /**
+   * The mode the agent runs in.
+   *
+   * Phase 1 is `comment-only`: the agent reports and never blocks, so the
+   * check is always green. Phase 2 flips `REVIEW_MODE` to `enforce` in the
+   * workflow, which is a settings change rather than a code change.
+   *
+   * The default is the safe one: an unset or misspelled value cannot
+   * silently start enforcing.
+   */
+  REVIEW_MODE: z.enum(['comment-only', 'enforce']).default('comment-only'),
 });
 
 /**
@@ -92,14 +111,21 @@ const DIFF_BUDGET = {
   skipPatchesFor: [] as string[],
 };
 
+/** How many times the head SHA is re-checked when the pull request moves. */
+const HEAD_READ_ATTEMPTS = 3;
+
 /**
- * The mode the agent runs in.
+ * Writes a line to the workflow log.
  *
- * Phase 1 is `comment-only`: the agent reports and never blocks, so the
- * check is always green. Phase 2 flips this to `enforce`, which is a
- * one-word change plus the settings toggle described in the phase 2 issue.
+ * The Actions runner interprets a line that starts with "::" as a
+ * workflow command. A finding message is model output that was written
+ * from attacker-controlled diff content, so it can contain "::error::"
+ * or "::add-mask::" and have it carried out. The colons are encoded, and
+ * the text is flattened to one line so it cannot start a new line at all.
  */
-const REVIEW_MODE = 'comment-only' as const;
+function logLine(text: string): void {
+  process.stdout.write(`${flattenText(text).replace(/::/g, '%3A%3A')}\n`);
+}
 
 function parseEnv(): z.infer<typeof envSchema> {
   const parsed = envSchema.safeParse({
@@ -110,6 +136,7 @@ function parseEnv(): z.infer<typeof envSchema> {
     PR_HEAD_SHA: process.env.PR_HEAD_SHA,
     PR_TITLE: process.env.PR_TITLE,
     PR_DESCRIPTION: process.env.PR_DESCRIPTION,
+    REVIEW_MODE: process.env.REVIEW_MODE,
   });
 
   if (!parsed.success) {
@@ -127,22 +154,70 @@ function splitRepository(repository: string): { owner: string; repo: string } {
   return { owner, repo };
 }
 
+interface HeadSnapshot {
+  headSha: string;
+  changedFiles: ChangedFile[];
+}
+
+/**
+ * Reads the changed files and the commit they belong to.
+ *
+ * The files endpoint always returns the pull request's *current* head, so
+ * a push that lands while the review is running would attach a review of
+ * the new code to the commit the workflow was triggered for. The head is
+ * read before and after the files, and the pair is only accepted when
+ * both reads agree: that proves the files belong to that commit.
+ */
+async function readHeadSnapshot(
+  owner: string,
+  repo: string,
+  pullNumber: number,
+  token: string,
+): Promise<HeadSnapshot> {
+  for (let attempt = 1; attempt <= HEAD_READ_ATTEMPTS; attempt += 1) {
+    const before = await getPullRequest(owner, repo, pullNumber, token);
+    const changedFiles = await listChangedFiles(owner, repo, pullNumber, token);
+    const after = await getPullRequest(owner, repo, pullNumber, token);
+
+    if (before.headSha === after.headSha) {
+      return { headSha: before.headSha, changedFiles };
+    }
+
+    logLine(
+      `The pull request moved while it was being read (${before.headSha} -> ${after.headSha}); reading it again.`,
+    );
+  }
+
+  throw new Error(
+    'The pull request head kept changing while the diff was being read, so the review could not be bound to a commit.',
+  );
+}
+
 async function main(): Promise<void> {
   const env = parseEnv();
   const { owner, repo } = splitRepository(env.GITHUB_REPOSITORY);
+  const mode = env.REVIEW_MODE;
+
+  // The commit the review is bound to. It is read live, and it is kept
+  // here so that a failure after the read still reports the commit the
+  // attempt was about.
+  let headSha = env.PR_HEAD_SHA;
 
   try {
-    const changedFiles: ChangedFile[] = await listChangedFiles(
-      owner,
-      repo,
-      env.PR_NUMBER,
-      env.GITHUB_TOKEN,
-    );
+    const snapshot = await readHeadSnapshot(owner, repo, env.PR_NUMBER, env.GITHUB_TOKEN);
+    headSha = snapshot.headSha;
+    const { changedFiles } = snapshot;
+
+    if (headSha !== env.PR_HEAD_SHA) {
+      logLine(
+        `The pull request head is now ${headSha}, not the ${env.PR_HEAD_SHA} the workflow was triggered for. The review refers to ${headSha}.`,
+      );
+    }
 
     const diff = buildReviewDiff(changedFiles, DIFF_BUDGET);
 
-    process.stdout.write(
-      `Reviewing PR #${env.PR_NUMBER}: ${changedFiles.length} file(s), ${diff.length} character(s) of diff sent to the model.\n`,
+    logLine(
+      `Reviewing PR #${env.PR_NUMBER} at ${headSha}: ${changedFiles.length} file(s), ${diff.length} character(s) of diff sent to the model.`,
     );
 
     const review = await reviewPullRequest({
@@ -151,37 +226,59 @@ async function main(): Promise<void> {
       diff,
     });
 
-    // The gate sanitizes the findings itself, but the review body shows the
-    // same sanitized list, so the reviewer reads exactly what was decided on.
+    // The findings are sanitized once, here. The same list is given to the
+    // gate and rendered into the body, so what the reviewer reads is
+    // exactly what was decided on.
     const findings = sortFindingsBySeverity(sanitizeFindings(review.findings, changedFiles));
 
     const gate = decideGate({
-      findings: review.findings,
+      findings,
       changedFiles,
-      mode: REVIEW_MODE,
+      mode,
       reviewCompleted: true,
     });
 
-    process.stdout.write(
-      `Model returned ${review.findings.length} finding(s); ${findings.length} survived sanitizing.\n`,
+    logLine(
+      `Model returned ${review.findings.length} finding(s); ${findings.length} survived sanitizing.`,
     );
     for (const finding of findings) {
-      process.stdout.write(`  ${finding.severity}: ${finding.message}\n`);
+      logLine(`  ${finding.severity}: ${finding.message}`);
     }
-    process.stdout.write(`Gate outcome: ${gate}\n`);
+    logLine(`Gate outcome: ${gate}`);
 
     const event = reviewEventForGate(gate);
-
-    const body = renderReviewBody(review.summary, findings, gate, env.PR_HEAD_SHA);
-
-    const action = await upsertReviewComment(owner, repo, env.PR_NUMBER, env.GITHUB_TOKEN, {
-      commit_id: env.PR_HEAD_SHA,
-      body,
+    const body = renderReviewBody({
+      summary: review.summary,
+      findings,
+      reportedCount: review.findings.length,
+      gate,
+      commitSha: headSha,
     });
 
-    process.stdout.write(`Posted one ${event} review on PR #${env.PR_NUMBER} (${action}).\n`);
+    // A COMMENT can be updated in place: only the body changes, and the
+    // pull request keeps one authoritative review instead of a stack of
+    // them. Anything else has to be a new review, because GitHub fixes a
+    // review's event once it accepts it: a review that asked for changes
+    // cannot be turned back into a comment by editing its body.
+    let action: 'created' | 'updated';
 
-    if (gate !== 'pass') {
+    if (event === 'COMMENT') {
+      action = await upsertReviewComment(owner, repo, env.PR_NUMBER, env.GITHUB_TOKEN, {
+        commit_id: headSha,
+        body,
+      });
+    } else {
+      await submitReview(owner, repo, env.PR_NUMBER, env.GITHUB_TOKEN, {
+        commit_id: headSha,
+        body,
+        event,
+      });
+      action = 'created';
+    }
+
+    logLine(`Posted one ${event} review on PR #${env.PR_NUMBER} (${action}).`);
+
+    if (gateBlocksMerge(gate, mode)) {
       process.exitCode = 1;
     }
   } catch (error: unknown) {
@@ -190,11 +287,16 @@ async function main(): Promise<void> {
     // than as a finding about the code: a broken agent must never look
     // like a defect in the pull request.
     const reason = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`QA review failed: ${reason}\n`);
+    process.stderr.write(`QA review failed: ${flattenText(reason)}\n`);
 
-    await postFailureReview(env, owner, repo, reason);
+    await postFailureReview(env, owner, repo, reason, headSha);
 
-    process.exitCode = 1;
+    // The gate outcome is fail-closed. Whether that turns the check red
+    // depends on the mode: in comment-only mode the agent is an observer
+    // and nothing it does blocks a merge.
+    if (gateBlocksMerge('fail-closed', mode)) {
+      process.exitCode = 1;
+    }
   }
 }
 
@@ -210,24 +312,25 @@ async function postFailureReview(
   owner: string,
   repo: string,
   reason: string,
+  commitSha: string,
 ): Promise<void> {
   try {
-    const body = renderFailureBody(reason, env.PR_HEAD_SHA);
+    const body = renderFailureBody(reason, commitSha, env.REVIEW_MODE);
 
     const action = await upsertReviewComment(owner, repo, env.PR_NUMBER, env.GITHUB_TOKEN, {
-      commit_id: env.PR_HEAD_SHA,
+      commit_id: commitSha,
       body,
     });
 
-    process.stdout.write(`Posted one fail-closed review on PR #${env.PR_NUMBER} (${action}).\n`);
+    logLine(`Posted one fail-closed review on PR #${env.PR_NUMBER} (${action}).`);
   } catch (postError: unknown) {
     const message = postError instanceof Error ? postError.message : String(postError);
-    process.stderr.write(`Could not post the fail-closed review: ${message}\n`);
+    process.stderr.write(`Could not post the fail-closed review: ${flattenText(message)}\n`);
   }
 }
 
 main().catch((error: unknown) => {
   const reason = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`QA review failed: ${reason}\n`);
+  process.stderr.write(`QA review failed: ${flattenText(reason)}\n`);
   process.exitCode = 1;
 });
