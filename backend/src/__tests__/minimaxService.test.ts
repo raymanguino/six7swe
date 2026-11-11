@@ -292,3 +292,75 @@ describe('chatCompletion at the token limit', () => {
     );
   });
 });
+
+describe('chatCompletion token usage', () => {
+  const originalPrimaryKey = process.env.MINIMAX_API_KEY;
+  const messages = [{ role: 'user', content: 'Hello' }];
+  let fetchMock: jest.SpiedFunction<typeof fetch>;
+
+  function respond(body: unknown): Response {
+    return new Response(JSON.stringify(body), { status: 200 });
+  }
+
+  beforeEach(() => {
+    process.env.MINIMAX_API_KEY = 'primary-test-key';
+    fetchMock = jest.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchMock.mockRestore();
+    if (originalPrimaryKey === undefined) delete process.env.MINIMAX_API_KEY;
+    else process.env.MINIMAX_API_KEY = originalPrimaryKey;
+  });
+
+  it('reports the usage, with the reasoning share', async () => {
+    fetchMock.mockResolvedValueOnce(
+      respond({
+        choices: [{ message: { content: 'hi' } }],
+        usage: {
+          prompt_tokens: 10,
+          completion_tokens: 20,
+          total_tokens: 30,
+          completion_tokens_details: { reasoning_tokens: 15 },
+        },
+      }),
+    );
+    const onUsage = jest.fn();
+
+    await chatCompletion(messages, { onUsage });
+
+    expect(onUsage).toHaveBeenCalledWith({
+      promptTokens: 10,
+      completionTokens: 20,
+      reasoningTokens: 15,
+    });
+  });
+
+  it('reports the usage of a response that ran out of tokens', async () => {
+    fetchMock.mockResolvedValueOnce(
+      respond({
+        choices: [{ finish_reason: 'length', message: { content: '' } }],
+        usage: { prompt_tokens: 10, completion_tokens: 100, total_tokens: 110 },
+      }),
+    );
+    const onUsage = jest.fn();
+
+    await expect(chatCompletion(messages, { max_tokens: 100, onUsage })).rejects.toThrow(
+      MiniMaxApiError,
+    );
+    expect(onUsage).toHaveBeenCalledWith({
+      promptTokens: 10,
+      completionTokens: 100,
+      reasoningTokens: null,
+    });
+  });
+
+  it('does not call back when the response reports no usage', async () => {
+    fetchMock.mockResolvedValueOnce(respond({ choices: [{ message: { content: 'hi' } }] }));
+    const onUsage = jest.fn();
+
+    await chatCompletion(messages, { onUsage });
+
+    expect(onUsage).not.toHaveBeenCalled();
+  });
+});

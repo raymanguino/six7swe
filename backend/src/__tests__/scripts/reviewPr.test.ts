@@ -65,6 +65,12 @@ globalThis.fetch = async (url, init) => {
   if (target.includes('minimax')) {
     return new Response(JSON.stringify({
       choices: [{ message: { content: globalThis.__MODEL_RESPONSE__ } }],
+      usage: {
+        prompt_tokens: 1200,
+        completion_tokens: 900,
+        total_tokens: 2100,
+        completion_tokens_details: { reasoning_tokens: 700 },
+      },
     }), { status: 200 });
   }
 
@@ -588,5 +594,54 @@ describe('the script retires its earlier requests for changes', () => {
 
     expect(result.status).toBe(0);
     expect(result.stderr).toContain('Could not dismiss review 41');
+  });
+});
+
+describe('the script logs one stats line for calibration', () => {
+  function statsLines(result: RunResult): unknown[] {
+    return result.stdout
+      .split('\n')
+      .filter((line) => line.startsWith('QA_STATS '))
+      .map((line) => JSON.parse(line.slice('QA_STATS '.length)) as unknown);
+  }
+
+  it('reports the counts, the token use and the commit of a completed review', () => {
+    const result = runScript(BASE_ENV);
+
+    const lines = statsLines(result);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      v: 1,
+      pr: 7,
+      sha: 'abc123',
+      mode: 'comment-only',
+      outcome: 'pass',
+      files: 2,
+      backendFiles: 1,
+      frontendFiles: 0,
+      reported: 2,
+      kept: { blocker: 0, major: 1, minor: 0, nit: 0 },
+      tokens: { prompt: 1200, completion: 900, reasoning: 700 },
+    });
+  });
+
+  it('reports a failed review, with the tokens it still cost', () => {
+    const result = runScript(BASE_ENV, { modelResponse: 'not json at all' });
+
+    const lines = statsLines(result);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      outcome: 'fail-closed',
+      reported: null,
+      kept: null,
+      tokens: { prompt: 1200, completion: 900, reasoning: 700 },
+    });
+  });
+
+  it('never puts a finding message in the stats line', () => {
+    const result = runScript(BASE_ENV);
+
+    const line = result.stdout.split('\n').find((l) => l.startsWith('QA_STATS ')) ?? '';
+    expect(line).not.toContain('dropped without being used');
   });
 });
