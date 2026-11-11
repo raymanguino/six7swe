@@ -181,6 +181,29 @@ same pipeline as the HTTP trigger and records progress in `refresh_status`.
 Refreshes abandoned by a crashed process are marked failed on the next backend
 startup, so a stale run never blocks the next one.
 
+#### Chrome for the job scraper
+
+The LinkedIn fetcher drives a headless Chrome through puppeteer. pnpm does not run
+puppeteer's postinstall, so the Railway build installs Chrome explicitly:
+
+```bash
+apt-get update && cd backend && pnpm install && pnpm run browsers:install --install-deps && pnpm build
+```
+
+- `backend/.puppeteerrc.cjs` sets puppeteer's cache to `backend/.cache/puppeteer`. Chrome
+  is downloaded inside the app directory, so it ships in the deployed image, and the
+  runtime looks in the same place. The default, `~/.cache/puppeteer`, is not reliable
+  across the build and the running container.
+- `--install-deps` installs the shared libraries Chrome needs (nss, atk, gbm, cups, fonts
+  and others) with `apt-get`, from the `deb.deps` list that ships with each Chrome build.
+  It does not refresh the package index itself, so `apt-get update` runs first.
+- The browser version follows the installed puppeteer release. A puppeteer upgrade picks
+  up the new Chrome on the next deploy.
+
+If a refresh fails with `Could not find Chrome`, check the build log for the
+`browsers:install` step. A failure that names a missing `.so` file is a library that
+`--install-deps` did not cover.
+
 ## Monorepo Structure
 
 ```
