@@ -28,7 +28,10 @@
 import { z } from 'zod';
 import {
   buildReviewDiff,
+  countAreas,
+  countBySeverity,
   decideGate,
+  formatStatsLine,
   flattenText,
   gateBlocksMerge,
   renderFailureBody,
@@ -37,8 +40,11 @@ import {
   sanitizeFindings,
   sortFindingsBySeverity,
   type ChangedFile,
+  type FindingSeverity,
+  type GateOutcome,
 } from '../src/domain/qa';
 import { reviewPullRequest } from '../src/services/ai/prReview';
+import type { TokenUsage } from '../src/services/minimaxService';
 import {
   dismissReview,
   findAgentChangeRequests,
@@ -196,6 +202,7 @@ async function readHeadSnapshot(
 }
 
 async function main(): Promise<void> {
+  const startedAt = Date.now();
   const env = parseEnv();
   const { owner, repo } = splitRepository(env.GITHUB_REPOSITORY);
   const mode = env.REVIEW_MODE;
@@ -205,10 +212,50 @@ async function main(): Promise<void> {
   // attempt was about.
   let headSha = env.PR_HEAD_SHA;
 
+  // What the stats line reports. Kept outside the try, so a run that
+  // fails part-way still says how far it got.
+  let changedFiles: ChangedFile[] = [];
+  let diffChars = 0;
+  let usage: TokenUsage | null = null;
+
+  /**
+   * Writes the one stats line this run reports, for `qa:calibration`.
+   *
+   * Counts only: a finding message is model output and never goes into
+   * a line another program parses.
+   */
+  function logStats(
+    outcome: GateOutcome,
+    reported: number | null,
+    kept: Record<FindingSeverity, number> | null,
+  ): void {
+    logLine(
+      formatStatsLine({
+        pr: env.PR_NUMBER,
+        sha: headSha,
+        mode,
+        outcome,
+        files: changedFiles.length,
+        ...countAreas(changedFiles),
+        diffChars,
+        reported,
+        kept,
+        tokens: usage
+          ? {
+              prompt: usage.promptTokens,
+              completion: usage.completionTokens,
+              reasoning: usage.reasoningTokens,
+            }
+          : null,
+        durationMs: Date.now() - startedAt,
+      }),
+    );
+  }
+
   try {
     const snapshot = await readHeadSnapshot(owner, repo, env.PR_NUMBER, env.GITHUB_TOKEN);
     headSha = snapshot.headSha;
-    const { changedFiles } = snapshot;
+    changedFiles = snapshot.changedFiles;
 
     if (headSha !== env.PR_HEAD_SHA) {
       logLine(
@@ -217,16 +264,24 @@ async function main(): Promise<void> {
     }
 
     const diff = buildReviewDiff(changedFiles, DIFF_BUDGET);
+    diffChars = diff.length;
 
     logLine(
       `Reviewing PR #${env.PR_NUMBER} at ${headSha}: ${changedFiles.length} file(s), ${diff.length} character(s) of diff sent to the model.`,
     );
 
-    const review = await reviewPullRequest({
-      prTitle: env.PR_TITLE,
-      prDescription: env.PR_DESCRIPTION,
-      diff,
-    });
+    const review = await reviewPullRequest(
+      {
+        prTitle: env.PR_TITLE,
+        prDescription: env.PR_DESCRIPTION,
+        diff,
+      },
+      {
+        onUsage: (reported) => {
+          usage = reported;
+        },
+      },
+    );
 
     // The findings are sanitized once, here. The same list is given to the
     // gate and rendered into the body, so what the reviewer reads is
@@ -286,6 +341,8 @@ async function main(): Promise<void> {
 
     await dismissSuperseded(env, owner, repo, superseded, headSha);
 
+    logStats(gate, review.findings.length, countBySeverity(findings));
+
     if (gateBlocksMerge(gate, mode)) {
       process.exitCode = 1;
     }
@@ -298,6 +355,8 @@ async function main(): Promise<void> {
     process.stderr.write(`QA review failed: ${flattenText(reason)}\n`);
 
     await postFailureReview(env, owner, repo, reason, headSha);
+
+    logStats('fail-closed', null, null);
 
     // The gate outcome is fail-closed. Whether that turns the check red
     // depends on the mode: in comment-only mode the agent is an observer

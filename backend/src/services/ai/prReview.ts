@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { structuredCompletion } from '../minimaxService';
+import { structuredCompletion, type TokenUsage } from '../minimaxService';
 import type { ReviewFinding } from '../../domain/qa';
 import { PR_REVIEW_SYSTEM_PROMPT } from './prompts/prReview';
 
@@ -88,7 +88,10 @@ export function escapeSectionTags(content: string): string {
  * escaped, and the system prompt says plainly that the content inside
  * them is data under review and never instructions.
  */
-export async function reviewPullRequest(input: PrReviewInput): Promise<PrReviewOutput> {
+export async function reviewPullRequest(
+  input: PrReviewInput,
+  options: { onUsage?: (usage: TokenUsage) => void } = {},
+): Promise<PrReviewOutput> {
   const prompt = [
     '<pull_request_title>',
     escapeSectionTags(input.prTitle),
@@ -122,6 +125,7 @@ export async function reviewPullRequest(input: PrReviewInput): Promise<PrReviewO
       // is too tight for that, and a timeout here would turn a slow model
       // into a failed review on every large pull request.
       timeoutMs: 300_000,
+      onUsage: options.onUsage,
     },
   );
 

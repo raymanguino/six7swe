@@ -19,7 +19,8 @@
     "db:seed": "tsx scripts/seed-job-hunt.ts",
     "db:seed-portfolio": "tsx scripts/seed-portfolio.ts",
     "jobs:refresh": "tsx scripts/jobs-refresh.ts",
-    "qa:review": "tsx scripts/review-pr.ts"
+    "qa:review": "tsx scripts/review-pr.ts",
+    "qa:calibration": "tsx scripts/qa-calibration.ts"
   },
   "keywords": [],
   "author": "",

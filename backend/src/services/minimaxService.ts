@@ -65,12 +65,27 @@ const COMPLETION_TIMEOUT_MS = 120_000;
 
 export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
+/** The tokens one completion used, as MiniMax reported them. */
+export interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  /** The reasoning share of `completionTokens`, when MiniMax reports it. */
+  reasoningTokens: number | null;
+}
+
 export interface CompletionOptions {
   model?: string;
   max_tokens?: number;
   reasoning_effort?: ReasoningEffort;
   /** Overrides the request timeout. Used by callers that need longer. */
   timeoutMs?: number;
+  /**
+   * Receives the token usage of the response, when it reports any.
+   *
+   * Called before the answer is checked, so a response that ran out of
+   * tokens or failed validation still reports what it cost.
+   */
+  onUsage?: (usage: TokenUsage) => void;
 }
 
 function getMiniMaxConfig() {
@@ -167,6 +182,14 @@ export async function chatCompletion(
       `MiniMax API error ${data.base_resp.status_code}: ${redactSecrets(data.base_resp.status_msg)}`,
       data.base_resp.status_code,
     );
+  }
+
+  if (data.usage && options?.onUsage) {
+    options.onUsage({
+      promptTokens: data.usage.prompt_tokens,
+      completionTokens: data.usage.completion_tokens,
+      reasoningTokens: data.usage.completion_tokens_details?.reasoning_tokens ?? null,
+    });
   }
 
   const choice = data.choices?.[0];
