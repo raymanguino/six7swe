@@ -93,7 +93,7 @@ interface GitHubReviewPayload {
 async function githubFetch(
   url: string,
   token: string,
-  options: { method?: 'GET' | 'POST' | 'PATCH'; body?: unknown } = {},
+  options: { method?: 'GET' | 'POST' | 'PUT'; body?: unknown } = {},
 ): Promise<Response> {
   const headers: Record<string, string> = {
     Accept: 'application/vnd.github+json',
@@ -329,7 +329,9 @@ export async function listReviews(
 /**
  * Replaces the body of an existing review.
  *
- * PATCH /repos/{owner}/{repo}/pulls/{pullNumber}/reviews/{reviewId}
+ * PUT /repos/{owner}/{repo}/pulls/{pullNumber}/reviews/{reviewId}
+ *
+ * The route has no PATCH: GitHub answers a PATCH with 404.
  *
  * Only the body can be changed. The commit the review is attached to and
  * the event it carries stay as they were.
@@ -345,7 +347,7 @@ export async function updateReview(
   await githubFetch(
     `${GITHUB_API_BASE}/repos/${owner}/${repo}/pulls/${pullNumber}/reviews/${reviewId}`,
     token,
-    { method: 'PATCH', body: { body } },
+    { method: 'PUT', body: { body } },
   );
 }
 

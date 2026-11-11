@@ -222,14 +222,14 @@ describe('github pr client', () => {
   });
 
   describe('updateReview', () => {
-    it('patches the review body', async () => {
+    it('replaces the review body with a PUT', async () => {
       fetchMock.mockResolvedValueOnce(jsonResponse({ id: 7 }, 200));
 
       await updateReview('raymanguino', 'six7swe', 63, 7, TOKEN, 'new body');
 
       const [url, init] = fetchMock.mock.calls[0];
       expect(url).toBe('https://api.github.com/repos/raymanguino/six7swe/pulls/63/reviews/7');
-      expect(init?.method).toBe('PATCH');
+      expect(init?.method).toBe('PUT');
       expect(JSON.parse(init?.body as string)).toEqual({ body: 'new body' });
     });
   });
@@ -274,7 +274,7 @@ describe('github pr client', () => {
       expect(fetchMock).toHaveBeenCalledTimes(2);
       const [url, init] = fetchMock.mock.calls[1];
       expect(url).toBe('https://api.github.com/repos/raymanguino/six7swe/pulls/63/reviews/2');
-      expect(init?.method).toBe('PATCH');
+      expect(init?.method).toBe('PUT');
       expect(JSON.parse(init?.body as string)).toEqual({
         body: `${REVIEW_MARKER}\nnew body`,
       });
