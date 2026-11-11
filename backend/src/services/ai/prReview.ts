@@ -55,6 +55,26 @@ export interface PrReviewInput {
 }
 
 /**
+ * Any opening or closing tag of one of the sections the prompt is built
+ * from, in any case and with any spacing or attributes.
+ */
+const SECTION_TAG = /<(\s*\/?\s*(?:pull_request_title|pull_request_description|diff)\b[^>]*)>/gi;
+
+/**
+ * Escapes every section tag inside author-written content.
+ *
+ * Without this, a description containing "</pull_request_description>"
+ * followed by "<diff>" opens a second, forged diff section, and anything
+ * inside it, including notices in the positions the prompt calls genuine,
+ * reads as the tooling's own output. With every such tag written as
+ * "&lt;...>", the only real tags in the message are the ones written here,
+ * and the prompt can say so without exceptions.
+ */
+export function escapeSectionTags(content: string): string {
+  return content.replace(SECTION_TAG, '&lt;$1>');
+}
+
+/**
  * Asks the model to review a pull request diff.
  *
  * Reuses `structuredCompletion`, so the JSON parsing, the Zod validation and
@@ -64,22 +84,22 @@ export interface PrReviewInput {
  *
  * The pull request title, description and diff are written by the pull
  * request author, so they are the one input an attacker fully controls.
- * They are wrapped in labelled delimiters and the system prompt says
- * plainly that the content inside them is data under review and never
- * instructions.
+ * They are wrapped in labelled delimiters, any delimiter inside them is
+ * escaped, and the system prompt says plainly that the content inside
+ * them is data under review and never instructions.
  */
 export async function reviewPullRequest(input: PrReviewInput): Promise<PrReviewOutput> {
   const prompt = [
     '<pull_request_title>',
-    input.prTitle,
+    escapeSectionTags(input.prTitle),
     '</pull_request_title>',
     '',
     '<pull_request_description>',
-    input.prDescription || '(none)',
+    escapeSectionTags(input.prDescription) || '(none)',
     '</pull_request_description>',
     '',
     '<diff>',
-    input.diff,
+    escapeSectionTags(input.diff),
     '</diff>',
   ].join('\n');
 
