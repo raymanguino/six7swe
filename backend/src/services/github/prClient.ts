@@ -13,7 +13,7 @@
  */
 
 import { redactSecrets } from '../../util';
-import type { ChangedFile, ReviewEvent } from '../../domain/qa';
+import { REVIEW_MARKER, type ChangedFile, type ReviewEvent } from '../../domain/qa';
 
 export type { ChangedFile, ReviewEvent };
 
@@ -288,10 +288,11 @@ export async function submitReview(
 /**
  * Hidden marker that identifies the agent's own review.
  *
- * It is an HTML comment, so GitHub renders nothing for it, and it is what
- * lets a later run find the review it posted before.
+ * It is defined in the domain module, next to the body renderer that
+ * writes it, and re-exported here so the client and the body cannot
+ * drift apart.
  */
-export const REVIEW_MARKER = '<!-- six7swe-qa-agent -->';
+export { REVIEW_MARKER };
 
 /**
  * Lists the reviews on a pull request, oldest first.

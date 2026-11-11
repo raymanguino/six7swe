@@ -68,6 +68,29 @@ export const SEVERITY_ORDER: readonly FindingSeverity[] = ['blocker', 'major', '
 export const MAX_REPORTED_FINDINGS = 8;
 
 /**
+ * Decides whether the gate outcome should turn the required check red.
+ *
+ * The outcome and the check colour are separate questions, and Phase 1
+ * makes them diverge.
+ *
+ * In `comment-only` mode the agent is an observer, not the gate: nothing
+ * it finds blocks a merge, so the check stays green whatever the outcome.
+ * That is the phase 1 contract - the check is required and always green,
+ * so the ruleset does not have to change when the agent starts enforcing.
+ *
+ * In `enforce` mode the agent *is* the gate. There, a failed review is
+ * red, never green: a broken agent must not look like a clean pull
+ * request.
+ */
+export function gateBlocksMerge(gate: GateOutcome, mode: ReviewMode): boolean {
+  if (mode === 'comment-only') {
+    return false;
+  }
+
+  return gate !== 'pass';
+}
+
+/**
  * Orders findings so the most serious come first.
  *
  * The model does not promise to return its findings in order of severity,

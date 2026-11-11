@@ -18,7 +18,8 @@
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx scripts/seed-job-hunt.ts",
     "db:seed-portfolio": "tsx scripts/seed-portfolio.ts",
-    "jobs:refresh": "tsx scripts/jobs-refresh.ts"
+    "jobs:refresh": "tsx scripts/jobs-refresh.ts",
+    "qa:review": "tsx scripts/review-pr.ts"
   },
   "keywords": [],
   "author": "",
