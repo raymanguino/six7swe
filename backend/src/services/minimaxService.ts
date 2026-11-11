@@ -20,10 +20,13 @@ interface MiniMaxResponse {
   }>;
   model: string;
   object: string;
-  usage: {
+  usage?: {
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
+    completion_tokens_details?: {
+      reasoning_tokens?: number;
+    };
   };
   base_resp?: {
     status_code: number;
@@ -79,6 +82,21 @@ function getMiniMaxConfig() {
   }
 
   return { apiKey, secondaryApiKey };
+}
+
+/**
+ * Describes where the completion tokens went, for a response that ran out.
+ *
+ * A reasoning model spends its thinking from the same budget as its answer,
+ * so an empty answer at the limit usually means the thinking used it all.
+ * The split is what tells a budget that is too small from a prompt that is
+ * too large, so it belongs in the error rather than in a guess.
+ */
+function describeTokenUse(usage: MiniMaxResponse['usage'], limit: number): string {
+  if (!usage) return ` (limit ${limit} tokens; no usage reported)`;
+  const reasoning = usage.completion_tokens_details?.reasoning_tokens;
+  const split = reasoning === undefined ? '' : `, ${reasoning} of them reasoning`;
+  return ` (${usage.completion_tokens} of ${limit} completion tokens used${split}; prompt ${usage.prompt_tokens} tokens)`;
 }
 
 export async function chatCompletion(
@@ -156,7 +174,9 @@ export async function chatCompletion(
 
   if (!content) {
     if (choice?.finish_reason === 'length') {
-      throw new MiniMaxApiError('MiniMax response hit the token limit before producing an answer');
+      throw new MiniMaxApiError(
+        `MiniMax response hit the token limit before producing an answer${describeTokenUse(data.usage, max_completion_tokens)}`,
+      );
     }
     throw new MiniMaxApiError('No content in MiniMax response');
   }

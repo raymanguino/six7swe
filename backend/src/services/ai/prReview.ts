@@ -110,12 +110,17 @@ export async function reviewPullRequest(input: PrReviewInput): Promise<PrReviewO
     ],
     prReviewResponseSchema,
     {
-      max_tokens: 8192,
+      // The model reasons before it answers, and the reasoning is paid
+      // from this same budget. 8192 ran out on a 22k-character diff
+      // before any answer was written (#70), so the review failed closed.
+      // The budget is a ceiling, not a cost: only the tokens used are
+      // billed, and a smaller diff still stops early.
+      max_tokens: 32_768,
       reasoning_effort: 'medium',
-      // A review asks for a lot more than a chat reply: 8192 tokens with
-      // medium reasoning over a large diff. The default bound is too
-      // tight for that, and a timeout here would turn a slow model into a
-      // failed review on every large pull request.
+      // A review asks for a lot more than a chat reply: a large token
+      // budget with medium reasoning over a large diff. The default bound
+      // is too tight for that, and a timeout here would turn a slow model
+      // into a failed review on every large pull request.
       timeoutMs: 300_000,
     },
   );

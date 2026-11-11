@@ -233,3 +233,62 @@ describe('chatCompletion request timeout', () => {
     await expect(chatCompletion(messages, { timeoutMs: 5_000 })).rejects.toThrow('fetch failed');
   });
 });
+
+describe('chatCompletion at the token limit', () => {
+  const originalPrimaryKey = process.env.MINIMAX_API_KEY;
+  const messages = [{ role: 'user', content: 'Hello' }];
+  let fetchMock: jest.SpiedFunction<typeof fetch>;
+
+  function lengthResponse(usage?: unknown): Response {
+    return new Response(
+      JSON.stringify({ choices: [{ finish_reason: 'length', message: { content: '' } }], usage }),
+      { status: 200 },
+    );
+  }
+
+  beforeEach(() => {
+    process.env.MINIMAX_API_KEY = 'primary-test-key';
+    fetchMock = jest.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchMock.mockRestore();
+    if (originalPrimaryKey === undefined) delete process.env.MINIMAX_API_KEY;
+    else process.env.MINIMAX_API_KEY = originalPrimaryKey;
+  });
+
+  it('reports how the budget was spent, including the reasoning share', async () => {
+    fetchMock.mockResolvedValueOnce(
+      lengthResponse({
+        prompt_tokens: 7000,
+        completion_tokens: 8192,
+        total_tokens: 15192,
+        completion_tokens_details: { reasoning_tokens: 8192 },
+      }),
+    );
+
+    await expect(chatCompletion(messages, { max_tokens: 8192 })).rejects.toThrow(
+      new MiniMaxApiError(
+        'MiniMax response hit the token limit before producing an answer (8192 of 8192 completion tokens used, 8192 of them reasoning; prompt 7000 tokens)',
+      ),
+    );
+  });
+
+  it('omits the reasoning share when the response does not report it', async () => {
+    fetchMock.mockResolvedValueOnce(
+      lengthResponse({ prompt_tokens: 10, completion_tokens: 100, total_tokens: 110 }),
+    );
+
+    await expect(chatCompletion(messages, { max_tokens: 100 })).rejects.toThrow(
+      'MiniMax response hit the token limit before producing an answer (100 of 100 completion tokens used; prompt 10 tokens)',
+    );
+  });
+
+  it('still reports the limit when the response carries no usage', async () => {
+    fetchMock.mockResolvedValueOnce(lengthResponse());
+
+    await expect(chatCompletion(messages, { max_tokens: 100 })).rejects.toThrow(
+      'MiniMax response hit the token limit before producing an answer (limit 100 tokens; no usage reported)',
+    );
+  });
+});
