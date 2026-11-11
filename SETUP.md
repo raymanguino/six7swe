@@ -183,6 +183,18 @@ cd backend
 pnpm run jobs:refresh -- --profile 1 --wait
 ```
 
+Refreshes scrape with a headless Chrome. Install it once per checkout, and again after
+a puppeteer upgrade:
+
+```bash
+cd backend
+pnpm run browsers:install
+```
+
+Chrome goes into `backend/.cache/puppeteer` (set in `backend/.puppeteerrc.cjs`), not
+`~/.cache/puppeteer`. A refresh that fails with `Could not find Chrome` means this step
+was skipped.
+
 ### 8. Run Development Servers
 
 **Terminal 1 - Backend:**

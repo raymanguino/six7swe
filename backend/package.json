@@ -20,7 +20,8 @@
     "db:seed-portfolio": "tsx scripts/seed-portfolio.ts",
     "jobs:refresh": "tsx scripts/jobs-refresh.ts",
     "qa:review": "tsx scripts/review-pr.ts",
-    "qa:calibration": "tsx scripts/qa-calibration.ts"
+    "qa:calibration": "tsx scripts/qa-calibration.ts",
+    "browsers:install": "puppeteer browsers install chrome"
   },
   "keywords": [],
   "author": "",
