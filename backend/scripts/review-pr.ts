@@ -40,6 +40,8 @@ import {
 } from '../src/domain/qa';
 import { reviewPullRequest } from '../src/services/ai/prReview';
 import {
+  dismissReview,
+  findAgentChangeRequests,
   getPullRequest,
   listChangedFiles,
   submitReview,
@@ -260,6 +262,10 @@ async function main(): Promise<void> {
     // them. Anything else has to be a new review, because GitHub fixes a
     // review's event once it accepts it: a review that asked for changes
     // cannot be turned back into a comment by editing its body.
+    // Read before posting, so the review about to be posted is never
+    // among them.
+    const superseded = await findSupersededReviews(env, owner, repo);
+
     let action: 'created' | 'updated';
 
     if (event === 'COMMENT') {
@@ -277,6 +283,8 @@ async function main(): Promise<void> {
     }
 
     logLine(`Posted one ${event} review on PR #${env.PR_NUMBER} (${action}).`);
+
+    await dismissSuperseded(env, owner, repo, superseded, headSha);
 
     if (gateBlocksMerge(gate, mode)) {
       process.exitCode = 1;
@@ -316,6 +324,7 @@ async function postFailureReview(
 ): Promise<void> {
   try {
     const body = renderFailureBody(reason, commitSha, env.REVIEW_MODE);
+    const superseded = await findSupersededReviews(env, owner, repo);
 
     const action = await upsertReviewComment(owner, repo, env.PR_NUMBER, env.GITHUB_TOKEN, {
       commit_id: commitSha,
@@ -323,9 +332,71 @@ async function postFailureReview(
     });
 
     logLine(`Posted one fail-closed review on PR #${env.PR_NUMBER} (${action}).`);
+
+    await dismissSuperseded(env, owner, repo, superseded, commitSha);
   } catch (postError: unknown) {
     const message = postError instanceof Error ? postError.message : String(postError);
     process.stderr.write(`Could not post the fail-closed review: ${flattenText(message)}\n`);
+  }
+}
+
+/**
+ * Reads the agent's earlier requests for changes that are still in force.
+ *
+ * A request for changes stays in force until it is dismissed, whatever is
+ * posted after it, so a pull request that was fixed would keep showing
+ * "changes requested" from a verdict about an older commit. These are
+ * read before the new review is posted and dismissed after it, so the
+ * pull request is never left without a current verdict.
+ *
+ * Best effort: if they cannot be read, nothing is dismissed and the run
+ * carries on. The required check, not the review, is the merge gate.
+ */
+async function findSupersededReviews(
+  env: z.infer<typeof envSchema>,
+  owner: string,
+  repo: string,
+): Promise<number[]> {
+  try {
+    return await findAgentChangeRequests(owner, repo, env.PR_NUMBER, env.GITHUB_TOKEN);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(
+      `Could not read the earlier reviews, so none will be dismissed: ${flattenText(message)}\n`,
+    );
+    return [];
+  }
+}
+
+/**
+ * Dismisses the agent's earlier requests for changes.
+ *
+ * Runs only after the new review has been posted. Each dismissal is
+ * attempted on its own, and a failure is logged rather than thrown: the
+ * new verdict is already on the pull request.
+ */
+async function dismissSuperseded(
+  env: z.infer<typeof envSchema>,
+  owner: string,
+  repo: string,
+  reviewIds: readonly number[],
+  commitSha: string,
+): Promise<void> {
+  for (const reviewId of reviewIds) {
+    try {
+      await dismissReview(
+        owner,
+        repo,
+        env.PR_NUMBER,
+        reviewId,
+        env.GITHUB_TOKEN,
+        `Superseded by the QA agent review of ${commitSha}.`,
+      );
+      logLine(`Dismissed the earlier request for changes (review ${reviewId}).`);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`Could not dismiss review ${reviewId}: ${flattenText(message)}\n`);
+    }
   }
 }
 

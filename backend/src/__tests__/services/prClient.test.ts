@@ -1,5 +1,7 @@
 import {
   AGENT_BOT_LOGINS,
+  dismissReview,
+  findAgentChangeRequests,
   getPullRequest,
   GitHubApiError,
   listChangedFiles,
@@ -260,7 +262,12 @@ describe('github pr client', () => {
       fetchMock.mockResolvedValueOnce(
         jsonResponse([
           { id: 1, body: 'a human review', user: { login: 'raymanguino' } },
-          { id: 2, body: `${REVIEW_MARKER}\nold body`, user: { login: 'github-actions[bot]' } },
+          {
+            id: 2,
+            body: `${REVIEW_MARKER}\nold body`,
+            user: { login: 'github-actions[bot]' },
+            state: 'COMMENTED',
+          },
         ]),
       );
       fetchMock.mockResolvedValueOnce(jsonResponse({ id: 2 }, 200));
@@ -283,8 +290,18 @@ describe('github pr client', () => {
     it('updates the most recent agent review when there are several', async () => {
       fetchMock.mockResolvedValueOnce(
         jsonResponse([
-          { id: 2, body: `${REVIEW_MARKER}\noldest`, user: { login: 'github-actions[bot]' } },
-          { id: 5, body: `${REVIEW_MARKER}\nnewest`, user: { login: 'github-actions[bot]' } },
+          {
+            id: 2,
+            body: `${REVIEW_MARKER}\noldest`,
+            user: { login: 'github-actions[bot]' },
+            state: 'COMMENTED',
+          },
+          {
+            id: 5,
+            body: `${REVIEW_MARKER}\nnewest`,
+            user: { login: 'github-actions[bot]' },
+            state: 'COMMENTED',
+          },
         ]),
       );
       fetchMock.mockResolvedValueOnce(jsonResponse({ id: 5 }, 200));
@@ -336,6 +353,7 @@ describe('github pr client', () => {
             id: 4,
             body: `${REVIEW_MARKER}\napp`,
             user: { login: AGENT_BOT_LOGINS[1] },
+            state: 'COMMENTED',
           },
         ]),
       );
@@ -347,6 +365,106 @@ describe('github pr client', () => {
       });
 
       expect(action).toBe('updated');
+    });
+
+    it('never edits a request for changes, because its event cannot change', async () => {
+      // Editing it would put a passing verdict under a "changes requested"
+      // event that GitHub keeps for good.
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse([
+          {
+            id: 6,
+            body: `${REVIEW_MARKER}\nblocked`,
+            user: { login: 'github-actions[bot]' },
+            state: 'CHANGES_REQUESTED',
+          },
+        ]),
+      );
+      fetchMock.mockResolvedValueOnce(jsonResponse({ id: 9 }, 200));
+
+      const action = await upsertReviewComment('raymanguino', 'six7swe', 63, TOKEN, {
+        commit_id: 'abc123',
+        body: `${REVIEW_MARKER}\nfresh`,
+      });
+
+      expect(action).toBe('created');
+      const [url, init] = fetchMock.mock.calls[1];
+      expect(url).toBe('https://api.github.com/repos/raymanguino/six7swe/pulls/63/reviews');
+      expect(init?.method).toBe('POST');
+    });
+
+    it('posts a new comment when the latest agent review is not a comment', async () => {
+      // The older comment sits above the dismissed request in the timeline.
+      // Editing it would hide the new verdict behind the old one.
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse([
+          {
+            id: 2,
+            body: `${REVIEW_MARKER}\nfirst`,
+            user: { login: 'github-actions[bot]' },
+            state: 'COMMENTED',
+          },
+          {
+            id: 6,
+            body: `${REVIEW_MARKER}\nblocked`,
+            user: { login: 'github-actions[bot]' },
+            state: 'DISMISSED',
+          },
+        ]),
+      );
+      fetchMock.mockResolvedValueOnce(jsonResponse({ id: 9 }, 200));
+
+      const action = await upsertReviewComment('raymanguino', 'six7swe', 63, TOKEN, {
+        commit_id: 'abc123',
+        body: `${REVIEW_MARKER}\nfresh`,
+      });
+
+      expect(action).toBe('created');
+      expect(fetchMock.mock.calls[1][1]?.method).toBe('POST');
+    });
+  });
+
+  describe('findAgentChangeRequests', () => {
+    it('returns only the agent requests for changes that are still in force', async () => {
+      const bot = { login: 'github-actions[bot]' };
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse([
+          { id: 1, body: `${REVIEW_MARKER}\nold`, user: bot, state: 'CHANGES_REQUESTED' },
+          { id: 2, body: `${REVIEW_MARKER}\ncomment`, user: bot, state: 'COMMENTED' },
+          { id: 3, body: `${REVIEW_MARKER}\ndismissed`, user: bot, state: 'DISMISSED' },
+          { id: 4, body: 'a human', user: { login: 'raymanguino' }, state: 'CHANGES_REQUESTED' },
+          {
+            id: 5,
+            body: `${REVIEW_MARKER}\nspoofed`,
+            user: { login: 'some-random-user' },
+            state: 'CHANGES_REQUESTED',
+          },
+          { id: 6, body: 'the bot, without the marker', user: bot, state: 'CHANGES_REQUESTED' },
+          { id: 7, body: `${REVIEW_MARKER}\nnewer`, user: bot, state: 'CHANGES_REQUESTED' },
+        ]),
+      );
+
+      const ids = await findAgentChangeRequests('raymanguino', 'six7swe', 63, TOKEN);
+
+      expect(ids).toEqual([1, 7]);
+    });
+  });
+
+  describe('dismissReview', () => {
+    it('dismisses the review with a PUT to its dismissals', async () => {
+      fetchMock.mockResolvedValueOnce(jsonResponse({ id: 7, state: 'DISMISSED' }, 200));
+
+      await dismissReview('raymanguino', 'six7swe', 63, 7, TOKEN, 'Superseded.');
+
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe(
+        'https://api.github.com/repos/raymanguino/six7swe/pulls/63/reviews/7/dismissals',
+      );
+      expect(init?.method).toBe('PUT');
+      expect(JSON.parse(init?.body as string)).toEqual({
+        message: 'Superseded.',
+        event: 'DISMISS',
+      });
     });
   });
 

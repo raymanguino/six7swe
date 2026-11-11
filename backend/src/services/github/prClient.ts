@@ -88,6 +88,8 @@ interface GitHubReviewPayload {
   id?: number;
   body?: string | null;
   user?: { login?: string } | null;
+  /** `COMMENTED`, `CHANGES_REQUESTED`, `APPROVED`, `DISMISSED` or `PENDING`. */
+  state?: string;
 }
 
 async function githubFetch(
@@ -286,6 +288,29 @@ export async function submitReview(
 }
 
 /**
+ * Dismisses a review.
+ *
+ * PUT /repos/{owner}/{repo}/pulls/{pullNumber}/reviews/{reviewId}/dismissals
+ *
+ * Only a review that approved or asked for changes can be dismissed; GitHub
+ * refuses to dismiss a plain comment.
+ */
+export async function dismissReview(
+  owner: string,
+  repo: string,
+  pullNumber: number,
+  reviewId: number,
+  token: string,
+  message: string,
+): Promise<void> {
+  await githubFetch(
+    `${GITHUB_API_BASE}/repos/${owner}/${repo}/pulls/${pullNumber}/reviews/${reviewId}/dismissals`,
+    token,
+    { method: 'PUT', body: { message, event: 'DISMISS' } },
+  );
+}
+
+/**
  * Hidden marker that identifies the agent's own review.
  *
  * It is defined in the domain module, next to the body renderer that
@@ -365,6 +390,39 @@ function isAgentReview(review: GitHubReviewPayload): boolean {
   return typeof login === 'string' && AGENT_BOT_LOGINS.includes(login);
 }
 
+/** The agent's own reviews, oldest first: written by the bot and carrying the marker. */
+function agentReviews(reviews: readonly GitHubReviewPayload[]): GitHubReviewPayload[] {
+  return reviews.filter(
+    (review) =>
+      review.id !== undefined &&
+      review.body?.includes(REVIEW_MARKER) === true &&
+      isAgentReview(review),
+  );
+}
+
+/**
+ * Finds the agent's requests for changes that are still in force.
+ *
+ * A later review does not clear an earlier request for changes from the
+ * same reviewer: GitHub keeps it in force until it is dismissed. The script
+ * reads these before it posts and dismisses them after, so that only the
+ * latest verdict is ever live.
+ *
+ * Returns the review ids, oldest first.
+ */
+export async function findAgentChangeRequests(
+  owner: string,
+  repo: string,
+  pullNumber: number,
+  token: string,
+): Promise<number[]> {
+  const reviews = await listReviews(owner, repo, pullNumber, token);
+
+  return agentReviews(reviews)
+    .filter((review) => review.state === 'CHANGES_REQUESTED')
+    .map((review) => review.id as number);
+}
+
 /**
  * Keeps a single, current review on a pull request.
  *
@@ -375,9 +433,11 @@ function isAgentReview(review: GitHubReviewPayload): boolean {
  *
  * The review stays attached to the commit it was first posted on, so
  * GitHub marks it as outdated after the next push. The body is what
- * carries the current verdict, and it names the commit it refers to. This
- * is why it is a Phase 1 mechanism: Phase 2 needs a review whose event
- * can change, and only a freshly posted review can do that.
+ * carries the current verdict, and it names the commit it refers to.
+ *
+ * Only a plain comment is ever edited. A request for changes is always a
+ * new review (see `submitReview`), and a comment that follows one is new
+ * as well, so the current verdict is always the last review on the page.
  *
  * Returns `updated` when an existing review was replaced and `created` when
  * a new one was posted.
@@ -391,17 +451,18 @@ export async function upsertReviewComment(
 ): Promise<'updated' | 'created'> {
   const reviews = await listReviews(owner, repo, pullNumber, token);
 
-  const existing = [...reviews]
-    .reverse()
-    .find(
-      (candidate) =>
-        candidate.id !== undefined &&
-        candidate.body?.includes(REVIEW_MARKER) === true &&
-        isAgentReview(candidate),
-    );
+  // Only the agent's *latest* review is a candidate, and only while it is
+  // still a plain comment. Editing a request for changes would put a new
+  // verdict under the old event, which GitHub never changes. And when the
+  // latest review asked for changes or was dismissed, an older comment
+  // sits above it in the timeline: editing that one would hide the new
+  // verdict behind the old one. A new review keeps the current verdict
+  // last on the page.
+  const ours = agentReviews(reviews);
+  const latest = ours[ours.length - 1];
 
-  if (existing?.id !== undefined) {
-    await updateReview(owner, repo, pullNumber, existing.id, token, review.body);
+  if (latest?.id !== undefined && latest.state === 'COMMENTED') {
+    await updateReview(owner, repo, pullNumber, latest.id, token, review.body);
     return 'updated';
   }
 
