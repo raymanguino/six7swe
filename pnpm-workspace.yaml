@@ -14,12 +14,3 @@ overrides:
   # which Node resolves through `require(esm)` but Jest cannot parse. The
   # 1.x line has the same `stringifySetCookie` export and is CommonJS.
   'light-my-request>cookie': ^1.1.1
-
-  # content-disposition 3.x is ESM only. @fastify/static is CommonJS and does
-  # `require('content-disposition')`. This was added when production ran
-  # Node 18, where that throws ERR_REQUIRE_ESM. The Node floor is now 22.12,
-  # which loads 3.x through `require(esm)`, and Jest never loads
-  # @fastify/static, so the pin is no longer required. It stays because the
-  # 2.x line is CommonJS and produces byte-identical headers; dropping it is
-  # a separate change to what production runs.
-  '@fastify/static>content-disposition': 2.0.1
