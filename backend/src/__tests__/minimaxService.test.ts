@@ -81,7 +81,7 @@ describe('chatCompletion key fallback', () => {
 
   it('does not retry errors in a successful HTTP response', async () => {
     fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ base_resp: { status_code: 429, status_msg: 'limited' } }))
+      new Response(JSON.stringify({ base_resp: { status_code: 429, status_msg: 'limited' } })),
     );
 
     await expect(chatCompletion(messages)).rejects.toMatchObject({ code: 429 });
@@ -119,5 +119,117 @@ describe('chatCompletion key fallback', () => {
 
     await expect(chatCompletion(messages)).rejects.toThrow('MINIMAX_API_KEY is not configured');
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('chatCompletion request timeout', () => {
+  const originalPrimaryKey = process.env.MINIMAX_API_KEY;
+  const messages = [{ role: 'user', content: 'Hello' }];
+  let fetchMock: jest.SpiedFunction<typeof fetch>;
+
+  /**
+   * A request that never answers.
+   *
+   * It rejects when the signal aborts, the way a real fetch does, so the
+   * timeout is exercised rather than bypassed. A mock that simply never
+   * settles would pass no matter what the code did with the signal.
+   */
+  function neverAnswers(init: RequestInit | undefined): Promise<Response> {
+    return new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal as AbortSignal;
+      signal.addEventListener('abort', () => {
+        // The reason is whatever the signal aborted with; do not assume its type.
+        const reason: unknown = signal.reason;
+        reject(reason);
+      });
+    });
+  }
+
+  beforeEach(() => {
+    process.env.MINIMAX_API_KEY = 'primary-test-key';
+    fetchMock = jest.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchMock.mockRestore();
+    if (originalPrimaryKey === undefined) delete process.env.MINIMAX_API_KEY;
+    else process.env.MINIMAX_API_KEY = originalPrimaryKey;
+  });
+
+  it('bounds the request so a call that never answers cannot wait forever', async () => {
+    // A request that never gets an answer would otherwise hold the
+    // connection open until the caller is killed. In a CI job that is the
+    // difference between a review that reports a timeout and a run that
+    // burns its whole budget and says nothing.
+    fetchMock.mockImplementation((_url, init) => neverAnswers(init));
+
+    await expect(chatCompletion(messages, { timeoutMs: 20 })).rejects.toThrow(
+      'MiniMax did not respond within 0.02 seconds',
+    );
+  });
+
+  it('reports the timeout as a MiniMax error', async () => {
+    fetchMock.mockImplementation((_url, init) => neverAnswers(init));
+
+    await expect(chatCompletion(messages, { timeoutMs: 20 })).rejects.toMatchObject({
+      name: 'MiniMaxApiError',
+    });
+  });
+
+  it('passes a timeout signal to the request', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), { status: 200 }),
+    );
+
+    await chatCompletion(messages, { timeoutMs: 5_000 });
+
+    expect(fetchMock.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('reports a timeout that fires while the response body is being read', async () => {
+    // Headers arrive at once, then the body never finishes. The deadline
+    // fires during `response.json()`, outside the request itself.
+    fetchMock.mockImplementation((_url, init) => {
+      const signal = init?.signal as AbortSignal;
+      const stalled = new ReadableStream<Uint8Array>({
+        start(controller) {
+          signal.addEventListener('abort', () => {
+            const reason: unknown = signal.reason;
+            controller.error(reason);
+          });
+        },
+      });
+      return Promise.resolve(new Response(stalled, { status: 200 }));
+    });
+
+    await expect(chatCompletion(messages, { timeoutMs: 20 })).rejects.toMatchObject({
+      name: 'MiniMaxApiError',
+      message: 'MiniMax did not respond within 0.02 seconds',
+    });
+  });
+
+  it('shares one deadline between the primary and the fallback request', async () => {
+    process.env.MINIMAX_API_KEY_SECONDARY = 'secondary-test-key';
+    try {
+      fetchMock
+        .mockResolvedValueOnce(new Response('rate limited', { status: 429 }))
+        .mockImplementationOnce((_url, init) => neverAnswers(init));
+
+      await expect(chatCompletion(messages, { timeoutMs: 20 })).rejects.toThrow(
+        'MiniMax did not respond within 0.02 seconds',
+      );
+
+      const primarySignal = fetchMock.mock.calls[0][1]?.signal;
+      const fallbackSignal = fetchMock.mock.calls[1][1]?.signal;
+      expect(fallbackSignal).toBe(primarySignal);
+    } finally {
+      delete process.env.MINIMAX_API_KEY_SECONDARY;
+    }
+  });
+
+  it('does not report an unrelated failure as a timeout', async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError('fetch failed'));
+
+    await expect(chatCompletion(messages, { timeoutMs: 5_000 })).rejects.toThrow('fetch failed');
   });
 });

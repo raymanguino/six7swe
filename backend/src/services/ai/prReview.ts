@@ -109,7 +109,15 @@ export async function reviewPullRequest(input: PrReviewInput): Promise<PrReviewO
       { role: 'user', content: prompt },
     ],
     prReviewResponseSchema,
-    { max_tokens: 8192, reasoning_effort: 'medium' },
+    {
+      max_tokens: 8192,
+      reasoning_effort: 'medium',
+      // A review asks for a lot more than a chat reply: 8192 tokens with
+      // medium reasoning over a large diff. The default bound is too
+      // tight for that, and a timeout here would turn a slow model into a
+      // failed review on every large pull request.
+      timeoutMs: 300_000,
+    },
   );
 
   return {
