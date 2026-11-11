@@ -6,9 +6,8 @@ import { JOB_MATCH_SYSTEM_PROMPT } from './prompts/jobMatch';
 /**
  * The canonical job matcher.
  *
- * Both the public `POST /job-match` endpoint and the job-hunter refresh
- * pipeline call this function, so a job is scored the same way wherever it
- * comes from. The band is derived from the score in the domain layer rather
+ * The job-hunter refresh pipeline calls this function for every job it
+ * scores. The band is derived from the score in the domain layer rather
  * than asked of the model, so the classification can never disagree with the
  * number it came from.
  */

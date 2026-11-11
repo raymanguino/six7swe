@@ -2,7 +2,6 @@ export * from './chatHandlers';
 export * from './contactHandlers';
 export * from './fitcheckHandlers';
 export * from './jobHandlers';
-export * from './jobMatchHandlers';
 export * from './portfolioHandlers';
 export * from './profileHandlers';
 export * from './profileJobHandlers';

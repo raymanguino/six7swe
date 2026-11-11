@@ -17,8 +17,6 @@ experiences.
 The personal portfolio site. No authentication required.
 
 - **Landing page**: intro, highlights, achievements, projects, skills, hobbies
-- **Job Match Score**: paste a job description to get a 0-100 score, the
-  matching skills and the gaps
 - **Honest Fit Assessment**: a first-person fit assessment for a role
 - **Contact**: contact details and a message form
 - **AI Chat Assistant**: available across the site, answering questions about

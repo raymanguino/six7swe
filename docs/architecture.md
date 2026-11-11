@@ -157,7 +157,7 @@ auth context has registered one.
 
 | Module | Routes |
 |---|---|
-| `routes/portfolio.ts` | `GET /portfolio`, `GET /resume`, `POST /chat`, `POST /job-match`, `POST /fitcheck`, `POST /contact` |
+| `routes/portfolio.ts` | `GET /portfolio`, `GET /resume`, `POST /chat`, `POST /fitcheck`, `POST /contact` |
 | `routes/jobHunt.ts` | `/job-hunt/jobs`, `/job-hunt/profiles` (CRUD), `/job-hunt/profiles/:id/jobs`, `/job-hunt/profiles/:id/jobs/refresh[/:refreshId]`, `/job-hunt/users` |
 
 **AI layer** — `backend/src/services/ai/`:

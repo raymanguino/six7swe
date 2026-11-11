@@ -3,8 +3,8 @@
 Six7SWE is a monorepo containing **two products** that share one backend
 process, one PostgreSQL database and one AI client:
 
-- **Portfolio** — a public personal site with an AI chat assistant, a job
-  match score and a fit assessment.
+- **Portfolio** — a public personal site with an AI chat assistant and a fit
+  assessment.
 - **Job Hunter** — a signed-in tool that scrapes job postings and scores them
   against search profiles.
 
@@ -40,8 +40,6 @@ canonical job matcher.
 The public site at `/`:
 
 - Landing page with highlights, achievements, projects and skills
-- Job match score — paste a job description for a 0-100 score, matching skills
-  and gaps
 - Honest fit assessment — a first-person fit assessment for a role
 - Contact page with contact info and a message form
 - AI chat assistant answering questions about professional background
