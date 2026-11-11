@@ -45,12 +45,29 @@ export class MiniMaxApiError extends Error {
 const MINI_MAX_API_URL = 'https://api.minimax.io/v1/chat/completions';
 const MINI_MAX_MODEL = 'MiniMax-M3.1-Flash';
 
+/**
+ * How long a single completion may take.
+ *
+ * Without a bound, a request that never gets an answer waits forever: the
+ * server holds the connection open and the caller waits with it. In a
+ * request handler that is a socket that never closes, and in a CI job it
+ * is a run that burns its whole timeout and is killed before it can
+ * report anything.
+ *
+ * The bound has to be generous enough for a long reasoning pass over a
+ * large diff, and short enough that a stuck call fails while there is
+ * still time to say so.
+ */
+const COMPLETION_TIMEOUT_MS = 120_000;
+
 export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 export interface CompletionOptions {
   model?: string;
   max_tokens?: number;
   reasoning_effort?: ReasoningEffort;
+  /** Overrides the request timeout. Used by callers that need longer. */
+  timeoutMs?: number;
 }
 
 function getMiniMaxConfig() {
@@ -64,9 +81,25 @@ function getMiniMaxConfig() {
   return { apiKey, secondaryApiKey };
 }
 
+/**
+ * Reports whether an error is a timeout.
+ *
+ * The name is checked rather than the type: the abort reason is a
+ * `DOMException`, which does not extend `Error`, so `instanceof Error`
+ * does not match it.
+ */
+function isTimeoutError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'name' in error &&
+    (error as { name?: unknown }).name === 'TimeoutError'
+  );
+}
+
 export async function chatCompletion(
   messages: MiniMaxMessage[],
-  options?: CompletionOptions
+  options?: CompletionOptions,
 ): Promise<string> {
   const { apiKey, secondaryApiKey } = getMiniMaxConfig();
 
@@ -89,12 +122,33 @@ export async function chatCompletion(
         'Content-Type': 'application/json',
       },
       body,
+      signal: AbortSignal.timeout(options?.timeoutMs ?? COMPLETION_TIMEOUT_MS),
     });
   }
 
-  let response = await sendRequest(apiKey);
-  if (response.status === 429 && secondaryApiKey) {
-    response = await sendRequest(secondaryApiKey);
+  let response: Response;
+
+  try {
+    response = await sendRequest(apiKey);
+    if (response.status === 429 && secondaryApiKey) {
+      response = await sendRequest(secondaryApiKey);
+    }
+  } catch (error: unknown) {
+    // A timeout is reported as a timeout. The raw abort error says
+    // "The operation was aborted due to timeout", which does not say
+    // which request timed out or how long it waited, and the reader of
+    // this message is trying to work out whether the model was slow or
+    // the network was broken.
+    //
+    // The check is on the name rather than on the type: the abort reason
+    // is a `DOMException`, which does not extend `Error`, so an
+    // `instanceof Error` test would not match it.
+    if (isTimeoutError(error)) {
+      throw new MiniMaxApiError(
+        `MiniMax did not respond within ${(options?.timeoutMs ?? COMPLETION_TIMEOUT_MS) / 1000} seconds`,
+      );
+    }
+    throw error;
   }
 
   if (!response.ok) {
@@ -119,9 +173,7 @@ export async function chatCompletion(
 
   if (!content) {
     if (choice?.finish_reason === 'length') {
-      throw new MiniMaxApiError(
-        'MiniMax response hit the token limit before producing an answer',
-      );
+      throw new MiniMaxApiError('MiniMax response hit the token limit before producing an answer');
     }
     throw new MiniMaxApiError('No content in MiniMax response');
   }
@@ -140,7 +192,7 @@ export async function structuredCompletion<T>(
   // zod 4 dropped `z.ZodTypeDef` and reordered the generics to
   // `ZodType<Output, Input, Internals>`.
   outputSchema: z.ZodType<T, unknown>,
-  options?: CompletionOptions
+  options?: CompletionOptions,
 ): Promise<T> {
   const response = await chatCompletion(messages, {
     ...options,

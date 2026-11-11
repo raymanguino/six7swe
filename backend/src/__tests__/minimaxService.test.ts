@@ -81,7 +81,7 @@ describe('chatCompletion key fallback', () => {
 
   it('does not retry errors in a successful HTTP response', async () => {
     fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ base_resp: { status_code: 429, status_msg: 'limited' } }))
+      new Response(JSON.stringify({ base_resp: { status_code: 429, status_msg: 'limited' } })),
     );
 
     await expect(chatCompletion(messages)).rejects.toMatchObject({ code: 429 });
@@ -119,5 +119,68 @@ describe('chatCompletion key fallback', () => {
 
     await expect(chatCompletion(messages)).rejects.toThrow('MINIMAX_API_KEY is not configured');
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('chatCompletion request timeout', () => {
+  const originalPrimaryKey = process.env.MINIMAX_API_KEY;
+  const messages = [{ role: 'user', content: 'Hello' }];
+  let fetchMock: jest.SpiedFunction<typeof fetch>;
+
+  /**
+   * A request that never answers.
+   *
+   * It rejects when the signal aborts, the way a real fetch does, so the
+   * timeout is exercised rather than bypassed. A mock that simply never
+   * settles would pass no matter what the code did with the signal.
+   */
+  function neverAnswers(init: RequestInit | undefined): Promise<Response> {
+    return new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal as AbortSignal;
+      signal.addEventListener('abort', () => {
+        reject(signal.reason as Error);
+      });
+    });
+  }
+
+  beforeEach(() => {
+    process.env.MINIMAX_API_KEY = 'primary-test-key';
+    fetchMock = jest.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchMock.mockRestore();
+    if (originalPrimaryKey === undefined) delete process.env.MINIMAX_API_KEY;
+    else process.env.MINIMAX_API_KEY = originalPrimaryKey;
+  });
+
+  it('bounds the request so a call that never answers cannot wait forever', async () => {
+    // A request that never gets an answer would otherwise hold the
+    // connection open until the caller is killed. In a CI job that is the
+    // difference between a review that reports a timeout and a run that
+    // burns its whole budget and says nothing.
+    fetchMock.mockImplementation((_url, init) => neverAnswers(init));
+
+    await expect(chatCompletion(messages, { timeoutMs: 20 })).rejects.toThrow(
+      'MiniMax did not respond within 0.02 seconds',
+    );
+  });
+
+  it('reports the timeout as a MiniMax error', async () => {
+    fetchMock.mockImplementation((_url, init) => neverAnswers(init));
+
+    await expect(chatCompletion(messages, { timeoutMs: 20 })).rejects.toMatchObject({
+      name: 'MiniMaxApiError',
+    });
+  });
+
+  it('passes a timeout signal to the request', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), { status: 200 }),
+    );
+
+    await chatCompletion(messages, { timeoutMs: 5_000 });
+
+    expect(fetchMock.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
   });
 });

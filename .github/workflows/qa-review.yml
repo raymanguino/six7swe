@@ -1,0 +1,83 @@
+name: QA Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# The agent reads the diff and posts one review. It never writes to the
+# repository, so `contents: read` is all it needs beyond the review.
+#
+# Dependabot-triggered runs get a read-only token by default. This block
+# raises it, which is what lets the agent review a dependency bump.
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: qa-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: QA agent review
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # A draft pull request is not ready for a verdict, and the
+    # `ready_for_review` event re-runs this job when it is.
+    #
+    # A fork pull request gets no secrets, so the agent cannot run there.
+    # The skip is explicit rather than a confusing failure. A skipped
+    # required check counts as passing, so fork pull requests are not
+    # gated by the agent. That is acceptable for a personal repository.
+    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
+
+    steps:
+      # The agent code comes from the base branch, never from the pull
+      # request. The diff is read through the API, so no pull request
+      # code is needed and none is executed.
+      - name: Checkout base branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          # The version comes from the `packageManager` field in the root
+          # package.json, so there is a single source of truth.
+          run_install: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # `--ignore-scripts` stops any dependency lifecycle script from
+      # executing. The agent needs none of them: `tsx` resolves the
+      # esbuild binary from its platform package at runtime, so it works
+      # without esbuild's postinstall.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      # Every secret is scoped to this one step. No other step has the
+      # MiniMax key, so a step that does not need it cannot leak it.
+      - name: Run QA agent
+        env:
+          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          # The second key is used for one retry when the primary key is
+          # rate limited. It is optional: an empty value simply means
+          # there is no fallback, and the review fails closed.
+          MINIMAX_API_KEY_SECONDARY: ${{ secrets.MINIMAX_API_KEY_SECONDARY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_DESCRIPTION: ${{ github.event.pull_request.body }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # Phase 1: the agent reports and never blocks, so the check is
+          # always green. Phase 2 changes this one word to `enforce`.
+          REVIEW_MODE: comment-only
+        run: pnpm --filter @six7swe/backend qa:review
