@@ -138,7 +138,9 @@ describe('chatCompletion request timeout', () => {
     return new Promise<Response>((_resolve, reject) => {
       const signal = init?.signal as AbortSignal;
       signal.addEventListener('abort', () => {
-        reject(signal.reason as Error);
+        // The reason is whatever the signal aborted with; do not assume its type.
+        const reason: unknown = signal.reason;
+        reject(reason);
       });
     });
   }
@@ -192,7 +194,8 @@ describe('chatCompletion request timeout', () => {
       const stalled = new ReadableStream<Uint8Array>({
         start(controller) {
           signal.addEventListener('abort', () => {
-            controller.error(signal.reason as Error);
+            const reason: unknown = signal.reason;
+            controller.error(reason);
           });
         },
       });
