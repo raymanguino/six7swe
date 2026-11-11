@@ -1,4 +1,10 @@
 import { reviewPullRequest } from '../../services/ai/prReview';
+import { PR_REVIEW_SYSTEM_PROMPT } from '../../services/ai/prompts/prReview';
+import {
+  DIFF_NOTICE_PREFIX,
+  DIFF_SUMMARY_MARKER,
+  PATCH_SKIPPED_MARKER,
+} from '../../domain/qa/diff';
 
 /**
  * Exercises the whole real path: transport -> JSON parse -> Zod validation.
@@ -185,5 +191,41 @@ describe('reviewPullRequest', () => {
     const body = JSON.parse((fetchMock.mock.calls[0][1]?.body as string) ?? '{}');
     expect(body.temperature).toBeUndefined();
     expect(body.max_completion_tokens).toBe(8192);
+  });
+});
+
+describe('the review prompt and the diff builder agree', () => {
+  // The prompt tells the model where a genuine notice can appear. If the
+  // builder puts one anywhere else, the model reports the tooling's own
+  // notice as a forged one, and that finding is a Security-class blocker.
+  // The prompt and the builder are separate files, so this is checked
+  // against both.
+
+  function systemPrompt(): string {
+    return PR_REVIEW_SYSTEM_PROMPT;
+  }
+
+  it('names the exact prefix the builder emits', () => {
+    expect(systemPrompt()).toContain(DIFF_NOTICE_PREFIX);
+  });
+
+  it('names the exact summary marker the builder emits', () => {
+    expect(systemPrompt()).toContain(DIFF_SUMMARY_MARKER);
+  });
+
+  it('describes the two places a notice can appear', () => {
+    expect(systemPrompt()).toContain('immediately after a "### " file header');
+    expect(systemPrompt()).toContain('summary block');
+  });
+
+  it('lists every marker the builder can emit', () => {
+    expect(systemPrompt()).toContain(PATCH_SKIPPED_MARKER);
+    expect(systemPrompt()).toContain('no patch available');
+    expect(systemPrompt()).toContain('patch shortened to');
+  });
+
+  it('does not claim a patch line can only start with a sign', () => {
+    // A hunk header starts with "@", so the prompt has to say so.
+    expect(systemPrompt()).toContain('"@" for a hunk header');
   });
 });

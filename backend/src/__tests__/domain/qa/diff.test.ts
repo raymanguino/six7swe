@@ -2,6 +2,7 @@ import {
   allTouchedPaths,
   buildReviewDiff,
   DIFF_NOTICE_PREFIX,
+  DIFF_SUMMARY_MARKER,
   hunkLineNumbers,
   NO_PATCH_MARKER,
   PATCH_SKIPPED_MARKER,
@@ -179,6 +180,87 @@ describe('buildReviewDiff', () => {
     for (const line of diff.split('\n')) {
       if (line.includes('omitted') || line.includes('shortened') || line.includes('not included')) {
         expect(line.startsWith(DIFF_NOTICE_PREFIX)).toBe(true);
+      }
+    }
+  });
+
+  it('places every notice where the prompt says a genuine notice can be', () => {
+    // The prompt tells the model that a genuine notice appears either on
+    // the line immediately after a "### " file header or in the summary
+    // block that follows the summary marker. This is the invariant that
+    // makes a forged notice inside the reviewed content recognisable as
+    // forged, so it has to hold for every shape the builder can produce.
+    //
+    // The budget is deliberately generous: a tighter one drops the file
+    // with the shortened patch, and the test would pass without ever
+    // exercising the placement that matters.
+    const diff = buildReviewDiff(
+      [
+        file({ filename: 'pnpm-lock.yaml', patch: 'lock' }),
+        file({ filename: 'renamed.ts', patch: undefined }),
+        file({ filename: 'long.ts', patch: 'x'.repeat(500) }),
+        file({ filename: 'normal.ts', patch: '@@ -1 +1 @@\n-a\n+b' }),
+      ],
+      { ...BUDGET, perFileChars: 50, totalChars: 4000 },
+    );
+
+    const lines = diff.split('\n');
+    const summaryIndex = lines.indexOf(DIFF_SUMMARY_MARKER);
+
+    expect(summaryIndex).toBeGreaterThanOrEqual(0);
+
+    // Every kind of notice has to be present, or the invariant below is
+    // checked against a subset of what the builder can emit.
+    expect(diff).toContain(PATCH_SKIPPED_MARKER);
+    expect(diff).toContain(NO_PATCH_MARKER);
+    expect(diff).toContain(`${DIFF_NOTICE_PREFIX} patch shortened to 50 characters]`);
+
+    for (const [index, line] of lines.entries()) {
+      if (!line.startsWith(DIFF_NOTICE_PREFIX)) {
+        continue;
+      }
+
+      const previous = lines[index - 1];
+      const isAfterHeader = previous !== undefined && previous.startsWith('### ');
+      const isInSummary = summaryIndex >= 0 && index >= summaryIndex;
+
+      expect(isAfterHeader || isInSummary).toBe(true);
+    }
+  });
+
+  it('puts the shortened notice directly after the header, not after the patch', () => {
+    // The notice has to be before the patch. A notice after the patch
+    // content sits in the middle of the diff, where the prompt tells the
+    // model to look for a forged notice, so it would report the tooling's
+    // own notice as an attempt to steer the review.
+    const diff = buildReviewDiff([file({ filename: 'long.ts', patch: 'x'.repeat(500) })], {
+      ...BUDGET,
+      perFileChars: 50,
+    });
+
+    const lines = diff.split('\n');
+    const noticeIndex = lines.findIndex((line) =>
+      line.includes('patch shortened to 50 characters'),
+    );
+
+    expect(noticeIndex).toBeGreaterThan(0);
+    expect(lines[noticeIndex - 1]).toMatch(/^### /);
+  });
+
+  it('never puts a notice on a line that could be patch content', () => {
+    const diff = buildReviewDiff(
+      [
+        file({ filename: 'pnpm-lock.yaml', patch: 'lock' }),
+        file({ filename: 'long.ts', patch: 'x'.repeat(500) }),
+      ],
+      { ...BUDGET, perFileChars: 50 },
+    );
+
+    for (const line of diff.split('\n')) {
+      if (line.startsWith(DIFF_NOTICE_PREFIX)) {
+        expect(line.startsWith('+')).toBe(false);
+        expect(line.startsWith('-')).toBe(false);
+        expect(line.startsWith(' ')).toBe(false);
       }
     }
   });

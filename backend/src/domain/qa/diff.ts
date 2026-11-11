@@ -52,8 +52,24 @@ export const LOCKFILES: readonly string[] = ['pnpm-lock.yaml', 'package-lock.jso
  * carefully. The prefix is distinctive so the prompt can tell a real
  * notice from a fake one, and so a notice inside the reviewed content is
  * recognisable as forged.
+ *
+ * **The placement is part of the contract.** A genuine notice appears in
+ * one of exactly two places: on the line immediately after a "### " file
+ * header, or in the summary block that follows the "### summary" marker
+ * at the end of the diff. A line inside a patch always starts with "+",
+ * "-" or a space, so it can never be mistaken for one. The review prompt
+ * states this rule, and `buildBlocks` is what keeps it true.
  */
 export const DIFF_NOTICE_PREFIX = '[six7swe:';
+
+/**
+ * The marker that introduces the summary block.
+ *
+ * It gives the trailing notices a delimiter of their own, so "a notice
+ * in the summary" is a position that can be pointed at rather than a
+ * guess about where the file list ends.
+ */
+export const DIFF_SUMMARY_MARKER = `${DIFF_NOTICE_PREFIX} summary]`;
 
 /** Marker written in place of a patch that was deliberately not included. */
 export const PATCH_SKIPPED_MARKER = `${DIFF_NOTICE_PREFIX} patch not included]`;
@@ -162,9 +178,19 @@ function buildBlocks(files: readonly ChangedFile[], budget: DiffBudget): DiffBlo
     const shortened = patch.length > budget.perFileChars;
     const text = shortened ? patch.slice(0, budget.perFileChars) : patch;
 
+    // The notice goes immediately after the header, before the patch, so
+    // that every notice the builder emits sits in the same place: on the
+    // line right after a file header. The prompt tells the model that is
+    // the only place a genuine notice can appear, which is what makes a
+    // forged notice inside the reviewed content recognisable as forged.
+    //
+    // Placing it after the patch instead would put a genuine notice in
+    // the middle of the diff, where the model is told to look for a
+    // forgery, and it would report the tooling's own notice as an
+    // attempt to steer the review.
     blocks.push({
       text: shortened
-        ? `${header(file)}\n${text}\n${DIFF_NOTICE_PREFIX} patch shortened to ${budget.perFileChars} characters]`
+        ? `${header(file)}\n${DIFF_NOTICE_PREFIX} patch shortened to ${budget.perFileChars} characters]\n${text}`
         : `${header(file)}\n${text}`,
       skipped: false,
       missing: false,
@@ -219,7 +245,14 @@ function buildNotices(kept: readonly DiffBlock[], omitted: number): string[] {
     );
   }
 
-  return notices;
+  if (notices.length === 0) {
+    return notices;
+  }
+
+  // The summary is introduced by its own marker so that "a notice in the
+  // summary" is a position the model can point at, rather than a guess
+  // about where the file list ends.
+  return [DIFF_SUMMARY_MARKER, ...notices];
 }
 
 /**
