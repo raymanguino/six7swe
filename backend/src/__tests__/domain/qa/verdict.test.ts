@@ -3,6 +3,7 @@ import {
   decideReviewEvent,
   reviewEventForGate,
   sanitizeFindings,
+  sortFindingsBySeverity,
   touchesProtectedPath,
   type ReviewFinding,
 } from '../../../domain/qa/verdict';
@@ -350,6 +351,47 @@ describe('sanitizeFindings', () => {
     expect(
       sanitizeFindings([finding({ file: 'backend/src/domain/qa/verdict.ts' })], moved),
     ).toHaveLength(1);
+  });
+});
+
+describe('sortFindingsBySeverity', () => {
+  it('puts the most serious findings first', () => {
+    const sorted = sortFindingsBySeverity([
+      finding({ severity: 'nit' }),
+      finding({ severity: 'major' }),
+      finding({ severity: 'minor' }),
+      finding({ severity: 'blocker' }),
+    ]);
+
+    expect(sorted.map((entry) => entry.severity)).toEqual(['blocker', 'major', 'minor', 'nit']);
+  });
+
+  it('keeps a blocker that was written after the other findings', () => {
+    const sorted = sortFindingsBySeverity([
+      ...Array.from({ length: 8 }, () => finding({ severity: 'nit' })),
+      finding({ severity: 'blocker' }),
+    ]);
+
+    expect(sorted[0].severity).toBe('blocker');
+  });
+
+  it('preserves the relative order of findings with the same severity', () => {
+    const sorted = sortFindingsBySeverity([
+      finding({ severity: 'minor', message: 'first' }),
+      finding({ severity: 'nit', message: 'a nit' }),
+      finding({ severity: 'minor', message: 'second' }),
+    ]);
+
+    expect(sorted.map((entry) => entry.message)).toEqual(['first', 'second', 'a nit']);
+  });
+
+  it('does not mutate the input', () => {
+    const findings = [finding({ severity: 'nit' }), finding({ severity: 'blocker' })];
+    const original = [...findings];
+
+    sortFindingsBySeverity(findings);
+
+    expect(findings).toEqual(original);
   });
 });
 

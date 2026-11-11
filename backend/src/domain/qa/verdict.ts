@@ -11,7 +11,7 @@
  * code the workflow checks out from `base.sha`.
  */
 
-import { addedLineNumbers, allTouchedPaths, type ChangedFile } from './diff';
+import { allTouchedPaths, hunkLineNumbers, type ChangedFile } from './diff';
 
 /**
  * The GitHub review events this agent is allowed to post.
@@ -54,6 +54,33 @@ export type GateOutcome = 'pass' | 'fail' | 'manual-review' | 'fail-closed';
 
 /** Severities that block a merge once the agent is allowed to enforce. */
 export const BLOCKING_SEVERITIES: readonly FindingSeverity[] = ['blocker', 'major'];
+
+/** The severities, most serious first. */
+export const SEVERITY_ORDER: readonly FindingSeverity[] = ['blocker', 'major', 'minor', 'nit'];
+
+/**
+ * How many findings a review reports.
+ *
+ * This is a display limit, not a decision limit. The gate sees every
+ * finding; only the review body is trimmed, and only after the findings
+ * have been sorted so the most serious are the ones that survive.
+ */
+export const MAX_REPORTED_FINDINGS = 8;
+
+/**
+ * Orders findings so the most serious come first.
+ *
+ * The model does not promise to return its findings in order of severity,
+ * and a list that is trimmed for display must not be trimmed in the
+ * model's order: a blocker written tenth would be cut before anything
+ * downstream ever saw it. Findings of equal severity keep their relative
+ * order.
+ */
+export function sortFindingsBySeverity(findings: readonly ReviewFinding[]): ReviewFinding[] {
+  return [...findings].sort(
+    (left, right) => SEVERITY_ORDER.indexOf(left.severity) - SEVERITY_ORDER.indexOf(right.severity),
+  );
+}
 
 /**
  * Decides which GitHub review event the findings justify.
@@ -283,7 +310,7 @@ export function sanitizeFindings(
   const linesByPath = new Map<string, Set<number>>();
 
   for (const file of changedFiles) {
-    const lines = addedLineNumbers(file.patch ?? '');
+    const lines = hunkLineNumbers(file.patch ?? '');
 
     if (!linesByPath.has(file.filename)) {
       linesByPath.set(file.filename, lines);
