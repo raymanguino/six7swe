@@ -385,15 +385,6 @@ type FitCheckResult = {
   recommendation: string;
 };
 
-type JobMatchResult = {
-  score: number;
-  analysis: string;
-  band?: 'LOW' | 'MEDIUM' | 'HIGH' | 'TOP';
-  matchedSkills?: string[];
-  gaps?: string[];
-  summary?: string;
-};
-
 export default function Landing({ onSectionChange }: LandingProps) {
   const [formData, setFormData] = useState({ name: '', email: '', message: '' });
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -404,10 +395,6 @@ export default function Landing({ onSectionChange }: LandingProps) {
   const [fitcheckLoading, setFitcheckLoading] = useState(false);
   const [fitcheckResult, setFitcheckResult] = useState<FitCheckResult | null>(null);
   const [fitcheckError, setFitcheckError] = useState<string | null>(null);
-  const [matchJobDescription, setMatchJobDescription] = useState('');
-  const [matchLoading, setMatchLoading] = useState(false);
-  const [matchResult, setMatchResult] = useState<JobMatchResult | null>(null);
-  const [matchError, setMatchError] = useState<string | null>(null);
 
   const { portfolio } = usePortfolio();
   const sectionRefs = useRef<Record<SectionId, HTMLElement | null>>({
@@ -446,25 +433,6 @@ export default function Landing({ onSectionChange }: LandingProps) {
       setFitcheckError('Failed to analyze job fit. Please try again.');
     } finally {
       setFitcheckLoading(false);
-    }
-  };
-
-  const handleMatchSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!matchJobDescription.trim()) return;
-    setMatchLoading(true);
-    setMatchError(null);
-    setMatchResult(null);
-    try {
-      const data = await apiRequest('/job-match', {
-        method: 'POST',
-        body: JSON.stringify({ jobDescription: matchJobDescription.trim() }),
-      }) as JobMatchResult;
-      setMatchResult(data);
-    } catch {
-      setMatchError('Failed to analyze job match. Please try again.');
-    } finally {
-      setMatchLoading(false);
     }
   };
 
@@ -715,108 +683,6 @@ export default function Landing({ onSectionChange }: LandingProps) {
             </div>
           ))}
         </div>
-      </section>
-
-      {/* Job match */}
-      <section id="jobmatch" className="scroll-mt-24 mb-24">
-        <h2 className="text-2xl font-semibold text-gray-800 dark:text-gray-200 mb-4 text-center">
-          Job Match Score
-        </h2>
-        <p className="text-center text-gray-600 dark:text-gray-400 mb-8 max-w-2xl mx-auto">
-          Paste a job description to get a 0&ndash;100 match score, the skills that line up, and
-          the gaps worth knowing about.
-        </p>
-
-        <form onSubmit={handleMatchSubmit} className="max-w-3xl mx-auto mb-8">
-          <label
-            htmlFor="jobmatch-job"
-            className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
-          >
-            Job description
-          </label>
-          <textarea
-            id="jobmatch-job"
-            value={matchJobDescription}
-            onChange={(e) => setMatchJobDescription(e.target.value.slice(0, INPUT_LIMITS.jobDescription))}
-            placeholder="Paste the job description here..."
-            rows={8}
-            maxLength={INPUT_LIMITS.jobDescription}
-            className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500 resize-y mb-4"
-            disabled={matchLoading}
-          />
-          <button
-            type="submit"
-            disabled={matchLoading || !matchJobDescription.trim()}
-            className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {matchLoading ? 'Analyzing...' : 'Score Match'}
-          </button>
-        </form>
-
-        {matchError && (
-          <div className="max-w-3xl mx-auto mb-8 p-4 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-700 rounded-lg">
-            <p className="text-red-800 dark:text-red-200 text-sm">{matchError}</p>
-          </div>
-        )}
-
-        {matchResult && (
-          <div className="max-w-3xl mx-auto space-y-4">
-            <div className="flex items-center gap-4 p-5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg">
-              <span className="text-4xl font-bold text-gray-900 dark:text-white">
-                {matchResult.score}
-              </span>
-              <span className="text-sm text-gray-600 dark:text-gray-300">out of 100</span>
-              {matchResult.band && (
-                <span className="ml-auto rounded-full bg-primary-100 text-primary-800 dark:bg-primary-900/50 dark:text-primary-200 px-3 py-1 text-xs font-semibold">
-                  {matchResult.band}
-                </span>
-              )}
-            </div>
-
-            {matchResult.summary && (
-              <p className="text-gray-800 dark:text-gray-200">{matchResult.summary}</p>
-            )}
-            {matchResult.analysis && (
-              <p className="text-gray-600 dark:text-gray-400 text-sm">{matchResult.analysis}</p>
-            )}
-
-            {matchResult.matchedSkills && matchResult.matchedSkills.length > 0 && (
-              <div>
-                <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                  Matching skills
-                </h3>
-                <div className="flex flex-wrap gap-2">
-                  {matchResult.matchedSkills.map((skill) => (
-                    <span
-                      key={skill}
-                      className="rounded-full bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-200 px-3 py-1 text-xs"
-                    >
-                      {skill}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {matchResult.gaps && matchResult.gaps.length > 0 && (
-              <div>
-                <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                  Gaps
-                </h3>
-                <div className="flex flex-wrap gap-2">
-                  {matchResult.gaps.map((gap) => (
-                    <span
-                      key={gap}
-                      className="rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200 px-3 py-1 text-xs"
-                    >
-                      {gap}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
       </section>
 
       {/* FitCheck.dll */}

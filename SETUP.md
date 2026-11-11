@@ -42,7 +42,7 @@ Required environment variables:
 | Variable | Purpose |
 |---|---|
 | `DATABASE_URL` | PostgreSQL connection string (local Supabase by default) |
-| `MINIMAX_API_KEY` | AI endpoints (`/chat`, `/job-match`, `/fitcheck`) |
+| `MINIMAX_API_KEY` | AI endpoints (`/chat`, `/fitcheck`) |
 | `RESEND_API_KEY` | Contact form delivery |
 | `SUPABASE_URL` | Auth provider for the job-hunter (`/job-hunt/*` routes) |
 

@@ -264,7 +264,6 @@ Tests cover:
 
 ### AI (public)
 - `POST /chat` - Conversational assistant grounded in the portfolio
-- `POST /job-match` - Score a job description against the profile. Returns `{ score, analysis, band, matchedSkills, gaps, summary }`
 - `POST /fitcheck` - Fit assessment for a role
 - `POST /contact` - Contact form submission (delivered via Resend)
 

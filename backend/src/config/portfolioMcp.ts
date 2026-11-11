@@ -22,7 +22,7 @@ export function isMcpConnectionConfigured(): boolean {
   return Boolean(url || cmd);
 }
 
-/** When true (default), attach MCP servers to chat / job-match / fitcheck agents. */
+/** When true (default), attach MCP servers to chat / fitcheck agents. */
 export function isAgentMcpEnabled(): boolean {
   if (!isPortfolioMcpEnabled()) return false;
   const v = (process.env.AGENT_MCP_ENABLED ?? 'true').toLowerCase();
