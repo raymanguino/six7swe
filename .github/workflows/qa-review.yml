@@ -2,13 +2,21 @@ name: QA Review
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    # `edited` is included because the title and description are review
+    # inputs: without it, editing them leaves the previous verdict stale.
+    types: [opened, synchronize, reopened, ready_for_review, edited]
 
 # The agent reads the diff and posts one review. It never writes to the
 # repository, so `contents: read` is all it needs beyond the review.
 #
 # Dependabot-triggered runs get a read-only token by default. This block
 # raises it, which is what lets the agent review a dependency bump.
+#
+# Dependabot runs also read secrets from the *Dependabot* secret store,
+# not from the Actions one. MINIMAX_API_KEY (and the optional
+# MINIMAX_API_KEY_SECONDARY) must be added under Settings > Secrets and
+# variables > Dependabot as well, or the key is empty on those runs and
+# the job fails before it can post anything.
 permissions:
   contents: read
   pull-requests: write

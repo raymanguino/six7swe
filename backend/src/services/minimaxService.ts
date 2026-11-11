@@ -81,22 +81,6 @@ function getMiniMaxConfig() {
   return { apiKey, secondaryApiKey };
 }
 
-/**
- * Reports whether an error is a timeout.
- *
- * The name is checked rather than the type: the abort reason is a
- * `DOMException`, which does not extend `Error`, so `instanceof Error`
- * does not match it.
- */
-function isTimeoutError(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'name' in error &&
-    (error as { name?: unknown }).name === 'TimeoutError'
-  );
-}
-
 export async function chatCompletion(
   messages: MiniMaxMessage[],
   options?: CompletionOptions,
@@ -114,6 +98,11 @@ export async function chatCompletion(
     reasoning_effort,
   });
 
+  const timeoutMs = options?.timeoutMs ?? COMPLETION_TIMEOUT_MS;
+  // One deadline for the whole call: the primary request, the fallback
+  // request and the reading of the response body all share it.
+  const signal = AbortSignal.timeout(timeoutMs);
+
   async function sendRequest(key: string): Promise<Response> {
     return fetch(MINI_MAX_API_URL, {
       method: 'POST',
@@ -122,44 +111,38 @@ export async function chatCompletion(
         'Content-Type': 'application/json',
       },
       body,
-      signal: AbortSignal.timeout(options?.timeoutMs ?? COMPLETION_TIMEOUT_MS),
+      signal,
     });
   }
 
-  let response: Response;
+  let data: MiniMaxResponse;
 
   try {
-    response = await sendRequest(apiKey);
+    let response = await sendRequest(apiKey);
     if (response.status === 429 && secondaryApiKey) {
       response = await sendRequest(secondaryApiKey);
     }
-  } catch (error: unknown) {
-    // A timeout is reported as a timeout. The raw abort error says
-    // "The operation was aborted due to timeout", which does not say
-    // which request timed out or how long it waited, and the reader of
-    // this message is trying to work out whether the model was slow or
-    // the network was broken.
-    //
-    // The check is on the name rather than on the type: the abort reason
-    // is a `DOMException`, which does not extend `Error`, so an
-    // `instanceof Error` test would not match it.
-    if (isTimeoutError(error)) {
+
+    if (!response.ok) {
+      const errorText = await response.text();
       throw new MiniMaxApiError(
-        `MiniMax did not respond within ${(options?.timeoutMs ?? COMPLETION_TIMEOUT_MS) / 1000} seconds`,
+        `MiniMax API error: ${response.status} ${response.statusText} - ${redactSecrets(errorText)}`,
+        response.status,
       );
+    }
+
+    data = (await response.json()) as MiniMaxResponse;
+  } catch (error: unknown) {
+    // The deadline can fire while connecting or while the body is being
+    // read, and the error that surfaces differs between the two. Ask the
+    // signal rather than inspecting the error, so every case is reported
+    // as a timeout and callers map it to the same upstream failure as any
+    // other MiniMax error.
+    if (signal.aborted) {
+      throw new MiniMaxApiError(`MiniMax did not respond within ${timeoutMs / 1000} seconds`);
     }
     throw error;
   }
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new MiniMaxApiError(
-      `MiniMax API error: ${response.status} ${response.statusText} - ${redactSecrets(errorText)}`,
-      response.status,
-    );
-  }
-
-  const data = (await response.json()) as MiniMaxResponse;
 
   if (data.base_resp && data.base_resp.status_code !== 0) {
     throw new MiniMaxApiError(

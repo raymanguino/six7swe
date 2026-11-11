@@ -183,4 +183,50 @@ describe('chatCompletion request timeout', () => {
 
     expect(fetchMock.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
   });
+
+  it('reports a timeout that fires while the response body is being read', async () => {
+    // Headers arrive at once, then the body never finishes. The deadline
+    // fires during `response.json()`, outside the request itself.
+    fetchMock.mockImplementation((_url, init) => {
+      const signal = init?.signal as AbortSignal;
+      const stalled = new ReadableStream<Uint8Array>({
+        start(controller) {
+          signal.addEventListener('abort', () => {
+            controller.error(signal.reason as Error);
+          });
+        },
+      });
+      return Promise.resolve(new Response(stalled, { status: 200 }));
+    });
+
+    await expect(chatCompletion(messages, { timeoutMs: 20 })).rejects.toMatchObject({
+      name: 'MiniMaxApiError',
+      message: 'MiniMax did not respond within 0.02 seconds',
+    });
+  });
+
+  it('shares one deadline between the primary and the fallback request', async () => {
+    process.env.MINIMAX_API_KEY_SECONDARY = 'secondary-test-key';
+    try {
+      fetchMock
+        .mockResolvedValueOnce(new Response('rate limited', { status: 429 }))
+        .mockImplementationOnce((_url, init) => neverAnswers(init));
+
+      await expect(chatCompletion(messages, { timeoutMs: 20 })).rejects.toThrow(
+        'MiniMax did not respond within 0.02 seconds',
+      );
+
+      const primarySignal = fetchMock.mock.calls[0][1]?.signal;
+      const fallbackSignal = fetchMock.mock.calls[1][1]?.signal;
+      expect(fallbackSignal).toBe(primarySignal);
+    } finally {
+      delete process.env.MINIMAX_API_KEY_SECONDARY;
+    }
+  });
+
+  it('does not report an unrelated failure as a timeout', async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError('fetch failed'));
+
+    await expect(chatCompletion(messages, { timeoutMs: 5_000 })).rejects.toThrow('fetch failed');
+  });
 });
