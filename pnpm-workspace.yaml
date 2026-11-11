@@ -33,6 +33,10 @@ overrides:
   'ws@8.19.0': 8.21.1
   # @babel/core 7.29.0 -> 7.29.6: arbitrary file read via sourceMappingURL.
   '@babel/core@7.29.0': 7.29.6
+  # zod 3.25.76 -> 4.x: memory exhaustion on oversized constrained
+  #   collections (fixed in 4.6.6, no 3.x backport). Needed by
+  #   eslint-plugin-react-hooks, which accepts ^3.25.0 || ^4.0.0.
+  'eslint-plugin-react-hooks>zod': ^4.6.7
 
   # content-disposition 3.x is ESM only and declares engines.node >= 22.
   # @fastify/static is CommonJS and does `require('content-disposition')`,

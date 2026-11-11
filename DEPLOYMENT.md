@@ -6,11 +6,15 @@ Before deploying, complete the local setup steps in `SETUP.md` (install dependen
 
 ## Node Version
 
-The backend needs **Node 22**. The root `package.json` declares it:
+The backend needs **Node 22.12 or later** on the 22 line. The root `package.json` declares it:
 
 ```json
-"engines": { "node": ">=22 <23" }
+"engines": { "node": ">=22.12 <23" }
 ```
+
+22.12 is the first release where `require(esm)` is on by default. The backend compiles to
+CommonJS, and `puppeteer` (25+) is ESM only, so on anything older the backend crashes on
+startup with `ERR_REQUIRE_ESM`.
 
 Railway's Nixpacks builder reads that field and installs the matching Node
 version. Without it the builder falls back to Node 18, which is end of life and
@@ -19,12 +23,13 @@ too old for some dependencies.
 > Node 18 crashes the backend on startup with `ERR_REQUIRE_ESM`. The
 > `content-disposition` package that `@fastify/static` depends on is ESM only,
 > and Node 18 cannot `require()` an ES module. The dependency is pinned to a
-> CommonJS release through a pnpm override in `pnpm-workspace.yaml`, so the
-> backend also runs on older runtimes, but Node 22 is the supported version and
-> the one CI tests.
+> CommonJS release through a pnpm override in `pnpm-workspace.yaml`. That override
+> no longer makes older runtimes work on its own, because `puppeteer` is now ESM
+> only too. Node 22.12+ is the supported version and the one CI tests.
 >
-> `backend/src/__tests__/runtimeDependencies.test.ts` fails the build if a
-> dependency becomes ESM only, so this cannot regress silently.
+> `backend/src/__tests__/runtimeDependencies.test.ts` fails the build if the
+> `engines.node` floor drops below 22.12, or if a dependency cannot be loaded with
+> `require()`, so this cannot regress silently.
 
 ## Setup Instructions
 
