@@ -102,22 +102,55 @@ export const NO_PATCH_MARKER = `${DIFF_NOTICE_PREFIX} no patch available]`;
  * How much a path is worth reading when the budget cannot cover everything.
  * Lower is more valuable. A pure function of the path, meant to be adjusted.
  *
- * - 0: runtime source (`src/**`, `scripts/**`) that is not a test
+ * - 0: pinned files (see `isPinnedPath`), which are read before everything
+ *   else, then runtime source (`src/**`, `scripts/**`) that is not a test
  * - 1: schema, migrations and configuration (also the default for any path
  *   no other tier claims)
- * - 2: tests and fixtures
+ * - 2: tests, fixtures and Jest snapshots
  * - 3: documentation
- * - 4: generated files (migration metadata, snapshots)
+ * - 4: generated data (migration metadata)
  *
- * The order the rules are checked in is load-bearing: tier 4 first, then
- * `.github/**`, `.sql` and named config files (1; the latter two only
- * outside test directories, so fixtures stay tier 2), then documentation
- * (3), then tests (2), then `src/` and `scripts/` (0), and anything left
- * is 1. A `.md` file under `src/` skips the documentation rule and stays 0.
+ * Tiers 3 and 4 hold only content nothing in this repo executes (see
+ * `INERT_FILE`). A directory name alone never demotes code to them: a
+ * `.ts` file under `docs/`, `__snapshots__/` or `migrations/meta/` falls
+ * through to the ordinary rules, because `tsc` compiles everything under
+ * `src/` that is imported, whatever the directory is called.
+ *
+ * The order the rules are checked in is load-bearing: pinned files first
+ * (0), then tier 4, then Jest snapshots (2), then `.sql` and named config
+ * files (1; only outside test directories, so fixtures stay tier 2), then
+ * documentation (3), then tests (2), then `src/` and `scripts/` (0), and
+ * anything left is 1. A `.md` file under `src/` skips the documentation
+ * rule and stays 0.
  */
 export type ReviewTier = 0 | 1 | 2 | 3 | 4;
 
 const CONFIG_FILE = /^(package\.json|tsconfig[^/]*\.json|drizzle\.config\.ts|railway\.json)$/;
+
+/**
+ * Files that can change the build, CI, deploy or login path. They are named
+ * by the base name, at any depth, and only outside test directories so a
+ * fixture `package.json` stays a fixture.
+ */
+const PINNED_FILE =
+  /^(package\.json|railway\.json|nixpacks\.toml|dockerfile(\..+)?|.+\.dockerfile)$/i;
+
+/**
+ * Instructions read by coding agents that have shell access. They end in
+ * `.md`, so without this they would be classed as documentation and be the
+ * first thing dropped.
+ */
+const AGENT_INSTRUCTION_FILE = /^(claude|agents)(\.local)?\.md$/i;
+
+/**
+ * Content that nothing in this repo executes: prose and plain data. Only
+ * these may sit in tiers 3 and 4.
+ *
+ * `.snap` is deliberately absent. Jest reads a snapshot file by evaluating
+ * it (`new Function('exports', contents)` in `@jest/snapshot-utils`), so a
+ * snapshot is code that runs under the test runner, the same as a test.
+ */
+const INERT_FILE = /\.(md|mdx|markdown|txt|rst|json)$/i;
 
 const TEST_DIRECTORIES: readonly string[] = [
   '__tests__',
@@ -129,32 +162,65 @@ const TEST_DIRECTORIES: readonly string[] = [
   'e2e',
 ];
 
-export function reviewTier(path: string): ReviewTier {
+function splitPath(path: string): { base: string; directories: string[] } {
   const segments = path.replace(/\\/g, '/').split('/');
-  const base = segments[segments.length - 1] ?? path;
-  const directories = segments.slice(0, -1);
+  return { base: segments[segments.length - 1] ?? path, directories: segments.slice(0, -1) };
+}
 
+/**
+ * Whether a path is read ahead of all other source.
+ *
+ * These are the files a hostile pull request would most want to slip past
+ * the review: CI workflows (`.github/**`), the build and deploy definition
+ * (`package.json`, `Dockerfile`, `railway.json`, `nixpacks.toml`), the login
+ * path (any `auth/` directory) and the instructions coding agents follow
+ * (`CLAUDE.md`, `AGENTS.md`, `.claude/**`). They are tier 0, and within
+ * tier 0 they come first, so padding a pull request with large `src/`
+ * files cannot push them out of the budget.
+ */
+export function isPinnedPath(path: string): boolean {
+  const { base, directories } = splitPath(path);
   const inTestDirectory = TEST_DIRECTORIES.some((directory) => directories.includes(directory));
 
+  return (
+    directories[0] === '.github' ||
+    directories.some((directory) => directory.toLowerCase() === '.claude') ||
+    AGENT_INSTRUCTION_FILE.test(base) ||
+    (!inTestDirectory && (PINNED_FILE.test(base) || directories.includes('auth')))
+  );
+}
+
+export function reviewTier(path: string): ReviewTier {
+  if (isPinnedPath(path)) {
+    return 0;
+  }
+
+  const { base, directories } = splitPath(path);
+  const inTestDirectory = TEST_DIRECTORIES.some((directory) => directories.includes(directory));
+  const inert = INERT_FILE.test(base);
+
   if (
-    // Migration metadata is data (json, sql); a script in such a directory is code.
-    (directories.some((d, i) => d === 'migrations' && directories[i + 1] === 'meta') &&
-      !/\.[cm]?[jt]sx?$/.test(base)) ||
-    directories.includes('__snapshots__') ||
-    base.endsWith('.snap')
+    inert &&
+    // Migration metadata is data; the migrator reads the journal as JSON.
+    (directories.some((d, i) => d === 'migrations' && directories[i + 1] === 'meta') ||
+      directories.includes('__snapshots__'))
   ) {
     return 4;
   }
 
-  if (
-    directories[0] === '.github' ||
-    (!inTestDirectory && (base.endsWith('.sql') || CONFIG_FILE.test(base)))
-  ) {
+  if (base.endsWith('.snap')) {
+    return 2;
+  }
+
+  if (!inTestDirectory && (base.endsWith('.sql') || CONFIG_FILE.test(base))) {
     return 1;
   }
 
   // A markdown file inside `src/` (a prompt template, say) is runtime input.
-  if ((base.endsWith('.md') && !directories.includes('src')) || directories[0] === 'docs') {
+  if (
+    inert &&
+    ((base.endsWith('.md') && !directories.includes('src')) || directories[0] === 'docs')
+  ) {
     return 3;
   }
 
@@ -169,19 +235,26 @@ export function reviewTier(path: string): ReviewTier {
   return 1;
 }
 
-/** Files ordered by review tier; ties keep their original order. */
+/**
+ * Files ordered by review tier, pinned files first within tier 0; ties
+ * keep their original order.
+ */
 function orderByTier(files: readonly ChangedFile[]): ChangedFile[] {
   return files
-    .map((file, index) => ({
-      file,
-      index,
-      // A moved file is as valuable as the stronger of its two paths.
-      tier: Math.min(
-        reviewTier(file.filename),
-        file.previousFilename ? reviewTier(file.previousFilename) : 4,
-      ),
-    }))
-    .sort((a, b) => a.tier - b.tier || a.index - b.index)
+    .map((file, index) => {
+      const paths = file.previousFilename
+        ? [file.filename, file.previousFilename]
+        : [file.filename];
+
+      return {
+        file,
+        index,
+        // A moved file is as valuable as the stronger of its two paths.
+        tier: Math.min(...paths.map(reviewTier)),
+        pinned: paths.some(isPinnedPath) ? 0 : 1,
+      };
+    })
+    .sort((a, b) => a.tier - b.tier || a.pinned - b.pinned || a.index - b.index)
     .map((entry) => entry.file);
 }
 
@@ -210,6 +283,30 @@ const LINE_BREAKING_CHARACTERS = /[\u0000-\u001f\u007f\u0085\u2028\u2029]/g;
 export function displayPath(path: string): string {
   return path.replace(
     LINE_BREAKING_CHARACTERS,
+    (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  );
+}
+
+/**
+ * Characters inside a patch that a model may read as ending a line: every
+ * line-breaking character except the "\n" that really separates patch
+ * lines, and the tab, which is ordinary indentation and breaks nothing.
+ */
+// eslint-disable-next-line no-control-regex
+const PATCH_LINE_BREAKING_CHARACTERS = /[\u0000-\u0008\u000b-\u001f\u007f\u0085\u2028\u2029]/g;
+
+/**
+ * Renders patch text so that only a real "\n" starts a new line.
+ *
+ * The builder relies on every patch line starting with "+", "-" or a space,
+ * so that no line inside a patch can pass for a notice. That holds for
+ * "\n" only. Added content holding a bare "\r" followed by a forged notice
+ * would otherwise start a line with the notice prefix in the model's view.
+ * Each such character is written as a visible \u escape, as in paths.
+ */
+export function displayPatch(patch: string): string {
+  return patch.replace(
+    PATCH_LINE_BREAKING_CHARACTERS,
     (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`,
   );
 }
@@ -282,7 +379,7 @@ function buildBlocks(files: readonly ChangedFile[], budget: DiffBudget): DiffBlo
   const blocks: DiffBlock[] = [];
 
   for (const file of files) {
-    const patch = file.patch ?? '';
+    const patch = displayPatch(file.patch ?? '');
 
     if (budget.skipPatchesFor.includes(file.filename) || isLockfile(file.filename)) {
       blocks.push({
