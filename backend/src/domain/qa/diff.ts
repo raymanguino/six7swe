@@ -129,8 +129,8 @@ const CONFIG_FILE = /^(package\.json|tsconfig[^/]*\.json|drizzle\.config\.ts|rai
 
 /**
  * Files that can change the build, CI, deploy or login path. They are named
- * by the base name, at any depth, and only outside test directories so a
- * fixture `package.json` stays a fixture.
+ * by the base name, at any depth, and only outside data fixture directories
+ * (`FIXTURE_DIRECTORIES`) so a fixture `package.json` stays a fixture.
  */
 const PINNED_FILE =
   /^(package\.json|railway\.json|nixpacks\.toml|dockerfile(\..+)?|.+\.dockerfile)$/i;
@@ -162,6 +162,27 @@ const TEST_DIRECTORIES: readonly string[] = [
   'e2e',
 ];
 
+/**
+ * Directories that hold test data rather than code that runs. Only these
+ * exempt a build or auth file from pinning. `test/`, `tests/` and `e2e/`
+ * do not: an `e2e/package.json` or a `tests/Dockerfile` installs and runs
+ * things like any other.
+ */
+const FIXTURE_DIRECTORIES: readonly string[] = ['__fixtures__', '__mocks__', 'fixtures'];
+
+const TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$/;
+
+/**
+ * The files that decide who is let in, outside any `auth/` directory:
+ * which routes are public, the auth plugin, and the rule that binds a user
+ * row to one authenticated subject. Matched as a path suffix.
+ */
+const AUTH_GATE_FILES: readonly string[] = [
+  'routes/access.ts',
+  'plugins/auth.ts',
+  'domain/jobHunt/identity.ts',
+];
+
 function splitPath(path: string): { base: string; directories: string[] } {
   const segments = path.replace(/\\/g, '/').split('/');
   return { base: segments[segments.length - 1] ?? path, directories: segments.slice(0, -1) };
@@ -173,20 +194,29 @@ function splitPath(path: string): { base: string; directories: string[] } {
  * These are the files a hostile pull request would most want to slip past
  * the review: CI workflows (`.github/**`), the build and deploy definition
  * (`package.json`, `Dockerfile`, `railway.json`, `nixpacks.toml`), the login
- * path (any `auth/` directory) and the instructions coding agents follow
- * (`CLAUDE.md`, `AGENTS.md`, `.claude/**`). They are tier 0, and within
- * tier 0 they come first, so padding a pull request with large `src/`
- * files cannot push them out of the budget.
+ * path (any `auth/` directory and `AUTH_GATE_FILES`) and the instructions
+ * coding agents follow (`CLAUDE.md`, `AGENTS.md`, `.claude/**`). They are
+ * tier 0, and within tier 0 they come first, so padding a pull request with
+ * large `src/` files cannot push them out of the budget.
+ *
+ * A test file (`*.test.ts`, `*.spec.ts`) under `auth/` is not pinned: it
+ * exercises the login path but is not part of it. Any other file there,
+ * including a helper under `__tests__/`, is.
  */
 export function isPinnedPath(path: string): boolean {
   const { base, directories } = splitPath(path);
-  const inTestDirectory = TEST_DIRECTORIES.some((directory) => directories.includes(directory));
+  const normalized = [...directories, base].join('/');
+  const inFixtureDirectory = FIXTURE_DIRECTORIES.some((directory) =>
+    directories.includes(directory),
+  );
 
   return (
     directories[0] === '.github' ||
     directories.some((directory) => directory.toLowerCase() === '.claude') ||
     AGENT_INSTRUCTION_FILE.test(base) ||
-    (!inTestDirectory && (PINNED_FILE.test(base) || directories.includes('auth')))
+    AUTH_GATE_FILES.some((file) => normalized === file || normalized.endsWith(`/${file}`)) ||
+    (!inFixtureDirectory &&
+      (PINNED_FILE.test(base) || (directories.includes('auth') && !TEST_FILE.test(base))))
   );
 }
 
@@ -224,7 +254,7 @@ export function reviewTier(path: string): ReviewTier {
     return 3;
   }
 
-  if (inTestDirectory || /\.(test|spec)\.[cm]?[jt]sx?$/.test(base)) {
+  if (inTestDirectory || TEST_FILE.test(base)) {
     return 2;
   }
 
@@ -238,6 +268,10 @@ export function reviewTier(path: string): ReviewTier {
 /**
  * Files ordered by review tier, pinned files first within tier 0; ties
  * keep their original order.
+ *
+ * Pinned files are ordered among themselves by patch size, smallest first.
+ * Otherwise a pull request could flood the pinned group too, with large
+ * `.claude/*.md` files ahead of a one-line workflow change.
  */
 function orderByTier(files: readonly ChangedFile[]): ChangedFile[] {
   return files
@@ -245,16 +279,18 @@ function orderByTier(files: readonly ChangedFile[]): ChangedFile[] {
       const paths = file.previousFilename
         ? [file.filename, file.previousFilename]
         : [file.filename];
+      const pinned = paths.some(isPinnedPath);
 
       return {
         file,
         index,
         // A moved file is as valuable as the stronger of its two paths.
         tier: Math.min(...paths.map(reviewTier)),
-        pinned: paths.some(isPinnedPath) ? 0 : 1,
+        pinned: pinned ? 0 : 1,
+        size: pinned ? (file.patch?.length ?? 0) : 0,
       };
     })
-    .sort((a, b) => a.tier - b.tier || a.pinned - b.pinned || a.index - b.index)
+    .sort((a, b) => a.tier - b.tier || a.pinned - b.pinned || a.size - b.size || a.index - b.index)
     .map((entry) => entry.file);
 }
 
@@ -345,21 +381,27 @@ export function allTouchedPaths(files: readonly ChangedFile[]): string[] {
  * Read from the hunk headers of a unified diff: `@@ -1,3 +10,4 @@` covers
  * lines 10 to 13 of the new file. A finding that points at a line outside
  * that set points at code the model cannot have read.
+ *
+ * It parses the patch exactly as the model is shown it (`displayPatch`,
+ * split on "\n" only). A hunk header hidden behind a bare "\r" is not a
+ * line of its own in the model's view, so it must not widen the set.
  */
 export function hunkLineNumbers(patch: string): Set<number> {
   const lines = new Set<number>();
-  const hunkHeader = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm;
+  const hunkHeader = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/;
 
-  let match = hunkHeader.exec(patch);
-  while (match !== null) {
+  for (const line of displayPatch(patch).split('\n')) {
+    const match = hunkHeader.exec(line);
+    if (match === null) {
+      continue;
+    }
+
     const start = Number(match[1]);
     const count = match[2] === undefined ? 1 : Number(match[2]);
 
     for (let offset = 0; offset < count; offset += 1) {
       lines.add(start + offset);
     }
-
-    match = hunkHeader.exec(patch);
   }
 
   return lines;
