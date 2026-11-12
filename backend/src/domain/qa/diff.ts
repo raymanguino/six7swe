@@ -111,8 +111,20 @@ export const NO_PATCH_MARKER = `${DIFF_NOTICE_PREFIX} no patch available]`;
  */
 export type ReviewTier = 0 | 1 | 2 | 3 | 4;
 
+const CONFIG_FILE = /^(package\.json|tsconfig[^/]*\.json|drizzle\.config\.ts|railway\.json)$/;
+
+const TEST_DIRECTORIES: readonly string[] = [
+  '__tests__',
+  '__fixtures__',
+  '__mocks__',
+  'test',
+  'tests',
+  'fixtures',
+  'e2e',
+];
+
 export function reviewTier(path: string): ReviewTier {
-  const segments = path.split('/');
+  const segments = path.replace(/\\/g, '/').split('/');
   const base = segments[segments.length - 1] ?? path;
   const directories = segments.slice(0, -1);
 
@@ -124,20 +136,20 @@ export function reviewTier(path: string): ReviewTier {
     return 4;
   }
 
-  if (base.endsWith('.md') || directories[0] === 'docs') {
+  if (directories[0] === '.github' || base.endsWith('.sql') || CONFIG_FILE.test(base)) {
+    return 1;
+  }
+
+  // A markdown file inside `src/` (a prompt template, say) is runtime input.
+  if ((base.endsWith('.md') && !directories.includes('src')) || directories[0] === 'docs') {
     return 3;
   }
 
   if (
-    directories.includes('__tests__') ||
-    directories.includes('__fixtures__') ||
+    TEST_DIRECTORIES.some((directory) => directories.includes(directory)) ||
     /\.(test|spec)\.[cm]?[jt]sx?$/.test(base)
   ) {
     return 2;
-  }
-
-  if (base.endsWith('.sql')) {
-    return 1;
   }
 
   if (directories.includes('src') || directories.includes('scripts')) {
@@ -150,7 +162,15 @@ export function reviewTier(path: string): ReviewTier {
 /** Files ordered by review tier; ties keep their original order. */
 function orderByTier(files: readonly ChangedFile[]): ChangedFile[] {
   return files
-    .map((file, index) => ({ file, index, tier: reviewTier(file.filename) }))
+    .map((file, index) => ({
+      file,
+      index,
+      // A moved file is as valuable as the stronger of its two paths.
+      tier: Math.min(
+        reviewTier(file.filename),
+        file.previousFilename ? reviewTier(file.previousFilename) : 4,
+      ),
+    }))
     .sort((a, b) => a.tier - b.tier || a.index - b.index)
     .map((entry) => entry.file);
 }

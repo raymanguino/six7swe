@@ -25,7 +25,14 @@ describe('reviewTier', () => {
     ['backend/src/a.spec.tsx', 2],
     ['README.md', 3],
     ['docs/architecture.txt', 3],
-    ['backend/drizzle/migrations/meta/0001_snapshot.json', 4],
+    ['backend/migrations/meta/_journal.json', 4],
+    ['.github/scripts/x.js', 1],
+    ['.github/workflows/ci.yml', 1],
+    ['backend/src/prompts/review.md', 0],
+    ['backend/src/a.test.mts', 2],
+    ['backend/src/__mocks__/a.ts', 2],
+    ['backend\\src\\services\\x.ts', 0],
+    ['pnpm-lock.yaml', 1],
     ['backend/src/__snapshots__/a.snap', 4],
   ])('classifies %s as tier %i', (path, tier) => {
     expect(reviewTier(path)).toBe(tier);
@@ -57,6 +64,21 @@ describe('buildReviewDiff ordering', () => {
     ]);
   });
 
+  it('tiers a moved file by the stronger of its two paths', () => {
+    const moved = (to: string): ChangedFile => ({
+      ...file(to),
+      previousFilename: 'backend/src/auth.ts',
+      status: 'renamed',
+    });
+    const diff = buildReviewDiff(
+      [file('package.json'), moved('docs/auth.ts'), moved('backend/src/__tests__/auth.ts')],
+      roomy,
+    );
+    const order = [...diff.matchAll(/^### (\S+)/gm)].map((m) => m[1]);
+
+    expect(order).toEqual(['docs/auth.ts', 'backend/src/__tests__/auth.ts', 'package.json']);
+  });
+
   it('replays PR #90: runtime source is kept ahead of tests when the budget is tight', () => {
     const big = '@@ -1 +1 @@\n' + '+x'.repeat(100);
     const tests = Array.from({ length: 8 }, (_, i) =>
@@ -79,6 +101,10 @@ describe('buildReviewDiff ordering', () => {
       expect(result.text).toContain(`### ${r.filename}`);
     }
     expect(result.text).not.toContain('t7.test.ts');
+    const firstTest = result.text.indexOf('### knowledge/src/__tests__');
+    expect(result.text.indexOf('### knowledge/src/app.ts')).toBeLessThan(
+      firstTest === -1 ? Infinity : firstTest,
+    );
     expect(result.coverage.omittedFiles).toBeGreaterThan(0);
   });
 });
