@@ -34,6 +34,7 @@ import {
   formatStatsLine,
   flattenText,
   gateBlocksMerge,
+  manualReviewReasons,
   prepareReviewDiff,
   REVIEW_DIFF_BUDGET,
   renderFailureBody,
@@ -290,6 +291,7 @@ async function main(): Promise<void> {
       changedFiles,
       mode,
       reviewCompleted: true,
+      coverage: diffCoverage,
     });
 
     logLine(
@@ -308,6 +310,7 @@ async function main(): Promise<void> {
       gate,
       commitSha: headSha,
       coverage: diffCoverage,
+      manualReviewReasons: manualReviewReasons({ changedFiles, coverage: diffCoverage }),
     });
 
     // A COMMENT can be updated in place: only the body changes, and the

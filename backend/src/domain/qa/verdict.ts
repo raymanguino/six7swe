@@ -11,7 +11,7 @@
  * code the workflow checks out from `base.sha`.
  */
 
-import { allTouchedPaths, hunkLineNumbers, type ChangedFile } from './diff';
+import { allTouchedPaths, hunkLineNumbers, type ChangedFile, type DiffCoverage } from './diff';
 
 /**
  * The GitHub review events this agent is allowed to post.
@@ -44,8 +44,9 @@ export type ReviewMode = 'comment-only' | 'enforce';
 /**
  * What the workflow should do with this review.
  *
- * `pass` and `fail` are the ordinary outcomes. `manual-review` means the
- * pull request touched something that judges it, so a human decides.
+ * `pass` and `fail` are the ordinary outcomes. `manual-review` means a
+ * human decides: the pull request touched something that judges it, or
+ * the model was not shown all of it, so a clean result cannot be trusted.
  * `fail-closed` means the review could not be completed at all - an API
  * error, a schema failure, a truncated model response - and must never be
  * mistaken for a clean review.
@@ -139,6 +140,42 @@ export interface GateInput {
   protectedPaths?: readonly string[];
   /** False when the review could not be completed. */
   reviewCompleted: boolean;
+  /**
+   * How much of the pull request the model was shown, from the diff
+   * builder. Required, so a caller cannot leave it out and have a partly
+   * read pull request pass.
+   */
+  coverage: DiffCoverage;
+}
+
+/** Why a pull request needs a human, when the gate says `manual-review`. */
+export type ManualReviewReason = 'protected-path' | 'partial-coverage';
+
+/**
+ * Every reason a human has to look, whether or not it decided the gate.
+ *
+ * `decideGate` stops at the first rule that applies, but the review body
+ * has to name every cause: a pull request that touches a protected path
+ * and was only partly read needs both said.
+ *
+ * Only omitted files count as partial coverage. A shortened patch also
+ * leaves part of a file unread, but any file over `perFileChars` (about
+ * 200 lines) trips it, and that is common. Shortened patches are reported
+ * in the body and do not change the outcome.
+ */
+export function manualReviewReasons(
+  input: Pick<GateInput, 'changedFiles' | 'coverage' | 'protectedPaths'>,
+): ManualReviewReason[] {
+  const reasons: ManualReviewReason[] = [];
+
+  if (touchesProtectedPath(allTouchedPaths(input.changedFiles), input.protectedPaths)) {
+    reasons.push('protected-path');
+  }
+  if (input.coverage.omittedFiles > 0) {
+    reasons.push('partial-coverage');
+  }
+
+  return reasons;
 }
 
 /**
@@ -150,7 +187,13 @@ export interface GateInput {
  *    mode. A broken agent is not a clean pull request.
  * 2. `comment-only` always passes. Phase 1 observes; it never blocks.
  * 3. A pull request that touches a protected path needs a human.
- * 4. Otherwise a blocking finding fails, and everything else passes.
+ * 4. A blocking finding in what was read fails.
+ * 5. A pull request the model was not shown in full needs a human.
+ * 6. Everything else passes.
+ *
+ * 4 comes before 5 on purpose. A defect found in the part that was read
+ * is a real failure and asks for changes; it is not downgraded to "a
+ * human should look". Partial coverage only downgrades a pass.
  *
  * The findings are sanitized here rather than being expected to arrive
  * sanitized, so a caller that forgets the step cannot have a hallucinated
@@ -165,15 +208,19 @@ export function decideGate(input: GateInput): GateOutcome {
     return 'pass';
   }
 
-  if (touchesProtectedPath(allTouchedPaths(input.changedFiles), input.protectedPaths)) {
+  const reasons = manualReviewReasons(input);
+
+  if (reasons.includes('protected-path')) {
     return 'manual-review';
   }
 
   const findings = sanitizeFindings(input.findings, input.changedFiles);
 
-  return findings.some((finding) => BLOCKING_SEVERITIES.includes(finding.severity))
-    ? 'fail'
-    : 'pass';
+  if (findings.some((finding) => BLOCKING_SEVERITIES.includes(finding.severity))) {
+    return 'fail';
+  }
+
+  return reasons.includes('partial-coverage') ? 'manual-review' : 'pass';
 }
 
 /**
@@ -188,15 +235,25 @@ export function decideReviewEvent(
   options: {
     changedFiles?: readonly ChangedFile[];
     protectedPaths?: readonly string[];
+    /** Defaults to every changed file having been shown. */
+    coverage?: DiffCoverage;
   } = {},
 ): ReviewEvent {
+  const changedFiles = options.changedFiles ?? [];
+
   return reviewEventForGate(
     decideGate({
       findings,
-      changedFiles: options.changedFiles ?? [],
+      changedFiles,
       mode,
       protectedPaths: options.protectedPaths,
       reviewCompleted: true,
+      coverage: options.coverage ?? {
+        totalFiles: changedFiles.length,
+        omittedFiles: 0,
+        shortenedPatches: 0,
+        patchChars: 0,
+      },
     }),
   );
 }
