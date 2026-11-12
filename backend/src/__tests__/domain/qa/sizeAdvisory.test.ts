@@ -92,7 +92,16 @@ describe('size advisory in the review body', () => {
     });
 
     expect(text.match(new RegExp(NOTE, 'g'))).toHaveLength(1);
-    expect(text.indexOf('Reviewed')).toBeLessThan(text.indexOf(NOTE));
+    const lines = text.split('\n');
+    const outcome = lines.findIndex((line) => line.startsWith('**Gate outcome:'));
+    const coverage = lines.findIndex((line) => /^Reviewed \d+ of \d+ files/.test(line));
+    const note = lines.findIndex((line) => line.includes(NOTE));
+    const summary = lines.findIndex((line) => line === 'Looks fine.');
+
+    expect(outcome).toBeGreaterThanOrEqual(0);
+    expect(outcome).toBeLessThan(coverage);
+    expect(coverage).toBeLessThan(note);
+    expect(note).toBeLessThan(summary);
     expect(text).toContain(
       '_This pull request is too large for a complete review (25 of 58 files read)._',
     );
