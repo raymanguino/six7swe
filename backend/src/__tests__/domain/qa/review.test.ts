@@ -32,6 +32,7 @@ function body(overrides: Partial<ReviewBodyInput> = {}): string {
     gate: 'pass',
     commitSha: 'abc123',
     coverage: FULL_COVERAGE,
+    manualReviewReasons: [],
     ...overrides,
   });
 }
@@ -110,6 +111,49 @@ describe('renderReviewBody', () => {
     const coverage = rendered.indexOf('Reviewed 25 of 58 files. 1 patch shortened.');
     expect(coverage).toBeGreaterThan(rendered.indexOf('**Gate outcome:'));
     expect(coverage).toBeLessThan(rendered.indexOf('The summary.'));
+  });
+
+  it('says a partial review needs a human because files were not shown', () => {
+    const rendered = body({
+      gate: 'manual-review',
+      coverage: PARTIAL_COVERAGE,
+      manualReviewReasons: ['partial-coverage'],
+    });
+
+    expect(rendered).toContain(
+      'Reviewed 25 of 58 files. 33 file(s) were not shown to the model, so a clean result cannot be trusted.',
+    );
+    expect(rendered).not.toContain('judges or runs the review');
+  });
+
+  it('says a protected-path review needs a human, with the plain coverage line', () => {
+    const rendered = body({ gate: 'manual-review', manualReviewReasons: ['protected-path'] });
+
+    expect(rendered).toContain('Reviewed all 3 files.');
+    expect(rendered).toContain('changes a path that judges or runs the review');
+    expect(rendered).not.toContain('cannot be trusted');
+  });
+
+  it('names both causes when both apply', () => {
+    const rendered = body({
+      gate: 'manual-review',
+      coverage: PARTIAL_COVERAGE,
+      manualReviewReasons: ['protected-path', 'partial-coverage'],
+    });
+
+    expect(rendered).toContain('33 file(s) were not shown to the model');
+    expect(rendered).toContain('changes a path that judges or runs the review');
+  });
+
+  it('gives no manual-review reason when the gate is something else', () => {
+    const rendered = body({
+      gate: 'fail',
+      coverage: PARTIAL_COVERAGE,
+      manualReviewReasons: ['partial-coverage'],
+    });
+
+    expect(rendered).toContain('Reviewed 25 of 58 files. 1 patch shortened.');
+    expect(rendered).not.toContain('cannot be trusted');
   });
 
   it('states full coverage on a complete review', () => {

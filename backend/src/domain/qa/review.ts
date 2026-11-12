@@ -22,6 +22,7 @@ import type { DiffCoverage } from './diff';
 import {
   MAX_REPORTED_FINDINGS,
   type GateOutcome,
+  type ManualReviewReason,
   type ReviewFinding,
   type ReviewMode,
 } from './verdict';
@@ -149,6 +150,8 @@ export interface ReviewBodyInput {
   commitSha: string;
   /** How much of the pull request the model was shown, from the diff builder. */
   coverage: DiffCoverage;
+  /** Why a human has to look. Only rendered when the gate is `manual-review`. */
+  manualReviewReasons: readonly ManualReviewReason[];
 }
 
 function count(n: number, singular: string, plural: string): string {
@@ -176,6 +179,35 @@ export function describeCoverage(coverage: DiffCoverage): string {
 }
 
 /**
+ * The coverage line, and why a human has to look when the gate says so.
+ *
+ * `manual-review` has two causes, and the reader has to be told which one
+ * applies - or both. The coverage cause extends the coverage line rather
+ * than repeating it.
+ */
+function coverageAndReasons(input: ReviewBodyInput): string[] {
+  const reasons = input.gate === 'manual-review' ? input.manualReviewReasons : [];
+  const lines: string[] = [];
+
+  if (reasons.includes('partial-coverage')) {
+    const reviewed = input.coverage.totalFiles - input.coverage.omittedFiles;
+    lines.push(
+      `Reviewed ${reviewed} of ${input.coverage.totalFiles} files. ${input.coverage.omittedFiles} file(s) were not shown to the model, so a clean result cannot be trusted.`,
+    );
+  } else {
+    lines.push(describeCoverage(input.coverage));
+  }
+
+  if (reasons.includes('protected-path')) {
+    lines.push(
+      'This pull request changes a path that judges or runs the review, so a human decides.',
+    );
+  }
+
+  return lines;
+}
+
+/**
  * Renders the review body.
  *
  * The gate outcome comes first, before anything the model wrote. The
@@ -194,7 +226,7 @@ export function renderReviewBody(input: ReviewBodyInput): string {
     '',
     `**Gate outcome: \`${input.gate}\`**`,
     `Reviewed commit: \`${escapeMarkdown(input.commitSha)}\``,
-    describeCoverage(input.coverage),
+    ...coverageAndReasons(input),
     '',
   ];
 
