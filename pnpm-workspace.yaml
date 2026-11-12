@@ -1,7 +1,8 @@
 packages:
   - frontend
   - backend
-  - packages
+  - knowledge
+  - packages/*
 
 # Keep this list to overrides that change the resolved tree. A security bump for
 # a transitive dependency only needs an override while the lockfile pins the

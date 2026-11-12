@@ -13,3 +13,4 @@ Portfolio + job-matching SWE platform. Full architecture in `docs/architecture.m
 - `portfolioService.ts` caches in memory; TTL via `PORTFOLIO_CACHE_TTL_MS` (default 10 min)
 - Lerna was removed: it was never used, and it pulled in `nx` and `axios`, which accounted for most of the dependency advisories. pnpm workspace scripts are authoritative
 - `packages/` is empty; no shared packages yet
+- **Knowledge service** (`knowledge/`): a separate ESM deployable. It holds the owner's background docs and serves vector retrieval (pgvector) for chat and job matching; see `knowledge/README.md`. It owns the `knowledge` + `knowledge_migrations` Postgres schemas and never touches `public`. Its migrations are applied with `pnpm --filter @six7swe/knowledge db:migrate` (not drizzle-kit migrate, which swallows errors). `EMBEDDER=hashing` + `FILE_STORE=local` run it offline.

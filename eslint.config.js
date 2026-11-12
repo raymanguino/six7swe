@@ -112,6 +112,40 @@ export default [
     },
   },
   {
+    // The knowledge service is an ES module package. One tsconfig covers its
+    // sources, tests, scripts and config files, so a single block lints all
+    // of them with type information. Vitest APIs are imported, not global.
+    files: ['knowledge/**/*.ts'],
+    languageOptions: {
+      parser: tsparser,
+      parserOptions: {
+        ecmaVersion: 2022,
+        sourceType: 'module',
+        project: path.join(rootDir, 'knowledge/tsconfig.test.json'),
+      },
+      globals: {
+        ...globals.node,
+      },
+    },
+    plugins: {
+      '@typescript-eslint': tseslint,
+    },
+    rules: {
+      ...js.configs.recommended.rules,
+      ...tseslint.configs.recommended.rules,
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', ignoreRestSiblings: true },
+      ],
+      '@typescript-eslint/no-explicit-any': 'error',
+      '@typescript-eslint/no-floating-promises': 'error',
+      // TypeScript already rejects undefined names, and this rule does not
+      // understand type-only globals such as `NodeJS.ProcessEnv`.
+      'no-undef': 'off',
+      'no-console': ['warn', { allow: ['warn', 'error'] }],
+    },
+  },
+  {
     files: ['frontend/**/*.ts', 'frontend/**/*.tsx'],
     languageOptions: {
       parser: tsparser,

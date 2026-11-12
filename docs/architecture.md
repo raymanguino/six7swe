@@ -189,6 +189,27 @@ Enums: `job_source`, `refresh_update_status`, `refresh_update_status_step`,
 reads `portfolio_profile` and `content_sections` through Drizzle and caches the
 result in memory for `PORTFOLIO_CACHE_TTL_MS` (default 10 minutes).
 
+## Knowledge Service
+
+`knowledge/` is a separate deployable: Fastify, Drizzle and pgvector. It holds
+the owner's professional background (resumes and supporting pdf, md and txt
+files) as embedded chunks. It is replacing both the portfolio tables above and
+the never-wired `PORTFOLIO_DATA_SOURCE=mcp` path. Until the consumers are
+switched over, the backend still reads the portfolio tables. Full details are in
+`knowledge/README.md`.
+
+- **Schemas.** The service owns the `knowledge` schema, with `documents`,
+  `chunks` and `corpus_state`, and keeps its own migration ledger in
+  `knowledge_migrations`. Its `schemaFilter`, and the backend's `db:reset`
+  dropping only `public` and `drizzle`, keep the two products from managing
+  each other's tables.
+- **Ingestion.** Ingestion is asynchronous and serial: extract the text, chunk
+  it by headings or by windows, embed it, then commit in one transaction.
+  Every change bumps `corpus_version`, which callers use as a cache key and a
+  staleness signal.
+- **Access.** Callers authenticate with the `x-knowledge-key` header. Raw files
+  live in the private `portfolio-files` Storage bucket.
+
 ## Job Refresh Pipeline
 
 ```mermaid
