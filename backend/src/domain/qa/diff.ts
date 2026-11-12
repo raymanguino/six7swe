@@ -98,6 +98,93 @@ export const PATCH_SKIPPED_MARKER = `${DIFF_NOTICE_PREFIX} patch not included]`;
  */
 export const NO_PATCH_MARKER = `${DIFF_NOTICE_PREFIX} no patch available]`;
 
+/**
+ * How much a path is worth reading when the budget cannot cover everything.
+ * Lower is more valuable. A pure function of the path, meant to be adjusted.
+ *
+ * - 0: runtime source (`src/**`, `scripts/**`) that is not a test
+ * - 1: schema, migrations and configuration (also the default for any path
+ *   no other tier claims)
+ * - 2: tests and fixtures
+ * - 3: documentation
+ * - 4: generated files (migration metadata, snapshots)
+ *
+ * The order the rules are checked in is load-bearing: tier 4 first, then
+ * `.github/**`, `.sql` and named config files (1; the latter two only
+ * outside test directories, so fixtures stay tier 2), then documentation
+ * (3), then tests (2), then `src/` and `scripts/` (0), and anything left
+ * is 1. A `.md` file under `src/` skips the documentation rule and stays 0.
+ */
+export type ReviewTier = 0 | 1 | 2 | 3 | 4;
+
+const CONFIG_FILE = /^(package\.json|tsconfig[^/]*\.json|drizzle\.config\.ts|railway\.json)$/;
+
+const TEST_DIRECTORIES: readonly string[] = [
+  '__tests__',
+  '__fixtures__',
+  '__mocks__',
+  'test',
+  'tests',
+  'fixtures',
+  'e2e',
+];
+
+export function reviewTier(path: string): ReviewTier {
+  const segments = path.replace(/\\/g, '/').split('/');
+  const base = segments[segments.length - 1] ?? path;
+  const directories = segments.slice(0, -1);
+
+  const inTestDirectory = TEST_DIRECTORIES.some((directory) => directories.includes(directory));
+
+  if (
+    // Migration metadata is data (json, sql); a script in such a directory is code.
+    (directories.some((d, i) => d === 'migrations' && directories[i + 1] === 'meta') &&
+      !/\.[cm]?[jt]sx?$/.test(base)) ||
+    directories.includes('__snapshots__') ||
+    base.endsWith('.snap')
+  ) {
+    return 4;
+  }
+
+  if (
+    directories[0] === '.github' ||
+    (!inTestDirectory && (base.endsWith('.sql') || CONFIG_FILE.test(base)))
+  ) {
+    return 1;
+  }
+
+  // A markdown file inside `src/` (a prompt template, say) is runtime input.
+  if ((base.endsWith('.md') && !directories.includes('src')) || directories[0] === 'docs') {
+    return 3;
+  }
+
+  if (inTestDirectory || /\.(test|spec)\.[cm]?[jt]sx?$/.test(base)) {
+    return 2;
+  }
+
+  if (directories.includes('src') || directories.includes('scripts')) {
+    return 0;
+  }
+
+  return 1;
+}
+
+/** Files ordered by review tier; ties keep their original order. */
+function orderByTier(files: readonly ChangedFile[]): ChangedFile[] {
+  return files
+    .map((file, index) => ({
+      file,
+      index,
+      // A moved file is as valuable as the stronger of its two paths.
+      tier: Math.min(
+        reviewTier(file.filename),
+        file.previousFilename ? reviewTier(file.previousFilename) : 4,
+      ),
+    }))
+    .sort((a, b) => a.tier - b.tier || a.index - b.index)
+    .map((entry) => entry.file);
+}
+
 function isLockfile(filename: string): boolean {
   const base = filename.split('/').pop() ?? filename;
   return LOCKFILES.includes(base);
@@ -335,7 +422,9 @@ export interface ReviewDiff {
 /**
  * Builds the model-ready diff for a pull request, with its coverage.
  *
- * Every file is listed in order with a short status header. Lockfiles are
+ * Every file is listed with a short status header, ordered by review tier
+ * (see `reviewTier`) and then by the order given, so that when the budget is
+ * tight runtime source is read before tests, docs and generated files. Lockfiles are
  * listed without their patch, remaining patches are truncated to
  * `perFileChars`, and the whole thing is truncated to `totalChars`.
  * Whenever something is dropped the output says so, so the model can tell
@@ -346,7 +435,7 @@ export interface ReviewDiff {
  * first one was large would hide the small files behind it.
  */
 export function prepareReviewDiff(files: readonly ChangedFile[], budget: DiffBudget): ReviewDiff {
-  const blocks = buildBlocks(files, budget);
+  const blocks = buildBlocks(orderByTier(files), budget);
 
   const patchChars = files
     .filter((file) => !budget.skipPatchesFor.includes(file.filename) && !isLockfile(file.filename))

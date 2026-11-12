@@ -360,8 +360,8 @@ describe('prepareReviewDiff', () => {
     const files: ChangedFile[] = [
       file({ filename: 'pnpm-lock.yaml', patch: 'l'.repeat(50_000) }),
       file({ filename: 'logo.png', patch: undefined }),
-      file({ filename: 'big-1.ts', patch: patch(20_000) }),
-      file({ filename: 'big-2.ts', patch: patch(20_000) }),
+      file({ filename: 'src/big-1.ts', patch: patch(20_000) }),
+      file({ filename: 'src/big-2.ts', patch: patch(20_000) }),
       ...Array.from({ length: 54 }, (_, i) =>
         file({ filename: `src/f${i}.ts`, patch: patch(2_000) }),
       ),
