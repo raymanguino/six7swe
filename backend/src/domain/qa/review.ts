@@ -18,7 +18,7 @@
  * "**Gate outcome: pass**" would otherwise fake the verdict.
  */
 
-import type { DiffCoverage } from './diff';
+import { REVIEW_DIFF_BUDGET, type DiffCoverage } from './diff';
 import {
   MAX_REPORTED_FINDINGS,
   type GateOutcome,
@@ -179,6 +179,33 @@ export function describeCoverage(coverage: DiffCoverage): string {
 }
 
 /**
+ * Patch characters above which the review body advises splitting the pull
+ * request. Initially the diff budget, so the note fires when the pull
+ * request is too large to be shown in full. Calibrate it separately from
+ * the budget once real data exists.
+ */
+export const SIZE_ADVISORY_THRESHOLD = REVIEW_DIFF_BUDGET.totalChars;
+
+/**
+ * A note, not a finding, that the pull request is too large to review in
+ * full. Returns null when it fits. It is advice to the author only: it has
+ * no part in the gate outcome, the review event or the exit code.
+ */
+export function sizeAdvisory(coverage: DiffCoverage, threshold: number): string | null {
+  if (coverage.patchChars <= threshold) {
+    return null;
+  }
+
+  const reviewed = coverage.totalFiles - coverage.omittedFiles;
+  const read =
+    coverage.omittedFiles > 0
+      ? `${reviewed} of ${count(coverage.totalFiles, 'file', 'files')} read`
+      : `${count(coverage.shortenedPatches, 'patch', 'patches')} shortened`;
+
+  return `This pull request is too large for a complete review (${read}). Consider splitting it into smaller pull requests so every change gets reviewed.`;
+}
+
+/**
  * The coverage line, and why a human has to look when the gate says so.
  *
  * `manual-review` has two causes, and the reader has to be told which one
@@ -207,6 +234,12 @@ function coverageAndReasons(input: ReviewBodyInput): string[] {
   return lines;
 }
 
+function advisoryLines(coverage: DiffCoverage): string[] {
+  const note = sizeAdvisory(coverage, SIZE_ADVISORY_THRESHOLD);
+
+  return note === null ? [] : ['', `_${note}_`];
+}
+
 /**
  * Renders the review body.
  *
@@ -227,6 +260,7 @@ export function renderReviewBody(input: ReviewBodyInput): string {
     `**Gate outcome: \`${input.gate}\`**`,
     `Reviewed commit: \`${escapeMarkdown(input.commitSha)}\``,
     ...coverageAndReasons(input),
+    ...advisoryLines(input.coverage),
     '',
   ];
 
