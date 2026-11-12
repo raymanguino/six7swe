@@ -98,6 +98,63 @@ export const PATCH_SKIPPED_MARKER = `${DIFF_NOTICE_PREFIX} patch not included]`;
  */
 export const NO_PATCH_MARKER = `${DIFF_NOTICE_PREFIX} no patch available]`;
 
+/**
+ * How much a path is worth reading when the budget cannot cover everything.
+ * Lower is more valuable. A pure function of the path, meant to be adjusted.
+ *
+ * - 0: runtime source (`src/**`, `scripts/**`) that is not a test
+ * - 1: schema, migrations and configuration (also the default for any path
+ *   no other tier claims)
+ * - 2: tests and fixtures
+ * - 3: documentation
+ * - 4: generated files (migration metadata, snapshots)
+ */
+export type ReviewTier = 0 | 1 | 2 | 3 | 4;
+
+export function reviewTier(path: string): ReviewTier {
+  const segments = path.split('/');
+  const base = segments[segments.length - 1] ?? path;
+  const directories = segments.slice(0, -1);
+
+  if (
+    (directories.includes('migrations') && directories.includes('meta')) ||
+    directories.includes('__snapshots__') ||
+    base.endsWith('.snap')
+  ) {
+    return 4;
+  }
+
+  if (base.endsWith('.md') || directories[0] === 'docs') {
+    return 3;
+  }
+
+  if (
+    directories.includes('__tests__') ||
+    directories.includes('__fixtures__') ||
+    /\.(test|spec)\.[cm]?[jt]sx?$/.test(base)
+  ) {
+    return 2;
+  }
+
+  if (base.endsWith('.sql')) {
+    return 1;
+  }
+
+  if (directories.includes('src') || directories.includes('scripts')) {
+    return 0;
+  }
+
+  return 1;
+}
+
+/** Files ordered by review tier; ties keep their original order. */
+function orderByTier(files: readonly ChangedFile[]): ChangedFile[] {
+  return files
+    .map((file, index) => ({ file, index, tier: reviewTier(file.filename) }))
+    .sort((a, b) => a.tier - b.tier || a.index - b.index)
+    .map((entry) => entry.file);
+}
+
 function isLockfile(filename: string): boolean {
   const base = filename.split('/').pop() ?? filename;
   return LOCKFILES.includes(base);
@@ -335,7 +392,9 @@ export interface ReviewDiff {
 /**
  * Builds the model-ready diff for a pull request, with its coverage.
  *
- * Every file is listed in order with a short status header. Lockfiles are
+ * Every file is listed with a short status header, ordered by review tier
+ * (see `reviewTier`) and then by the order given, so that when the budget is
+ * tight runtime source is read before tests, docs and generated files. Lockfiles are
  * listed without their patch, remaining patches are truncated to
  * `perFileChars`, and the whole thing is truncated to `totalChars`.
  * Whenever something is dropped the output says so, so the model can tell
@@ -346,7 +405,7 @@ export interface ReviewDiff {
  * first one was large would hide the small files behind it.
  */
 export function prepareReviewDiff(files: readonly ChangedFile[], budget: DiffBudget): ReviewDiff {
-  const blocks = buildBlocks(files, budget);
+  const blocks = buildBlocks(orderByTier(files), budget);
 
   const patchChars = files
     .filter((file) => !budget.skipPatchesFor.includes(file.filename) && !isLockfile(file.filename))
