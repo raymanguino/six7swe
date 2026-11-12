@@ -18,7 +18,7 @@
  * "**Gate outcome: pass**" would otherwise fake the verdict.
  */
 
-import { REVIEW_DIFF_BUDGET, type DiffCoverage } from './diff';
+import type { DiffCoverage } from './diff';
 import {
   MAX_REPORTED_FINDINGS,
   type GateOutcome,
@@ -154,6 +154,10 @@ export interface ReviewBodyInput {
   manualReviewReasons: readonly ManualReviewReason[];
 }
 
+function reviewedFiles(coverage: DiffCoverage): number {
+  return coverage.totalFiles - coverage.omittedFiles;
+}
+
 function count(n: number, singular: string, plural: string): string {
   return `${n} ${n === 1 ? singular : plural}`;
 }
@@ -165,7 +169,7 @@ function count(n: number, singular: string, plural: string): string {
  * so a reader can tell "found nothing" from "read less than half".
  */
 export function describeCoverage(coverage: DiffCoverage): string {
-  const reviewed = coverage.totalFiles - coverage.omittedFiles;
+  const reviewed = reviewedFiles(coverage);
   const files =
     coverage.omittedFiles > 0
       ? `Reviewed ${reviewed} of ${count(coverage.totalFiles, 'file', 'files')}.`
@@ -179,30 +183,29 @@ export function describeCoverage(coverage: DiffCoverage): string {
 }
 
 /**
- * Patch characters above which the review body advises splitting the pull
- * request. Initially the diff budget, so the note fires when the pull
- * request is too large to be shown in full. Calibrate it separately from
- * the budget once real data exists.
+ * Omitted files tolerated before advising a split. 0 means the note fires
+ * exactly when the diff budget forces files out of the review, so the
+ * initial threshold equals the budget by construction. Revisit from
+ * qa:calibration data (#59); the unit is a file count, so tuning it from
+ * size data later will change the constant's meaning.
  */
-export const SIZE_ADVISORY_THRESHOLD = REVIEW_DIFF_BUDGET.totalChars;
+export const SIZE_ADVISORY_THRESHOLD = 0;
 
 /**
  * A note, not a finding, that the pull request is too large to review in
- * full. Returns null when it fits. It is advice to the author only: it has
- * no part in the gate outcome, the review event or the exit code.
+ * full. Returns null unless more than `threshold` files were omitted from
+ * the diff. It is advice to the author only: it has no part in the gate
+ * outcome, the review event or the exit code.
  */
 export function sizeAdvisory(coverage: DiffCoverage, threshold: number): string | null {
-  if (coverage.patchChars <= threshold) {
+  if (coverage.omittedFiles <= threshold) {
     return null;
   }
 
-  const reviewed = coverage.totalFiles - coverage.omittedFiles;
-  const read =
-    coverage.omittedFiles > 0
-      ? `${reviewed} of ${count(coverage.totalFiles, 'file', 'files')} read`
-      : `${count(coverage.shortenedPatches, 'patch', 'patches')} shortened`;
-
-  return `This pull request is too large for a complete review (${read}). Consider splitting it into smaller pull requests so every change gets reviewed.`;
+  return [
+    `This pull request is too large for a complete review (${reviewedFiles(coverage)} of ${coverage.totalFiles} files read).`,
+    'Consider splitting it, for example schema, ingestion and API as separate pull requests.',
+  ].join('\n');
 }
 
 /**
@@ -217,7 +220,7 @@ function coverageAndReasons(input: ReviewBodyInput): string[] {
   const lines: string[] = [];
 
   if (reasons.includes('partial-coverage')) {
-    const reviewed = input.coverage.totalFiles - input.coverage.omittedFiles;
+    const reviewed = reviewedFiles(input.coverage);
     lines.push(
       `Reviewed ${reviewed} of ${input.coverage.totalFiles} files. ${input.coverage.omittedFiles} file(s) were not shown to the model, so a clean result cannot be trusted.`,
     );
@@ -237,7 +240,7 @@ function coverageAndReasons(input: ReviewBodyInput): string[] {
 function advisoryLines(coverage: DiffCoverage): string[] {
   const note = sizeAdvisory(coverage, SIZE_ADVISORY_THRESHOLD);
 
-  return note === null ? [] : ['', `_${note}_`];
+  return note === null ? [] : ['', ...note.split('\n').map((line) => `_${line}_`)];
 }
 
 /**

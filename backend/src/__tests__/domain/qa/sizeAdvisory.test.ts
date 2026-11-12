@@ -1,11 +1,18 @@
-import { REVIEW_DIFF_BUDGET, type DiffCoverage } from '../../../domain/qa/diff';
+import type { DiffCoverage } from '../../../domain/qa/diff';
 import {
+  renderFailureBody,
   renderReviewBody,
   SIZE_ADVISORY_THRESHOLD,
   sizeAdvisory,
   type ReviewBodyInput,
 } from '../../../domain/qa/review';
-import { decideGate, type GateInput } from '../../../domain/qa/verdict';
+import {
+  decideGate,
+  decideReviewEvent,
+  gateBlocksMerge,
+  type GateInput,
+  type ReviewMode,
+} from '../../../domain/qa/verdict';
 
 const SMALL: DiffCoverage = {
   totalFiles: 3,
@@ -33,59 +40,106 @@ function body(coverage: DiffCoverage, overrides: Partial<ReviewBodyInput> = {}):
   });
 }
 
+const MODES: readonly ReviewMode[] = ['comment-only', 'enforce'];
+const NOTE = 'too large for a complete review';
+
 describe('sizeAdvisory', () => {
-  it('starts out equal to the diff budget', () => {
-    expect(SIZE_ADVISORY_THRESHOLD).toBe(REVIEW_DIFF_BUDGET.totalChars);
+  it('fires exactly when files are omitted: the threshold of 0 tolerates none', () => {
+    expect(SIZE_ADVISORY_THRESHOLD).toBe(0);
+    expect(
+      sizeAdvisory(
+        { ...SMALL, totalFiles: 8, omittedFiles: 1, patchChars: 59_000 },
+        SIZE_ADVISORY_THRESHOLD,
+      ),
+    ).not.toBeNull();
   });
 
-  it('is null at or under the threshold', () => {
-    expect(sizeAdvisory(SMALL, 1_000)).toBeNull();
-    expect(sizeAdvisory({ ...SMALL, patchChars: 1_000 }, 1_000)).toBeNull();
+  it('gives no note when every file was shown', () => {
+    expect(sizeAdvisory(SMALL, SIZE_ADVISORY_THRESHOLD)).toBeNull();
   });
 
-  it('suggests splitting and says how many files were read', () => {
-    const note = sizeAdvisory(LARGE, SIZE_ADVISORY_THRESHOLD);
+  it('gives no note when patches were only shortened', () => {
+    const shortened = { totalFiles: 7, omittedFiles: 0, shortenedPatches: 3, patchChars: 90_000 };
 
-    expect(note).toContain('too large for a complete review (25 of 58 files read)');
-    expect(note).toContain('Consider splitting');
+    expect(sizeAdvisory(shortened, SIZE_ADVISORY_THRESHOLD)).toBeNull();
   });
 
-  it('does not claim omitted files when only patches were shortened', () => {
-    const note = sizeAdvisory(
-      { totalFiles: 2, omittedFiles: 0, shortenedPatches: 2, patchChars: 90_000 },
-      SIZE_ADVISORY_THRESHOLD,
+  it('respects a higher threshold', () => {
+    expect(sizeAdvisory(LARGE, 33)).toBeNull();
+    expect(sizeAdvisory(LARGE, 32)).not.toBeNull();
+  });
+
+  it('is exactly two lines with the files read', () => {
+    expect(sizeAdvisory(LARGE, SIZE_ADVISORY_THRESHOLD)).toBe(
+      'This pull request is too large for a complete review (25 of 58 files read).\n' +
+        'Consider splitting it, for example schema, ingestion and API as separate pull requests.',
     );
-
-    expect(note).toContain('2 patches shortened');
-    expect(note).not.toContain('files read');
   });
 });
 
 describe('size advisory in the review body', () => {
-  it('appears once, below the coverage line, for a large pull request', () => {
-    const text = body(LARGE, { gate: 'manual-review', manualReviewReasons: ['partial-coverage'] });
+  it.each(MODES)('appears once, below the coverage line, in %s mode', (mode) => {
+    const gate = decideGate({
+      findings: [],
+      changedFiles: [],
+      mode,
+      reviewCompleted: true,
+      coverage: LARGE,
+    });
+    const text = body(LARGE, {
+      gate,
+      manualReviewReasons: gate === 'manual-review' ? ['partial-coverage'] : [],
+    });
 
-    expect(text.indexOf('Reviewed 25 of 58 files')).toBeLessThan(text.indexOf('too large'));
-    expect(text.match(/too large for a complete review/g)).toHaveLength(1);
+    expect(text.match(new RegExp(NOTE, 'g'))).toHaveLength(1);
+    expect(text.indexOf('Reviewed')).toBeLessThan(text.indexOf(NOTE));
+    expect(text).toContain(
+      '_This pull request is too large for a complete review (25 of 58 files read)._',
+    );
+    expect(text).toContain(
+      '_Consider splitting it, for example schema, ingestion and API as separate pull requests._',
+    );
   });
 
-  it('is absent for a small pull request', () => {
-    expect(body(SMALL)).not.toContain('too large');
+  it('is absent for a pull request that fits and for shortened patches', () => {
+    expect(body(SMALL)).not.toContain(NOTE);
+    expect(
+      body({ totalFiles: 7, omittedFiles: 0, shortenedPatches: 3, patchChars: 90_000 }),
+    ).not.toContain(NOTE);
   });
 
-  it('does not take part in the gate outcome in either mode', () => {
-    for (const mode of ['comment-only', 'enforce'] as const) {
+  it('is absent from a failure body', () => {
+    for (const mode of MODES) {
+      expect(renderFailureBody('model unavailable', 'abc123', mode)).not.toContain(NOTE);
+    }
+  });
+});
+
+describe('the advisory and the gate', () => {
+  const fits = SMALL;
+  const oversized = { ...LARGE };
+
+  it.each([
+    ['comment-only', 'pass', 'COMMENT', false],
+    ['enforce', 'manual-review', 'COMMENT', true],
+  ] as const)(
+    'omitted files give the same outcome, event and merge decision in %s mode',
+    (mode, outcome, event, blocks) => {
       const input: GateInput = {
         findings: [],
         changedFiles: [],
         mode,
         reviewCompleted: true,
-        coverage: SMALL,
+        coverage: oversized,
       };
 
-      expect(decideGate({ ...input, coverage: { ...SMALL, patchChars: 500_000 } })).toBe(
-        decideGate(input),
-      );
-    }
-  });
+      // The advisory is derived from coverage alone and is never an input to
+      // the gate, so the verdict must match what partial coverage alone gives.
+      expect(sizeAdvisory(oversized, SIZE_ADVISORY_THRESHOLD)).not.toBeNull();
+      expect(decideGate(input)).toBe(outcome);
+      expect(decideReviewEvent([], mode, { coverage: oversized })).toBe(event);
+      expect(gateBlocksMerge(decideGate(input), mode)).toBe(blocks);
+      expect(decideGate({ ...input, coverage: fits })).toBe('pass');
+    },
+  );
 });
