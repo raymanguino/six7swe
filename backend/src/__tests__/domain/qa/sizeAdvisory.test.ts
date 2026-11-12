@@ -7,7 +7,12 @@ import {
 } from '../../../domain/qa/review';
 import { decideGate, type GateInput } from '../../../domain/qa/verdict';
 
-const SMALL: DiffCoverage = { totalFiles: 3, omittedFiles: 0, shortenedPatches: 0, patchChars: 900 };
+const SMALL: DiffCoverage = {
+  totalFiles: 3,
+  omittedFiles: 0,
+  shortenedPatches: 0,
+  patchChars: 900,
+};
 const LARGE: DiffCoverage = {
   totalFiles: 58,
   omittedFiles: 33,
