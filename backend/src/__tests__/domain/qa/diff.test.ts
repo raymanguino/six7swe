@@ -391,6 +391,41 @@ describe('prepareReviewDiff', () => {
     expect(coverage.patchChars).toBe(0);
   });
 
+  it('does not count a lockfile or a file with no patch dropped by the budget', () => {
+    // The reviewable file fills the budget, so the two blocks after it do
+    // not fit. Neither carried a patch, so neither is an omission.
+    const { text, coverage } = prepareReviewDiff(
+      [
+        file({ filename: 'a.ts', patch: 'x'.repeat(250) }),
+        file({ filename: 'pnpm-lock.yaml', patch: 'l'.repeat(10_000) }),
+        file({ filename: 'logo.png', patch: undefined }),
+      ],
+      { ...BUDGET, perFileChars: 1_000, totalChars: 300 },
+    );
+
+    expect(text).not.toContain('pnpm-lock.yaml');
+    expect(text).not.toContain('logo.png');
+    expect(coverage.omittedFiles).toBe(0);
+  });
+
+  it('does not count a lockfile trimmed off the end to make room for the notices', () => {
+    const files = [
+      file({ filename: 'a.ts', patch: 'x'.repeat(200) }),
+      file({ filename: 'pnpm-lock.yaml', patch: 'l'.repeat(10_000) }),
+    ];
+    const { text } = prepareReviewDiff(files, { ...BUDGET, perFileChars: 100, totalChars: 1_000 });
+    const withLockfile = text.length;
+
+    // A budget that fits both blocks but not the notices they produce.
+    const { coverage } = prepareReviewDiff(files, {
+      ...BUDGET,
+      perFileChars: 100,
+      totalChars: withLockfile - 1,
+    });
+
+    expect(coverage.omittedFiles).toBe(0);
+  });
+
   it('counts only the shortened patches that were kept', () => {
     const { coverage } = prepareReviewDiff(
       [

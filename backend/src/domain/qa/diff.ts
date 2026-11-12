@@ -243,6 +243,17 @@ function buildBlocks(files: readonly ChangedFile[], budget: DiffBudget): DiffBlo
   return blocks;
 }
 
+/**
+ * Whether dropping this block loses something worth reviewing.
+ *
+ * Lockfiles and files with no patch carry no patch text, so losing their
+ * block to the budget is not an omission. Returns 0 or 1 so callers can add
+ * it straight to the counter.
+ */
+function countsAsOmission(block: DiffBlock): number {
+  return block.skipped || block.missing ? 0 : 1;
+}
+
 function plural(count: number, singular: string, pluralForm: string): string {
   return count === 1 ? singular : pluralForm;
 }
@@ -349,7 +360,7 @@ export function prepareReviewDiff(files: readonly ChangedFile[], budget: DiffBud
     const cost = block.text.length + (kept.length > 0 ? 1 : 0);
 
     if (used + cost > budget.totalChars) {
-      omitted += 1;
+      omitted += countsAsOmission(block);
       continue;
     }
 
@@ -384,8 +395,10 @@ export function prepareReviewDiff(files: readonly ChangedFile[], budget: DiffBud
       return result(noticeText.slice(0, budget.totalChars));
     }
 
-    kept.pop();
-    omitted += 1;
+    const dropped = kept.pop();
+    if (dropped) {
+      omitted += countsAsOmission(dropped);
+    }
   }
 }
 
