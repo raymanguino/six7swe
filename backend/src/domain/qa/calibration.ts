@@ -16,8 +16,13 @@ import { SEVERITY_ORDER, type FindingSeverity, type GateOutcome, type ReviewMode
 /** Marks the stats line in the workflow log. */
 export const QA_STATS_PREFIX = 'QA_STATS ';
 
-/** The version of the stats line. Bump it when a field changes meaning. */
-const STATS_VERSION = 1;
+/**
+ * The version of the stats line. Bump it when a field changes meaning.
+ *
+ * Version 2 added the coverage counts. Version 1 lines are still read,
+ * with the coverage fields as null, so the runs logged before still count.
+ */
+export const QA_STATS_VERSION = 2;
 
 /** The tokens one review used. `reasoning` is null when MiniMax does not report it. */
 export interface RunTokens {
@@ -28,7 +33,7 @@ export interface RunTokens {
 
 /** What one run of the agent did. */
 export interface QaRunStats {
-  v: typeof STATS_VERSION;
+  v: 1 | typeof QA_STATS_VERSION;
   pr: number;
   sha: string;
   mode: ReviewMode;
@@ -37,6 +42,15 @@ export interface QaRunStats {
   backendFiles: number;
   frontendFiles: number;
   diffChars: number;
+  /** Files dropped from the diff for budget. Null on a v1 line or when the diff was never built. */
+  omittedFiles: number | null;
+  /** Files shown with a shortened patch. Null as for `omittedFiles`. */
+  shortenedPatches: number | null;
+  /**
+   * Patch characters before the budget, lockfiles excluded. `diffChars` is
+   * capped at the budget; this is not. Null as for `omittedFiles`.
+   */
+  patchChars: number | null;
   /** How many findings the model returned. Null when the review failed. */
   reported: number | null;
   /** How many findings survived sanitizing, by severity. Null when the review failed. */
@@ -74,7 +88,7 @@ export function countBySeverity(
 }
 
 export function formatStatsLine(stats: Omit<QaRunStats, 'v'>): string {
-  return `${QA_STATS_PREFIX}${JSON.stringify({ v: STATS_VERSION, ...stats })}`;
+  return `${QA_STATS_PREFIX}${JSON.stringify({ v: QA_STATS_VERSION, ...stats })}`;
 }
 
 const GATE_OUTCOMES: readonly GateOutcome[] = ['pass', 'fail', 'manual-review', 'fail-closed'];
@@ -100,10 +114,33 @@ function isTokens(value: unknown): value is RunTokens {
   );
 }
 
-function isRunStats(value: unknown): value is QaRunStats {
+function isCountOrNull(value: unknown): value is number | null {
+  return value === null || isCount(value);
+}
+
+const COVERAGE_FIELDS = ['omittedFiles', 'shortenedPatches', 'patchChars'] as const;
+
+/**
+ * Reads a parsed line into stats, or null when it has the wrong shape.
+ *
+ * A version 1 line has no coverage fields; they are filled in as null
+ * rather than the line being dropped.
+ */
+function toRunStats(value: unknown): QaRunStats | null {
+  if (!isRecord(value)) return null;
+
+  if (value.v === 1) {
+    if (COVERAGE_FIELDS.some((field) => field in value)) return null;
+    const upgraded = { ...value, omittedFiles: null, shortenedPatches: null, patchChars: null };
+    return isRunStats(upgraded) ? upgraded : null;
+  }
+
+  return value.v === QA_STATS_VERSION && isRunStats(value) ? value : null;
+}
+
+function isRunStats(value: Record<string, unknown>): value is Record<string, unknown> & QaRunStats {
   return (
-    isRecord(value) &&
-    value.v === STATS_VERSION &&
+    (value.v === 1 || value.v === QA_STATS_VERSION) &&
     isCount(value.pr) &&
     typeof value.sha === 'string' &&
     (value.mode === 'comment-only' || value.mode === 'enforce') &&
@@ -112,6 +149,7 @@ function isRunStats(value: unknown): value is QaRunStats {
     isCount(value.backendFiles) &&
     isCount(value.frontendFiles) &&
     isCount(value.diffChars) &&
+    COVERAGE_FIELDS.every((field) => isCountOrNull(value[field])) &&
     (value.reported === null || isCount(value.reported)) &&
     (value.kept === null || isSeverityCounts(value.kept)) &&
     (value.tokens === null || isTokens(value.tokens)) &&
@@ -133,7 +171,8 @@ export function parseStatsLines(log: string): QaRunStats[] {
     if (at < 0) continue;
     try {
       const parsed: unknown = JSON.parse(line.slice(at + QA_STATS_PREFIX.length));
-      if (isRunStats(parsed)) stats.push(parsed);
+      const run = toRunStats(parsed);
+      if (run) stats.push(run);
     } catch {
       // Not a stats line after all.
     }
@@ -146,6 +185,12 @@ export const CALIBRATION_TARGETS = { prs: 20, backendPrs: 5, frontendPrs: 5 } as
 
 interface Spread {
   average: number;
+  max: number;
+}
+
+interface Distribution {
+  median: number;
+  p90: number;
   max: number;
 }
 
@@ -167,6 +212,14 @@ export interface CalibrationSummary {
   reasoningTokens: Spread | null;
   /** Completed reviews that reported no token usage. */
   withoutTokens: number;
+  /** Reviews whose stats carry coverage (version 2 lines with a built diff). */
+  withCoverage: number;
+  /** Of those, the reviews that left files out. */
+  withOmittedFiles: number;
+  /** Files left out per review, across the reviews that carry coverage. */
+  omittedFiles: Spread | null;
+  /** Reviewable size (`patchChars`) per review. */
+  patchChars: Distribution | null;
 }
 
 function spread(values: readonly number[]): Spread | null {
@@ -204,6 +257,8 @@ export function summarizeCalibration(runs: readonly QaRunStats[]): CalibrationSu
   let withoutTokens = 0;
   const completionTokens: number[] = [];
   const reasoningTokens: number[] = [];
+  const omittedFiles: number[] = [];
+  const patchChars: number[] = [];
 
   for (const run of commits) {
     prs.add(run.pr);
@@ -225,6 +280,9 @@ export function summarizeCalibration(runs: readonly QaRunStats[]): CalibrationSu
     } else if (run.outcome !== 'fail-closed') {
       withoutTokens += 1;
     }
+
+    if (run.omittedFiles !== null) omittedFiles.push(run.omittedFiles);
+    if (run.patchChars !== null) patchChars.push(run.patchChars);
   }
 
   return {
@@ -240,6 +298,26 @@ export function summarizeCalibration(runs: readonly QaRunStats[]): CalibrationSu
     completionTokens: spread(completionTokens),
     reasoningTokens: spread(reasoningTokens),
     withoutTokens,
+    withCoverage: omittedFiles.length,
+    withOmittedFiles: omittedFiles.filter((n) => n > 0).length,
+    omittedFiles: spread(omittedFiles),
+    patchChars: distribution(patchChars),
+  };
+}
+
+/** Nearest-rank percentile of an ascending list. */
+function percentile(sorted: readonly number[], fraction: number): number {
+  const rank = Math.max(1, Math.ceil(fraction * sorted.length));
+  return sorted[rank - 1];
+}
+
+function distribution(values: readonly number[]): Distribution | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  return {
+    median: percentile(sorted, 0.5),
+    p90: percentile(sorted, 0.9),
+    max: sorted[sorted.length - 1],
   };
 }
 
@@ -253,6 +331,14 @@ function formatSpread(value: Spread | null, unit: (n: number) => string): string
 
 const seconds = (ms: number): string => `${(ms / 1000).toFixed(1)}s`;
 const tokens = (n: number): string => `${n.toLocaleString('en-US')} tokens`;
+const chars = (n: number): string => n.toLocaleString('en-US');
+const files = (n: number): string => `${n} file(s)`;
+
+function formatDistribution(value: Distribution | null, budget: number): string {
+  return value
+    ? `${chars(value.median)} median, ${chars(value.p90)} p90, ${chars(value.max)} max (budget ${chars(budget)})`
+    : 'no data';
+}
 
 export interface ReportContext {
   /** Runs found, whatever they logged. */
@@ -261,6 +347,8 @@ export interface ReportContext {
   runsWithoutStats: number;
   /** Runs whose log GitHub no longer has. */
   runsWithExpiredLogs: number;
+  /** The diff budget (`totalChars`) the reviewable size is compared against. */
+  diffBudgetChars: number;
 }
 
 /**
@@ -291,6 +379,9 @@ export function renderCalibrationReport(
     `| Runtime | ${formatSpread(summary.durationMs, seconds)} |`,
     `| Completion tokens | ${formatSpread(summary.completionTokens, tokens)} |`,
     `| ... of which reasoning | ${formatSpread(summary.reasoningTokens, tokens)} |`,
+    `| Reviews with omitted files | ${summary.withOmittedFiles} of ${summary.withCoverage} |`,
+    `| Omitted files per review | ${formatSpread(summary.omittedFiles, files)} |`,
+    `| Reviewable size (patch characters) | ${formatDistribution(summary.patchChars, context.diffBudgetChars)} |`,
     '',
     `Counted from ${context.runs - context.runsWithoutStats - context.runsWithExpiredLogs} of ${context.runs} workflow run(s). A commit reviewed more than once counts once, by its latest run.`,
   ];
@@ -307,6 +398,11 @@ export function renderCalibrationReport(
   }
   if (summary.withoutTokens > 0) {
     lines.push(`${summary.withoutTokens} completed review(s) reported no token usage.`);
+  }
+  if (summary.withCoverage < summary.commits) {
+    lines.push(
+      `${summary.commits - summary.withCoverage} review(s) carry no coverage counts: they predate them, or failed before the diff was built.`,
+    );
   }
   if (summary.outcomes['fail-closed'] > 0) {
     lines.push(

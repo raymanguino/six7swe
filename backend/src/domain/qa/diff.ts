@@ -35,6 +35,20 @@ export interface DiffBudget {
 }
 
 /**
+ * How much of the diff the review model is shown.
+ *
+ * The per-file budget keeps one large file from crowding out the rest; the
+ * total budget bounds the whole prompt. Both are generous enough that a
+ * normal pull request is shown in full. The calibration report compares
+ * pull request sizes against `totalChars`, so it lives here, once.
+ */
+export const REVIEW_DIFF_BUDGET: DiffBudget = {
+  perFileChars: 8_000,
+  totalChars: 60_000,
+  skipPatchesFor: [],
+};
+
+/**
  * Lockfiles are listed but never patched.
  *
  * They are noise for a review - they are generated, they are usually the
@@ -278,7 +292,37 @@ function buildNotices(kept: readonly DiffBlock[], omitted: number): string[] {
 }
 
 /**
- * Builds the model-ready diff text for a pull request.
+ * How much of the pull request the model was shown.
+ *
+ * These are the numbers the builder itself used, returned alongside the
+ * text, so the review body and the run stats cannot drift from what the
+ * model actually saw.
+ *
+ * Lockfiles and files with no patch are listed on purpose and are not
+ * omissions: there was nothing worth showing.
+ */
+export interface DiffCoverage {
+  /** Files in the pull request. */
+  totalFiles: number;
+  /** Files dropped from the diff because the total budget ran out. */
+  omittedFiles: number;
+  /** Files shown, but with the patch cut to `perFileChars`. */
+  shortenedPatches: number;
+  /**
+   * Patch characters before any budget, lockfiles and skipped files
+   * excluded. Unlike the diff length, which is capped at `totalChars`, this
+   * shows how far over budget a pull request was.
+   */
+  patchChars: number;
+}
+
+export interface ReviewDiff {
+  text: string;
+  coverage: DiffCoverage;
+}
+
+/**
+ * Builds the model-ready diff for a pull request, with its coverage.
  *
  * Every file is listed in order with a short status header. Lockfiles are
  * listed without their patch, remaining patches are truncated to
@@ -290,8 +334,12 @@ function buildNotices(kept: readonly DiffBlock[], omitted: number): string[] {
  * after it are still considered. Dropping every remaining file because the
  * first one was large would hide the small files behind it.
  */
-export function buildReviewDiff(files: readonly ChangedFile[], budget: DiffBudget): string {
+export function prepareReviewDiff(files: readonly ChangedFile[], budget: DiffBudget): ReviewDiff {
   const blocks = buildBlocks(files, budget);
+
+  const patchChars = files
+    .filter((file) => !budget.skipPatchesFor.includes(file.filename) && !isLockfile(file.filename))
+    .reduce((sum, file) => sum + (file.patch?.length ?? 0), 0);
 
   const kept: DiffBlock[] = [];
   let used = 0;
@@ -309,6 +357,16 @@ export function buildReviewDiff(files: readonly ChangedFile[], budget: DiffBudge
     used += cost;
   }
 
+  const result = (text: string): ReviewDiff => ({
+    text,
+    coverage: {
+      totalFiles: files.length,
+      omittedFiles: omitted,
+      shortenedPatches: kept.filter((block) => block.shortened).length,
+      patchChars,
+    },
+  });
+
   for (;;) {
     const notices = buildNotices(kept, omitted);
     const noticeText = notices.join('\n');
@@ -317,16 +375,21 @@ export function buildReviewDiff(files: readonly ChangedFile[], budget: DiffBudge
       body.length === 0 ? noticeText : noticeText.length > 0 ? `${body}\n${noticeText}` : body;
 
     if (combined.length <= budget.totalChars) {
-      return combined;
+      return result(combined);
     }
 
     if (kept.length === 0) {
       // Nothing fits, but the notices are the most valuable part of the
       // output: they are what tells the model it did not see everything.
-      return noticeText.slice(0, budget.totalChars);
+      return result(noticeText.slice(0, budget.totalChars));
     }
 
     kept.pop();
     omitted += 1;
   }
+}
+
+/** The model-ready diff text alone. See `prepareReviewDiff`. */
+export function buildReviewDiff(files: readonly ChangedFile[], budget: DiffBudget): string {
+  return prepareReviewDiff(files, budget).text;
 }

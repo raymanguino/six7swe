@@ -1,5 +1,6 @@
 import {
   codeSpan,
+  describeCoverage,
   escapeMarkdown,
   escapeTableCell,
   fitBodyToBudget,
@@ -10,6 +11,7 @@ import {
   REVIEW_MARKER,
   type ReviewBodyInput,
 } from '../../../domain/qa/review';
+import type { DiffCoverage } from '../../../domain/qa/diff';
 import type { ReviewFinding } from '../../../domain/qa/verdict';
 
 function finding(overrides: Partial<ReviewFinding> = {}): ReviewFinding {
@@ -29,9 +31,40 @@ function body(overrides: Partial<ReviewBodyInput> = {}): string {
     reportedCount: 0,
     gate: 'pass',
     commitSha: 'abc123',
+    coverage: FULL_COVERAGE,
     ...overrides,
   });
 }
+
+const FULL_COVERAGE: DiffCoverage = {
+  totalFiles: 3,
+  omittedFiles: 0,
+  shortenedPatches: 0,
+  patchChars: 900,
+};
+
+const PARTIAL_COVERAGE: DiffCoverage = {
+  totalFiles: 58,
+  omittedFiles: 33,
+  shortenedPatches: 1,
+  patchChars: 140_000,
+};
+
+describe('describeCoverage', () => {
+  it('says every file was reviewed when nothing was dropped', () => {
+    expect(describeCoverage({ ...FULL_COVERAGE, totalFiles: 58 })).toBe('Reviewed all 58 files.');
+  });
+
+  it('says how many files were reviewed, and how many patches were shortened', () => {
+    expect(describeCoverage(PARTIAL_COVERAGE)).toBe('Reviewed 25 of 58 files. 1 patch shortened.');
+  });
+
+  it('pluralises', () => {
+    expect(describeCoverage({ ...FULL_COVERAGE, totalFiles: 1, shortenedPatches: 2 })).toBe(
+      'Reviewed the 1 file. 2 patches shortened.',
+    );
+  });
+});
 
 describe('renderReviewBody', () => {
   it('carries the marker the client looks for', () => {
@@ -69,6 +102,27 @@ describe('renderReviewBody', () => {
     expect(rendered).not.toContain('The model reported nothing');
     expect(rendered).toContain('reported 3 finding(s)');
     expect(rendered).toContain('none of them referenced a file in this diff');
+  });
+
+  it('states the coverage between the gate outcome and the summary', () => {
+    const rendered = body({ summary: 'The summary.', coverage: PARTIAL_COVERAGE });
+
+    const coverage = rendered.indexOf('Reviewed 25 of 58 files. 1 patch shortened.');
+    expect(coverage).toBeGreaterThan(rendered.indexOf('**Gate outcome:'));
+    expect(coverage).toBeLessThan(rendered.indexOf('The summary.'));
+  });
+
+  it('states full coverage on a complete review', () => {
+    expect(body()).toContain('Reviewed all 3 files.');
+  });
+
+  it('never claims the model reported nothing when files were not shown to it', () => {
+    const rendered = body({ reportedCount: 0, coverage: PARTIAL_COVERAGE });
+
+    expect(rendered).not.toContain('reported nothing');
+    expect(rendered).toContain(
+      'No findings in the files that were reviewed. 33 file(s) were not shown to the model.',
+    );
   });
 
   it('renders a findings table', () => {

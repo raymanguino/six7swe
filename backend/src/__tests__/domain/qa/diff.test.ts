@@ -7,6 +7,8 @@ import {
   hunkLineNumbers,
   NO_PATCH_MARKER,
   PATCH_SKIPPED_MARKER,
+  prepareReviewDiff,
+  REVIEW_DIFF_BUDGET,
   type ChangedFile,
   type DiffBudget,
 } from '../../../domain/qa/diff';
@@ -331,5 +333,74 @@ describe('hunkLineNumbers', () => {
 
   it('returns nothing for a patch with no hunks', () => {
     expect(hunkLineNumbers('').size).toBe(0);
+  });
+});
+
+describe('prepareReviewDiff', () => {
+  it('returns the same text as buildReviewDiff', () => {
+    const files = [file(), file({ filename: 'b.ts', patch: 'x'.repeat(500) })];
+
+    expect(prepareReviewDiff(files, BUDGET).text).toBe(buildReviewDiff(files, BUDGET));
+  });
+
+  it('reports full coverage when everything fits', () => {
+    expect(prepareReviewDiff([file(), file({ filename: 'b.ts' })], BUDGET).coverage).toEqual({
+      totalFiles: 2,
+      omittedFiles: 0,
+      shortenedPatches: 0,
+      patchChars: 2 * '@@ -1 +1 @@\n-old\n+new'.length,
+    });
+  });
+
+  it('replays a pull request larger than the budget and counts what was left out', () => {
+    // 58 files, as on PR #90: a lockfile, a binary with no patch, two large
+    // files that get shortened, and 54 ordinary files of about 2,000
+    // characters each, which is well over the 60,000 budget in total.
+    const patch = (size: number): string => `@@ -1,1 +1,1 @@\n+${'y'.repeat(size)}`;
+    const files: ChangedFile[] = [
+      file({ filename: 'pnpm-lock.yaml', patch: 'l'.repeat(50_000) }),
+      file({ filename: 'logo.png', patch: undefined }),
+      file({ filename: 'big-1.ts', patch: patch(20_000) }),
+      file({ filename: 'big-2.ts', patch: patch(20_000) }),
+      ...Array.from({ length: 54 }, (_, i) =>
+        file({ filename: `src/f${i}.ts`, patch: patch(2_000) }),
+      ),
+    ];
+
+    const { text, coverage } = prepareReviewDiff(files, REVIEW_DIFF_BUDGET);
+
+    const shown = files.filter((f) => text.includes(`### ${f.filename} (`)).length;
+    expect(coverage.totalFiles).toBe(58);
+    expect(coverage.omittedFiles).toBe(58 - shown);
+    expect(coverage.omittedFiles).toBeGreaterThan(0);
+    expect(text).toContain(`${coverage.omittedFiles} files omitted from this diff`);
+    expect(coverage.shortenedPatches).toBe(2);
+    // The lockfile is excluded; the file with no patch contributes nothing.
+    expect(coverage.patchChars).toBe(2 * patch(20_000).length + 54 * patch(2_000).length);
+    expect(coverage.patchChars).toBeGreaterThan(REVIEW_DIFF_BUDGET.totalChars);
+    expect(text.length).toBeLessThanOrEqual(REVIEW_DIFF_BUDGET.totalChars);
+  });
+
+  it('does not count a lockfile or a file with no patch as omitted', () => {
+    const { coverage } = prepareReviewDiff(
+      [file({ filename: 'pnpm-lock.yaml', patch: 'l'.repeat(10_000) }), file({ patch: undefined })],
+      BUDGET,
+    );
+
+    expect(coverage.omittedFiles).toBe(0);
+    expect(coverage.patchChars).toBe(0);
+  });
+
+  it('counts only the shortened patches that were kept', () => {
+    const { coverage } = prepareReviewDiff(
+      [
+        file({ filename: 'a.ts', patch: 'x'.repeat(500) }),
+        file({ filename: 'b.ts', patch: 'x'.repeat(500) }),
+      ],
+      { ...BUDGET, perFileChars: 100, totalChars: 300 },
+    );
+
+    expect(coverage.omittedFiles).toBe(1);
+    expect(coverage.shortenedPatches).toBe(1);
   });
 });

@@ -18,6 +18,7 @@
  * "**Gate outcome: pass**" would otherwise fake the verdict.
  */
 
+import type { DiffCoverage } from './diff';
 import {
   MAX_REPORTED_FINDINGS,
   type GateOutcome,
@@ -146,6 +147,32 @@ export interface ReviewBodyInput {
   reportedCount: number;
   gate: GateOutcome;
   commitSha: string;
+  /** How much of the pull request the model was shown, from the diff builder. */
+  coverage: DiffCoverage;
+}
+
+function count(n: number, singular: string, plural: string): string {
+  return `${n} ${n === 1 ? singular : plural}`;
+}
+
+/**
+ * Says how much of the pull request the model read.
+ *
+ * Written by the domain from the builder's own counts, never by the model,
+ * so a reader can tell "found nothing" from "read less than half".
+ */
+export function describeCoverage(coverage: DiffCoverage): string {
+  const reviewed = coverage.totalFiles - coverage.omittedFiles;
+  const files =
+    coverage.omittedFiles > 0
+      ? `Reviewed ${reviewed} of ${count(coverage.totalFiles, 'file', 'files')}.`
+      : coverage.totalFiles === 1
+        ? 'Reviewed the 1 file.'
+        : `Reviewed all ${coverage.totalFiles} files.`;
+
+  return coverage.shortenedPatches > 0
+    ? `${files} ${count(coverage.shortenedPatches, 'patch', 'patches')} shortened.`
+    : files;
 }
 
 /**
@@ -167,6 +194,7 @@ export function renderReviewBody(input: ReviewBodyInput): string {
     '',
     `**Gate outcome: \`${input.gate}\`**`,
     `Reviewed commit: \`${escapeMarkdown(input.commitSha)}\``,
+    describeCoverage(input.coverage),
     '',
   ];
 
@@ -193,12 +221,17 @@ export function renderReviewBody(input: ReviewBodyInput): string {
   // A model that reported findings which all pointed outside the diff
   // reported something, even though nothing survives sanitizing. Saying
   // "the model reported nothing" would be false.
+  //
+  // A partial review must not claim the model "reported nothing" either:
+  // it reported nothing about the part it was shown.
   if (rows.length === 0) {
     footer.push(
       '',
-      input.reportedCount === 0
-        ? 'No findings. The model reported nothing against this diff.'
-        : `No findings to show. The model reported ${input.reportedCount} finding(s), but none of them referenced a file in this diff, so none were kept.`,
+      input.reportedCount > 0
+        ? `No findings to show. The model reported ${input.reportedCount} finding(s), but none of them referenced a file in this diff, so none were kept.`
+        : input.coverage.omittedFiles > 0
+          ? `No findings in the files that were reviewed. ${input.coverage.omittedFiles} file(s) were not shown to the model.`
+          : 'No findings. The model reported nothing against this diff.',
     );
   }
 

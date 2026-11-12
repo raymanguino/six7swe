@@ -21,6 +21,7 @@ import { execFileSync } from 'node:child_process';
 import {
   parseStatsLines,
   renderCalibrationReport,
+  REVIEW_DIFF_BUDGET,
   summarizeCalibration,
   type QaRunStats,
 } from '../src/domain/qa';
@@ -131,6 +132,7 @@ async function main(): Promise<void> {
       runs: runs.length,
       runsWithoutStats,
       runsWithExpiredLogs,
+      diffBudgetChars: REVIEW_DIFF_BUDGET.totalChars,
     }),
   );
 }
