@@ -27,7 +27,15 @@ describe('reviewTier', () => {
     ['docs/architecture.txt', 3],
     ['backend/migrations/meta/_journal.json', 4],
     ['.github/scripts/x.js', 1],
-    ['.github/workflows/ci.yml', 1],
+    ['backend/src/__tests__/fixtures/package.json', 2],
+    ['backend/src/__tests__/fixtures/seed.sql', 2],
+    ['backend/src/migrations/meta/loader.ts', 0],
+    ['backend/src/db/migrations/meta/0001.sql', 4],
+    ['.github/x.test.ts', 1],
+    ['backend/src/db/schema.sql', 1],
+    ['.github/__snapshots__/a.snap', 4],
+    ['backend/src/package.json', 1],
+    ['docs/x.ts', 3],
     ['backend/src/prompts/review.md', 0],
     ['backend/src/a.test.mts', 2],
     ['backend/src/__mocks__/a.ts', 2],
@@ -62,6 +70,19 @@ describe('buildReviewDiff ordering', () => {
       'backend/src/__tests__/a.test.ts',
       'docs/a.md',
     ]);
+  });
+
+  it('keeps a file moved from docs into src ahead of config', () => {
+    const diff = buildReviewDiff(
+      [
+        file('package.json'),
+        { ...file('backend/src/a.ts'), previousFilename: 'docs/a.md', status: 'renamed' },
+      ],
+      roomy,
+    );
+    const order = [...diff.matchAll(/^### (\S+)/gm)].map((m) => m[1]);
+
+    expect(order).toEqual(['backend/src/a.ts', 'package.json']);
   });
 
   it('tiers a moved file by the stronger of its two paths', () => {

@@ -108,6 +108,12 @@ export const NO_PATCH_MARKER = `${DIFF_NOTICE_PREFIX} no patch available]`;
  * - 2: tests and fixtures
  * - 3: documentation
  * - 4: generated files (migration metadata, snapshots)
+ *
+ * The order the rules are checked in is load-bearing: tier 4 first, then
+ * `.github/**`, `.sql` and named config files (1; the latter two only
+ * outside test directories, so fixtures stay tier 2), then documentation
+ * (3), then tests (2), then `src/` and `scripts/` (0), and anything left
+ * is 1. A `.md` file under `src/` skips the documentation rule and stays 0.
  */
 export type ReviewTier = 0 | 1 | 2 | 3 | 4;
 
@@ -128,15 +134,22 @@ export function reviewTier(path: string): ReviewTier {
   const base = segments[segments.length - 1] ?? path;
   const directories = segments.slice(0, -1);
 
+  const inTestDirectory = TEST_DIRECTORIES.some((directory) => directories.includes(directory));
+
   if (
-    (directories.includes('migrations') && directories.includes('meta')) ||
+    // Migration metadata is data (json, sql); a script in such a directory is code.
+    (directories.some((d, i) => d === 'migrations' && directories[i + 1] === 'meta') &&
+      !/\.[cm]?[jt]sx?$/.test(base)) ||
     directories.includes('__snapshots__') ||
     base.endsWith('.snap')
   ) {
     return 4;
   }
 
-  if (directories[0] === '.github' || base.endsWith('.sql') || CONFIG_FILE.test(base)) {
+  if (
+    directories[0] === '.github' ||
+    (!inTestDirectory && (base.endsWith('.sql') || CONFIG_FILE.test(base)))
+  ) {
     return 1;
   }
 
@@ -145,10 +158,7 @@ export function reviewTier(path: string): ReviewTier {
     return 3;
   }
 
-  if (
-    TEST_DIRECTORIES.some((directory) => directories.includes(directory)) ||
-    /\.(test|spec)\.[cm]?[jt]sx?$/.test(base)
-  ) {
+  if (inTestDirectory || /\.(test|spec)\.[cm]?[jt]sx?$/.test(base)) {
     return 2;
   }
 
