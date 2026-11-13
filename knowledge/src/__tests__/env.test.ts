@@ -14,7 +14,6 @@ describe('loadEnv', () => {
     expect(env).toMatchObject({
       PORT: 3100,
       STORAGE_BUCKET: 'portfolio-files',
-      EMBEDDING_MODEL: 'openai/text-embedding-3-small',
       MAX_UPLOAD_BYTES: 10 * 1024 * 1024,
       RESUME_INGESTION_ON_BOOT: true,
     });
@@ -26,6 +25,35 @@ describe('loadEnv', () => {
     );
   });
 
+  it('requires the OpenAI key and Supabase settings for the production defaults', () => {
+    expect(() => loadEnv(base)).toThrow(
+      /OPENAI_API_KEY is required when EMBEDDER=openai[\s\S]*SUPABASE_URL[\s\S]*SUPABASE_SECRET_KEY/,
+    );
+  });
+
+  it('defaults to the OpenAI embedder and its model', () => {
+    const env = loadEnv({ ...base, OPENAI_API_KEY: 'sk', FILE_STORE: 'local' });
+    expect(env.embedder).toEqual({
+      kind: 'openai-compatible',
+      provider: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk',
+      model: 'text-embedding-3-small',
+    });
+  });
+
+  it('requires the OpenRouter key, not the OpenAI one, for EMBEDDER=openrouter', () => {
+    const env = { ...base, EMBEDDER: 'openrouter', FILE_STORE: 'local' };
+    expect(() => loadEnv({ ...env, OPENAI_API_KEY: 'sk' })).toThrow(
+      /OPENROUTER_API_KEY is required when EMBEDDER=openrouter/,
+    );
+    expect(loadEnv({ ...env, OPENROUTER_API_KEY: 'sk-or' }).embedder).toMatchObject({
+      provider: 'openrouter',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      model: 'openai/text-embedding-3-small',
+    });
+  });
+
   it('requires an owner key of at least 32 characters that differs from the service key', () => {
     const env = { ...base, EMBEDDER: 'hashing', FILE_STORE: 'local' };
     expect(() => loadEnv({ ...env, KNOWLEDGE_OWNER_KEY: 'short' })).toThrow(
@@ -33,12 +61,6 @@ describe('loadEnv', () => {
     );
     expect(() => loadEnv({ ...env, KNOWLEDGE_OWNER_KEY: base.KNOWLEDGE_SERVICE_KEY })).toThrow(
       /KNOWLEDGE_OWNER_KEY must differ from KNOWLEDGE_SERVICE_KEY/,
-    );
-  });
-
-  it('requires the OpenRouter key and Supabase settings for the production defaults', () => {
-    expect(() => loadEnv(base)).toThrow(
-      /OPENROUTER_API_KEY[\s\S]*SUPABASE_URL[\s\S]*SUPABASE_SECRET_KEY/,
     );
   });
 

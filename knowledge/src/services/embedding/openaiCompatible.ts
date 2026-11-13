@@ -2,7 +2,12 @@ import { z } from 'zod';
 import { EmbeddingError } from './errors.js';
 import type { Embedder } from './index.js';
 
-const OPENROUTER_EMBEDDINGS_URL = 'https://openrouter.ai/api/v1/embeddings';
+/**
+ * An embedder for any provider with an OpenAI-compatible `POST {baseUrl}/embeddings`
+ * API: OpenAI itself, or OpenRouter. Batching, retries, Retry-After handling
+ * and response validation are shared; only the URL, key, model and the label
+ * used in messages differ.
+ */
 
 /** Inputs per request. Well under the provider's limit, and keeps a retry cheap. */
 const BATCH_SIZE = 64;
@@ -15,7 +20,13 @@ const ResponseSchema = z.object({
   data: z.array(z.object({ index: z.number().int(), embedding: z.array(z.number()) })),
 });
 
-export interface OpenRouterEmbedderOptions {
+export interface OpenAICompatibleEmbedderOptions {
+  /** Short provider id for the embedder's name, e.g. `openai`. */
+  provider: string;
+  /** Human-readable provider name for error messages, e.g. `OpenAI`. */
+  label: string;
+  /** API root without a trailing slash, e.g. `https://api.openai.com/v1`. */
+  baseUrl: string;
   apiKey: string;
   model: string;
   dimensions: number;
@@ -49,14 +60,16 @@ export function isRetryable(error: unknown): boolean {
   return error instanceof EmbeddingError && error.retryable;
 }
 
-export function createOpenRouterEmbedder(options: OpenRouterEmbedderOptions): Embedder {
+export function createOpenAICompatibleEmbedder(options: OpenAICompatibleEmbedderOptions): Embedder {
   const fetchImpl = options.fetchImpl ?? fetch;
   const backoffMs = options.backoffMs ?? defaultBackoffMs;
+  const url = `${options.baseUrl.replace(/\/+$/, '')}/embeddings`;
+  const label = options.label;
 
   /** One HTTP call. A transport failure or timeout becomes a retryable EmbeddingError. */
   async function send(inputs: string[]): Promise<Response> {
     try {
-      return await fetchImpl(OPENROUTER_EMBEDDINGS_URL, {
+      return await fetchImpl(url, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${options.apiKey}`,
@@ -69,8 +82,8 @@ export function createOpenRouterEmbedder(options: OpenRouterEmbedderOptions): Em
       const timedOut = error instanceof Error && error.name === 'TimeoutError';
       throw new EmbeddingError(
         timedOut
-          ? `Embedding request timed out after ${TIMEOUT_MS}ms`
-          : 'Embedding request could not be sent',
+          ? `${label} embedding request timed out after ${TIMEOUT_MS}ms`
+          : `${label} embedding request could not be sent`,
         true,
         {},
         { cause: error },
@@ -83,7 +96,14 @@ export function createOpenRouterEmbedder(options: OpenRouterEmbedderOptions): Em
     try {
       return await res.json();
     } catch (error) {
-      throw new EmbeddingError('Embedding response was not JSON', false, {}, { cause: error });
+      throw new EmbeddingError(
+        `${label} embedding response was not JSON`,
+        false,
+        {},
+        {
+          cause: error,
+        },
+      );
     }
   }
 
@@ -95,7 +115,7 @@ export function createOpenRouterEmbedder(options: OpenRouterEmbedderOptions): Em
       // document's stored error is derived from the status alone.
       const detail = (await res.text().catch(() => '')).slice(0, 300);
       throw new EmbeddingError(
-        `Embedding request failed (${res.status}): ${detail}`,
+        `${label} embedding request failed (${res.status}): ${detail}`,
         res.status === 429 || res.status >= 500,
         { status: res.status, retryAfterMs: parseRetryAfter(res.headers.get('retry-after')) },
       );
@@ -103,7 +123,7 @@ export function createOpenRouterEmbedder(options: OpenRouterEmbedderOptions): Em
 
     const parsed = ResponseSchema.safeParse(await readJson(res));
     if (!parsed.success) {
-      throw new EmbeddingError('Embedding response had an unexpected shape', false);
+      throw new EmbeddingError(`${label} embedding response had an unexpected shape`, false);
     }
 
     const ordered = [...parsed.data.data].sort((a, b) => a.index - b.index);
@@ -148,7 +168,7 @@ export function createOpenRouterEmbedder(options: OpenRouterEmbedderOptions): Em
   }
 
   return {
-    name: `openrouter:${options.model}`,
+    name: `${options.provider}:${options.model}`,
     dimensions: options.dimensions,
     async embed(texts) {
       const out: number[][] = [];

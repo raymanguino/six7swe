@@ -1,6 +1,6 @@
-import type { EmbedderConfig } from '../../config/env.js';
+import { EMBEDDING_PROVIDERS, type EmbedderConfig } from '../../config/env.js';
 import { createHashingEmbedder } from './hashing.js';
-import { createOpenRouterEmbedder } from './openrouter.js';
+import { createOpenAICompatibleEmbedder } from './openaiCompatible.js';
 
 export interface Embedder {
   /** Identifies the model, e.g. for logs. */
@@ -15,7 +15,14 @@ export function createEmbedder(config: EmbedderConfig, dimensions: number): Embe
   switch (config.kind) {
     case 'hashing':
       return createHashingEmbedder(dimensions);
-    case 'openrouter':
-      return createOpenRouterEmbedder({ apiKey: config.apiKey, model: config.model, dimensions });
+    case 'openai-compatible':
+      return createOpenAICompatibleEmbedder({
+        provider: config.provider,
+        label: EMBEDDING_PROVIDERS[config.provider].label,
+        baseUrl: config.baseUrl,
+        apiKey: config.apiKey,
+        model: config.model,
+        dimensions,
+      });
   }
 }

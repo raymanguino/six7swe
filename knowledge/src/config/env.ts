@@ -31,9 +31,7 @@ const EnvSchema = z
      * JWT gate replaces it in step 2. Must differ from the service key, so a
      * leaked service key cannot change the knowledge base.
      */
-    KNOWLEDGE_OWNER_KEY: z
-      .string()
-      .min(32, 'KNOWLEDGE_OWNER_KEY must be at least 32 characters'),
+    KNOWLEDGE_OWNER_KEY: z.string().min(32, 'KNOWLEDGE_OWNER_KEY must be at least 32 characters'),
 
     /**
      * The Supabase auth subject that owns the knowledge base. It becomes the
@@ -49,13 +47,16 @@ const EnvSchema = z
       }),
 
     /**
-     * `openrouter` calls a real embedding model. `hashing` is a deterministic,
+     * `openai` (OpenAI directly) and `openrouter` call a real embedding model
+     * through the same OpenAI-compatible API. `hashing` is a deterministic,
      * offline embedder for local development and tests: it ranks by shared
      * words, not by meaning.
      */
-    EMBEDDER: z.enum(['openrouter', 'hashing']).default('openrouter'),
+    EMBEDDER: z.enum(['openai', 'openrouter', 'hashing']).default('openai'),
+    OPENAI_API_KEY: z.string().optional(),
     OPENROUTER_API_KEY: z.string().optional(),
-    EMBEDDING_MODEL: z.string().default('openai/text-embedding-3-small'),
+    /** Overrides the provider's default model; it must output 1536 dimensions. */
+    EMBEDDING_MODEL: z.string().min(1).optional(),
 
     /** Where raw uploaded files are kept. */
     FILE_STORE: z.enum(['supabase', 'local']).default('supabase'),
@@ -89,14 +90,24 @@ const EnvSchema = z
         });
       }
       embedder = { kind: 'hashing' };
-    } else if (env.OPENROUTER_API_KEY) {
-      embedder = { kind: 'openrouter', apiKey: env.OPENROUTER_API_KEY, model: env.EMBEDDING_MODEL };
     } else {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['OPENROUTER_API_KEY'],
-        message: 'OPENROUTER_API_KEY is required when EMBEDDER=openrouter',
-      });
+      const provider = EMBEDDING_PROVIDERS[env.EMBEDDER];
+      const apiKey = env[provider.keyVariable];
+      if (apiKey) {
+        embedder = {
+          kind: 'openai-compatible',
+          provider: env.EMBEDDER,
+          baseUrl: provider.baseUrl,
+          apiKey,
+          model: env.EMBEDDING_MODEL ?? provider.defaultModel,
+        };
+      } else {
+        ctx.addIssue({
+          code: 'custom',
+          path: [provider.keyVariable],
+          message: `${provider.keyVariable} is required when EMBEDDER=${env.EMBEDDER}`,
+        });
+      }
     }
 
     if (env.KNOWLEDGE_OWNER_KEY === env.KNOWLEDGE_SERVICE_KEY) {
@@ -134,9 +145,33 @@ const EnvSchema = z
     return { ...env, embedder, fileStore };
   });
 
+/** Providers with an OpenAI-compatible embeddings API. */
+export const EMBEDDING_PROVIDERS = {
+  openai: {
+    label: 'OpenAI',
+    baseUrl: 'https://api.openai.com/v1',
+    keyVariable: 'OPENAI_API_KEY',
+    defaultModel: 'text-embedding-3-small',
+  },
+  openrouter: {
+    label: 'OpenRouter',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    keyVariable: 'OPENROUTER_API_KEY',
+    defaultModel: 'openai/text-embedding-3-small',
+  },
+} as const;
+
+export type EmbeddingProvider = keyof typeof EMBEDDING_PROVIDERS;
+
 export type EmbedderConfig =
   | { kind: 'hashing' }
-  | { kind: 'openrouter'; apiKey: string; model: string };
+  | {
+      kind: 'openai-compatible';
+      provider: EmbeddingProvider;
+      baseUrl: string;
+      apiKey: string;
+      model: string;
+    };
 
 export type FileStoreConfig =
   | { kind: 'local'; dir: string }

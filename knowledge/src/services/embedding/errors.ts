@@ -1,6 +1,6 @@
 /**
- * A failed call to an embedding provider. Every failure of the OpenRouter
- * embedder, including transport errors and timeouts, is one of these, so
+ * A failed call to an embedding provider. Every failure of the
+ * OpenAI-compatible embedder, including transport errors and timeouts, is one of these, so
  * the retry policy only has to read `retryable`.
  */
 export class EmbeddingError extends Error {
