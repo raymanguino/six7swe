@@ -207,8 +207,14 @@ switched over, the backend still reads the portfolio tables. Full details are in
   it by headings or by windows, embed it, then commit in one transaction.
   Every change bumps `corpus_version`, which callers use as a cache key and a
   staleness signal.
-- **Access.** Callers authenticate with the `x-knowledge-key` header. Raw files
-  live in the private `portfolio-files` Storage bucket.
+- **Access.** Callers authenticate with the `x-knowledge-key` header, using one
+  of two keys: the service key opens only the retrieval routes, and the owner
+  key opens only the document routes, until a Supabase JWT replaces it. On
+  Railway the service is private-network only. Raw files live in the private
+  `portfolio-files` Storage bucket.
+- **Embeddings.** OpenAI `text-embedding-3-small` (1536 dimensions) by
+  default, through an OpenAI-compatible client that also works with
+  OpenRouter.
 
 ## Job Refresh Pipeline
 
