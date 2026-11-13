@@ -113,15 +113,46 @@ The service deploys as its own Railway service. Two settings matter, because `ra
 - **Root directory: the repository root**, not `knowledge/`. The build and start commands begin with `cd knowledge`, `pnpm install` needs the workspace root (`pnpm-workspace.yaml`, the lockfile), and `knowledge/tsconfig.json` extends `../tsconfig.base.json`.
 - **Config file path: `knowledge/railway.json`.**
 
-Then:
+### Railway variables
+
+The service validates its whole environment at boot and refuses to start if anything is missing or malformed. The error lists every problem at once, so a failed first deploy tells you exactly what to fix.
+
+**Set these:**
+
+| Variable                | Value                                                                   | Where to get it                                                                                                                                                                                                                                                                                     |
+| ----------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`              | `production`                                                            | Set explicitly. It defaults to `development`, and only `production` refuses the offline `hashing` embedder.                                                                                                                                                                                         |
+| `DATABASE_URL`          | Postgres connection string for the same Supabase project as the backend | Supabase dashboard → **Connect**. Any mode works (direct, session pooler on 5432, or transaction pooler on 6543), because prepared statements are off. You can reuse the backend's value; this service only touches the `knowledge` and `knowledge_migrations` schemas.                             |
+| `KNOWLEDGE_SERVICE_KEY` | A random secret, at least 32 characters                                 | `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. The portfolio and hunter backends will need the same value when they start calling the service (step 3). Until the owner JWT gate lands (step 2), it also grants upload and delete, so treat it like an admin password. |
+| `OWNER_AUTH_ID`         | Your Supabase auth user id (a UUID)                                     | Supabase dashboard → **Authentication → Users** → your user → **User UID**. Letters, digits, `.`, `_` and `-` only; it becomes the first segment of every storage key.                                                                                                                              |
+| `OPENROUTER_API_KEY`    | An OpenRouter API key                                                   | openrouter.ai → **Keys**. Required because `EMBEDDER` defaults to `openrouter`.                                                                                                                                                                                                                     |
+| `SUPABASE_URL`          | `https://<project-ref>.supabase.co`                                     | Supabase dashboard → **Project Settings → Data API**.                                                                                                                                                                                                                                               |
+| `SUPABASE_SECRET_KEY`   | A Supabase secret key (`sb_secret_…`, or the legacy `service_role` key) | Supabase dashboard → **Project Settings → API Keys**. Server-side only: it bypasses RLS. Required because `FILE_STORE` defaults to `supabase`.                                                                                                                                                      |
+
+**Leave these unset** unless you want to change the default:
+
+| Variable                   | Default                         | Notes                                                                        |
+| -------------------------- | ------------------------------- | ---------------------------------------------------------------------------- |
+| `PORT`                     | `3100`                          | Railway injects `PORT`, and the service listens on it.                       |
+| `HOST`                     | `0.0.0.0`                       | Needed for Railway's network; don't change.                                  |
+| `EMBEDDER`                 | `openrouter`                    | `hashing` is refused in production.                                          |
+| `EMBEDDING_MODEL`          | `openai/text-embedding-3-small` | Must output 1536 dimensions to match the `chunks.embedding` column.          |
+| `FILE_STORE`               | `supabase`                      | `local` writes to the container's disk, which Railway wipes on every deploy. |
+| `STORAGE_BUCKET`           | `portfolio-files`               |                                                                              |
+| `MAX_UPLOAD_BYTES`         | `10485760` (10 MB)              | At most 50 MB; uploads are buffered in memory.                               |
+| `RESUME_INGESTION_ON_BOOT` | `true`                          | Re-queues documents a previous instance left pending or processing.          |
+
+Don't set `LOCAL_FILE_STORE_DIR` (local store only) or `KNOWLEDGE_TEST_DATABASE_URL` (tests only).
+
+### First deploy checklist
+
+1. In the Supabase project, check that pgvector 0.8 or later is available (**Database → Extensions → vector**). The first migration enables it in the `extensions` schema, so you don't need to enable it by hand.
+2. Create the Storage bucket `portfolio-files` (or your `STORAGE_BUCKET`) and make sure it is **private**. The service doesn't create it.
+3. Create the Railway service with the root directory and config path above, and set the variables in the first table.
+4. Deploy. The pre-deploy step runs the migrations; then `GET /health` should return 200.
+5. Smoke-test with the key: `curl -H "x-knowledge-key: $KNOWLEDGE_SERVICE_KEY" https://<service>/version` should return `{"version":0}`.
+
+### Runtime behaviour
 
 - The pre-deploy step runs `db:migrate:prod`: the migrator compiled to `dist/db/migrate.js` by the build, run with plain `node`. It needs only runtime dependencies, not tsx, drizzle-kit or dotenv. CI runs the same compiled migrator against an empty database after the build.
 - On SIGTERM the service drains for up to 20 s, inside Railway's default 30 s stop window.
-- Required variables:
-  - `DATABASE_URL`
-  - `KNOWLEDGE_SERVICE_KEY`
-  - `OWNER_AUTH_ID`
-  - `OPENROUTER_API_KEY`
-  - `SUPABASE_URL`
-  - `SUPABASE_SECRET_KEY`
-- The `portfolio-files` bucket must exist and be private.
