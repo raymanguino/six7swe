@@ -10,6 +10,14 @@ export interface RetrievalResult {
 
 export type RetrievalDeps = Pick<KnowledgeDeps, 'repo' | 'embedder'>;
 
+/** The owner's corpus version: bumped whenever the set of retrievable chunks changes. */
+export async function getCorpusVersion(
+  deps: Pick<KnowledgeDeps, 'repo'>,
+  ownerId: string,
+): Promise<number> {
+  return deps.repo.getVersion(ownerId);
+}
+
 /** Embeds the query and returns the `k` closest ready chunks for the owner. */
 export async function retrieve(
   deps: RetrievalDeps,

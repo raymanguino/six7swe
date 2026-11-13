@@ -118,6 +118,23 @@ async function resumeExisting(
   return { document: retried, deduplicated: true };
 }
 
+/** The owner's documents, newest first. */
+export async function listDocuments(
+  deps: Pick<KnowledgeDeps, 'repo'>,
+  ownerId: string,
+): Promise<DocumentRecord[]> {
+  return deps.repo.listDocuments(ownerId);
+}
+
+/** One of the owner's documents, or null when it does not exist or belongs to someone else. */
+export async function getDocument(
+  deps: Pick<KnowledgeDeps, 'repo'>,
+  ownerId: string,
+  id: string,
+): Promise<DocumentRecord | null> {
+  return deps.repo.getDocument(ownerId, id);
+}
+
 /** Deletes the document, its chunks and its file. Returns false when it did not exist. */
 export async function deleteDocument(
   deps: DocumentServiceDeps,

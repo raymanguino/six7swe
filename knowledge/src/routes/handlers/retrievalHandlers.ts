@@ -1,7 +1,7 @@
 import type { FastifyRequest } from 'fastify';
 import { RetrieveRequestSchema, type RetrieveResponse } from '../../contract.js';
 import { requireOwner } from '../../plugins/serviceAuth.js';
-import { retrieve } from '../../services/retrieval.js';
+import { getCorpusVersion, retrieve } from '../../services/retrieval.js';
 import type { KnowledgeContext } from '../context.js';
 import { toChunkDto } from '../mappers.js';
 
@@ -15,7 +15,7 @@ export function retrievalHandlers(ctx: KnowledgeContext) {
     },
 
     async version(req: FastifyRequest) {
-      return { version: await ctx.repo.getVersion(requireOwner(req)) };
+      return { version: await getCorpusVersion(ctx, requireOwner(req)) };
     },
   };
 }

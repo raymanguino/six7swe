@@ -1,7 +1,12 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { DocumentParamsSchema, UploadQuerySchema } from '../../contract.js';
 import { requireOwner } from '../../plugins/serviceAuth.js';
-import { deleteDocument, uploadDocument } from '../../services/documents.js';
+import {
+  deleteDocument,
+  getDocument,
+  listDocuments,
+  uploadDocument,
+} from '../../services/documents.js';
 import type { KnowledgeContext } from '../context.js';
 import { toDocumentDto } from '../mappers.js';
 
@@ -43,14 +48,14 @@ export function documentHandlers(ctx: KnowledgeContext) {
     },
 
     async list(req: FastifyRequest) {
-      const documents = await ctx.repo.listDocuments(requireOwner(req));
+      const documents = await listDocuments(ctx, requireOwner(req));
       return { documents: documents.map(toDocumentDto) };
     },
 
     async get(req: FastifyRequest, reply: FastifyReply) {
       const ownerId = requireOwner(req);
       const { id } = DocumentParamsSchema.parse(req.params);
-      const document = await ctx.repo.getDocument(ownerId, id);
+      const document = await getDocument(ctx, ownerId, id);
       if (!document) return reply.code(404).send({ error: 'Document not found' });
       return { document: toDocumentDto(document) };
     },
