@@ -10,7 +10,7 @@
 # See DEPLOYMENT.md, "Chrome for the job scraper" and "Running the Backend Image Locally".
 
 # Exact tag so Dependabot can bump it. It must satisfy `engines.node` in the root package.json.
-FROM node:22.12.0-bookworm-slim AS base
+FROM node:22.23.4-bookworm-slim AS base
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 # The corepack bundled with Node 22.12 carries npm signing keys that have since been rotated, so
 # it refuses to download pnpm ("Cannot find matching keyid"). Replace it with a current release.
