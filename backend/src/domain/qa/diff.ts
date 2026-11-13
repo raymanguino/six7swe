@@ -133,7 +133,7 @@ const CONFIG_FILE = /^(package\.json|tsconfig[^/]*\.json|drizzle\.config\.ts|rai
  * (`FIXTURE_DIRECTORIES`) so a fixture `package.json` stays a fixture.
  */
 const PINNED_FILE =
-  /^(package\.json|railway\.json|nixpacks\.toml|dockerfile(\..+)?|.+\.dockerfile)$/i;
+  /^(package\.json|railway\.json|nixpacks\.toml|dockerfile([.-].+)?|.+\.dockerfile)$/i;
 
 /**
  * Instructions read by coding agents that have shell access. They end in

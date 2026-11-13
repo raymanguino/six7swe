@@ -49,6 +49,9 @@ describe('reviewTier', () => {
     // Pipeline, deploy and auth files.
     ['Dockerfile', 0],
     ['backend/Dockerfile.prod', 0],
+    ['Dockerfile-production', 0],
+    ['backend/Dockerfile-dev', 0],
+    ['mydockerfile-x', 1],
     ['backend/nixpacks.toml', 0],
     ['backend/railway.json', 0],
     ['backend/src/services/auth/jwks.ts', 0],
@@ -93,6 +96,9 @@ describe('isPinnedPath', () => {
   it.each([
     ['.github/workflows/qa-review.yml', true],
     ['Dockerfile', true],
+    ['Dockerfile-production', true],
+    ['backend/Dockerfile-dev', true],
+    ['mydockerfile-x', false],
     ['package.json', true],
     ['backend/package.json', true],
     ['railway.json', true],
