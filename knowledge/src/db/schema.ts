@@ -11,29 +11,27 @@ import {
   varchar,
   vector,
 } from 'drizzle-orm/pg-core';
+import { DOCUMENT_KINDS, DOCUMENT_STATUSES } from '../contract.js';
 
 /**
  * The knowledge service owns the `knowledge` Postgres schema and nothing else.
  *
  * It lives in the same Supabase project as the backend's `public` schema, so
  * the two must never manage each other's objects. `drizzle.config.ts` sets
- * `schemaFilter: ['knowledge']` and keeps its migration ledger inside this
- * schema, so the backend's `db:reset` (which drops `public` and the shared
- * `drizzle` ledger schema) cannot touch it.
+ * `schemaFilter: ['knowledge']`, and the migration ledger lives in its own
+ * `knowledge_migrations` schema (see `src/db/ledger.ts`), so the backend's
+ * `db:reset` (which drops `public` and the shared `drizzle` ledger schema)
+ * cannot touch either.
  */
 export const knowledge = pgSchema('knowledge');
 
 /** Must match the embedding model's output. text-embedding-3-small is 1536. */
 export const EMBEDDING_DIMENSIONS = 1536;
 
-export const documentKind = knowledge.enum('document_kind', ['resume', 'supporting']);
+/** Values come from the wire contract, so the API and the database cannot drift apart. */
+export const documentKind = knowledge.enum('document_kind', DOCUMENT_KINDS);
 
-export const documentStatus = knowledge.enum('document_status', [
-  'pending',
-  'processing',
-  'ready',
-  'failed',
-]);
+export const documentStatus = knowledge.enum('document_status', DOCUMENT_STATUSES);
 
 export const documents = knowledge.table(
   'documents',
@@ -57,7 +55,10 @@ export const documents = knowledge.table(
     extractedText: text('extracted_text'),
     chunkCount: integer('chunk_count').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
   },
   (t) => [
     uniqueIndex('documents_owner_sha256_uq').on(t.ownerId, t.sha256),
@@ -97,10 +98,11 @@ export const chunks = knowledge.table(
 export const corpusState = knowledge.table('corpus_state', {
   ownerId: varchar('owner_id', { length: 255 }).primaryKey(),
   version: integer('version').notNull().default(0),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
 });
 
 export type DocumentRow = typeof documents.$inferSelect;
 export type ChunkRow = typeof chunks.$inferSelect;
-export type DocumentKind = (typeof documentKind.enumValues)[number];
-export type DocumentStatus = (typeof documentStatus.enumValues)[number];

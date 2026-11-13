@@ -48,6 +48,13 @@ export function createMemoryRepository(): KnowledgeRepository & {
     const doc = documents.get(id);
     if (doc) documents.set(id, { ...doc, ...patch, updatedAt: new Date() });
   };
+  /** Same rule as the Drizzle repository: a ready document with chunks leaving ready bumps. */
+  const leaveReady = (id: string, patch: Pick<DocumentRecord, 'status' | 'error'>) => {
+    const doc = documents.get(id);
+    if (!doc) return;
+    update(id, patch);
+    if (doc.status === 'ready' && doc.chunkCount > 0) bump(doc.ownerId);
+  };
 
   return {
     documents,
@@ -63,17 +70,12 @@ export function createMemoryRepository(): KnowledgeRepository & {
     },
 
     async createDocument(doc) {
-      if (
-        [...documents.values()].some((d) => d.ownerId === doc.ownerId && d.sha256 === doc.sha256)
-      ) {
-        throw Object.assign(new Error('duplicate key'), { code: '23505' });
-      }
-      if (doc.kind === 'resume') {
-        for (const d of documents.values()) {
-          if (d.ownerId === doc.ownerId && d.isPrimaryResume)
-            update(d.id, { isPrimaryResume: false });
-        }
-      }
+      const existing = [...documents.values()].find(
+        (d) => d.ownerId === doc.ownerId && d.sha256 === doc.sha256,
+      );
+      // A duplicate returns the existing row and never touches the primary resume.
+      if (existing) return { document: existing, created: false };
+
       const now = new Date();
       const record: DocumentRecord = {
         ...doc,
@@ -86,7 +88,14 @@ export function createMemoryRepository(): KnowledgeRepository & {
         updatedAt: now,
       };
       documents.set(record.id, record);
-      return record;
+      if (doc.kind === 'resume') {
+        for (const d of documents.values()) {
+          if (d.ownerId === doc.ownerId && d.isPrimaryResume && d.id !== record.id) {
+            update(d.id, { isPrimaryResume: false });
+          }
+        }
+      }
+      return { document: record, created: true };
     },
 
     async getDocument(ownerId, id) {
@@ -101,11 +110,11 @@ export function createMemoryRepository(): KnowledgeRepository & {
     },
 
     async resetToPending(id) {
-      update(id, { status: 'pending', error: null });
+      leaveReady(id, { status: 'pending', error: null });
     },
 
     async markProcessing(id) {
-      update(id, { status: 'processing', error: null });
+      leaveReady(id, { status: 'processing', error: null });
     },
 
     async completeIngestion(id, text, newChunks) {
@@ -119,7 +128,7 @@ export function createMemoryRepository(): KnowledgeRepository & {
     },
 
     async failIngestion(id, error) {
-      update(id, { status: 'failed', error });
+      leaveReady(id, { status: 'failed', error });
     },
 
     async deleteDocument(ownerId, id) {
@@ -129,6 +138,10 @@ export function createMemoryRepository(): KnowledgeRepository & {
       chunks = chunks.filter((c) => c.documentId !== id);
       const contributed = doc.status === 'ready' && doc.chunkCount > 0;
       return { deleted: doc, version: contributed ? bump(ownerId) : (versions.get(ownerId) ?? 0) };
+    },
+
+    async isStoragePathInUse(storagePath) {
+      return [...documents.values()].some((d) => d.storagePath === storagePath);
     },
 
     async listUnfinished() {

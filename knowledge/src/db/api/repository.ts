@@ -1,4 +1,4 @@
-import type { DocumentKind, DocumentStatus } from '../schema.js';
+import type { DocumentKind, DocumentStatus } from '../../contract.js';
 
 /**
  * Persistence boundary for the knowledge service.
@@ -36,6 +36,12 @@ export interface NewDocument {
   kind: DocumentKind;
 }
 
+export interface CreateDocumentResult {
+  document: DocumentRecord;
+  /** False when the owner already had a document with these bytes; `document` is that one. */
+  created: boolean;
+}
+
 export interface NewChunk {
   ordinal: number;
   heading: string | null;
@@ -55,20 +61,38 @@ export interface RetrievedChunk {
   similarity: number;
 }
 
+/** A write lost to a uniqueness rule other than the one the caller handles. Maps to 409. */
+export class ConflictError extends Error {
+  readonly statusCode = 409;
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'ConflictError';
+  }
+}
+
+/**
+ * Every repository keeps one rule about the corpus version: it is bumped in
+ * the same transaction as any change to the set of chunks retrieval can see.
+ * Retrieval only serves chunks of `ready` documents, so a ready document with
+ * chunks moving to any other status bumps it, as does finishing an ingest or
+ * deleting a ready document.
+ */
 export interface KnowledgeRepository {
   findBySha256(ownerId: string, sha256: string): Promise<DocumentRecord | null>;
 
   /**
-   * Inserts a pending document. A `resume` becomes the owner's primary resume,
-   * replacing the previous one.
+   * Inserts a pending document, or returns the existing one when the owner
+   * already has these bytes. Uploads are serialized per owner. A new `resume`
+   * becomes the owner's primary resume, replacing the previous one; a
+   * deduplicated upload never changes which resume is primary.
    */
-  createDocument(doc: NewDocument): Promise<DocumentRecord>;
+  createDocument(doc: NewDocument): Promise<CreateDocumentResult>;
 
   getDocument(ownerId: string, id: string): Promise<DocumentRecord | null>;
 
   listDocuments(ownerId: string): Promise<DocumentRecord[]>;
 
-  /** Puts a failed document back in the queue. */
+  /** Puts a failed or stranded document back to `pending` for another attempt. */
   resetToPending(id: string): Promise<void>;
 
   markProcessing(id: string): Promise<void>;
@@ -79,6 +103,7 @@ export interface KnowledgeRepository {
    */
   completeIngestion(id: string, extractedText: string, chunks: NewChunk[]): Promise<number>;
 
+  /** Marks the document failed. Its previous chunks are kept but no longer served. */
   failIngestion(id: string, error: string): Promise<void>;
 
   /**
@@ -89,6 +114,9 @@ export interface KnowledgeRepository {
     ownerId: string,
     id: string,
   ): Promise<{ deleted: DocumentRecord; version: number } | null>;
+
+  /** True when any document row still points at this file-store key. */
+  isStoragePathInUse(storagePath: string): Promise<boolean>;
 
   /** Documents a previous process left pending or processing. */
   listUnfinished(): Promise<DocumentRecord[]>;

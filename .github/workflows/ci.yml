@@ -19,6 +19,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
+    # The knowledge service's repository tests need Postgres with pgvector
+    # 0.8+ (iterative HNSW scans), the version Supabase ships. They refuse to
+    # skip when CI is set, so this database is required.
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.0-pg17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      KNOWLEDGE_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -41,6 +60,17 @@ jobs:
 
       - name: Lint
         run: pnpm lint
+
+      - name: Prepare the knowledge test database
+        env:
+          PGPASSWORD: postgres
+          DATABASE_URL: ${{ env.KNOWLEDGE_TEST_DATABASE_URL }}
+        run: |
+          # Supabase keeps pgvector in the `extensions` schema, which is on its
+          # default search_path; the migrations rely on that, so mirror it.
+          psql -h localhost -U postgres -d postgres \
+            -c 'ALTER DATABASE postgres SET search_path TO "$user", public, extensions'
+          pnpm --filter @six7swe/knowledge db:migrate
 
       - name: Test
         run: pnpm test
