@@ -1,15 +1,13 @@
 import { createHash } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
-import type { DocumentRecord, KnowledgeRepository } from '../db/api/repository.js';
-import type { DocumentKind } from '../db/schema.js';
-import type { SerialQueue } from './ingestion/queue.js';
+import type { DocumentKind } from '../contract.js';
+import type { DocumentRecord } from '../db/api/repository.js';
+import type { KnowledgeDeps } from './deps.js';
+import type { IngestionQueue } from './ingestion/pipeline.js';
 import { detectMimeType, extensionOf } from './ingestion/parse.js';
-import type { FileStore } from './storage/index.js';
 
-export interface DocumentServiceDeps {
-  repo: KnowledgeRepository;
-  files: FileStore;
-  queue: SerialQueue<DocumentRecord>;
+export interface DocumentServiceDeps extends Pick<KnowledgeDeps, 'repo' | 'files'> {
+  queue: IngestionQueue;
   log: FastifyBaseLogger;
 }
 
@@ -22,16 +20,32 @@ export interface UploadInput {
 
 export interface UploadResult {
   document: DocumentRecord;
-  /** True when identical bytes were already uploaded; nothing new was stored. */
+  /** True when identical bytes were already uploaded; no new document was created. */
   deduplicated: boolean;
 }
 
-/** Keeps a display name sane: no path parts, no control characters, bounded length. */
+/** The `documents.filename` column is varchar(255), which Postgres counts in characters. */
+const MAX_FILENAME_CHARS = 255;
+/** Longer "extensions" are just a dot in the name and are not worth preserving. */
+const MAX_EXTENSION_CHARS = 16;
+
+/**
+ * Keeps a display name sane: no path parts, no control characters, at most
+ * 255 characters. Truncation counts code points, so it never splits a
+ * surrogate pair, and keeps the extension, which decides the file type.
+ */
 export function cleanFilename(raw: string): string {
   const base = raw.split(/[\\/]/).pop() ?? '';
   // eslint-disable-next-line no-control-regex
-  const cleaned = base.replace(/[\u0000-\u001F\u007F]/g, '').trim();
-  return (cleaned || 'upload').slice(0, 255);
+  const name = base.replace(/[\u0000-\u001F\u007F]/g, '').trim() || 'upload';
+
+  const chars = Array.from(name);
+  if (chars.length <= MAX_FILENAME_CHARS) return name;
+
+  const dot = chars.lastIndexOf('.');
+  const extension = dot > 0 && chars.length - dot <= MAX_EXTENSION_CHARS ? chars.slice(dot) : [];
+  const stem = chars.slice(0, chars.length - extension.length);
+  return [...stem.slice(0, MAX_FILENAME_CHARS - extension.length), ...extension].join('');
 }
 
 export function sha256Hex(bytes: Uint8Array): string {
@@ -47,50 +61,52 @@ export async function uploadDocument(
   const sha256 = sha256Hex(input.bytes);
 
   const existing = await deps.repo.findBySha256(input.ownerId, sha256);
-  if (existing) {
-    // A failed ingest is retried by uploading the same file again.
-    if (existing.status === 'failed') {
-      await deps.repo.resetToPending(existing.id);
-      const retried = { ...existing, status: 'pending' as const, error: null };
-      deps.queue.enqueue(retried);
-      return { document: retried, deduplicated: true };
-    }
-    return { document: existing, deduplicated: true };
-  }
+  if (existing) return resumeExisting(deps, existing, input.bytes);
 
   // Keyed by content hash, so the key is stable and never collides with
   // another document of the same owner.
   const storagePath = `${input.ownerId}/${sha256}${extensionOf(filename)}`;
   await deps.files.put(storagePath, input.bytes, mimeType);
 
-  let document: DocumentRecord;
-  try {
-    document = await deps.repo.createDocument({
-      ownerId: input.ownerId,
-      filename,
-      mimeType,
-      sizeBytes: input.bytes.byteLength,
-      sha256,
-      storagePath,
-      kind: input.kind,
-    });
-  } catch (error) {
-    // Two identical uploads raced past the check above; the other one won.
-    if (!isUniqueViolation(error)) throw error;
-    const winner = await deps.repo.findBySha256(input.ownerId, sha256);
-    if (!winner) throw error;
-    return { document: winner, deduplicated: true };
-  }
+  const { document, created } = await deps.repo.createDocument({
+    ownerId: input.ownerId,
+    filename,
+    mimeType,
+    sizeBytes: input.bytes.byteLength,
+    sha256,
+    storagePath,
+    kind: input.kind,
+  });
+  // An identical upload raced past the lookup above and won.
+  if (!created) return resumeExisting(deps, document, input.bytes);
+
   deps.queue.enqueue(document);
   return { document, deduplicated: false };
 }
 
-/** Postgres error 23505, whether thrown by postgres.js directly or wrapped by Drizzle. */
-export function isUniqueViolation(error: unknown): boolean {
-  for (let e: unknown = error; e && typeof e === 'object'; e = (e as { cause?: unknown }).cause) {
-    if ((e as { code?: unknown }).code === '23505') return true;
+/**
+ * Handles a re-upload of bytes the owner already has.
+ *
+ * A ready document, or one the queue is already working on, is left alone.
+ * Anything else is retried: a `failed` ingest, and a `pending`/`processing`
+ * document nothing is working on (left behind by a crash, by a failure that
+ * could not be recorded, or by a boot with RESUME_INGESTION_ON_BOOT=false).
+ * The bytes are stored again first, in case the stored copy was what failed.
+ */
+async function resumeExisting(
+  deps: DocumentServiceDeps,
+  existing: DocumentRecord,
+  bytes: Uint8Array,
+): Promise<UploadResult> {
+  if (existing.status === 'ready' || deps.queue.has(existing.id)) {
+    return { document: existing, deduplicated: true };
   }
-  return false;
+
+  await deps.files.put(existing.storagePath, bytes, existing.mimeType);
+  await deps.repo.resetToPending(existing.id);
+  const retried: DocumentRecord = { ...existing, status: 'pending', error: null };
+  deps.queue.enqueue(retried);
+  return { document: retried, deduplicated: true };
 }
 
 /** Deletes the document, its chunks and its file. Returns false when it did not exist. */
@@ -98,16 +114,22 @@ export async function deleteDocument(
   deps: DocumentServiceDeps,
   ownerId: string,
   id: string,
-): Promise<{ deleted: boolean; version: number | null }> {
+): Promise<boolean> {
   const result = await deps.repo.deleteDocument(ownerId, id);
-  if (!result) return { deleted: false, version: null };
+  if (!result) return false;
 
-  // The row is gone, so retrieval no longer sees the document. A file left
-  // behind by a storage error is harmless and only costs space.
+  // Keys are content-addressed, so the same bytes uploaded again after the
+  // row was deleted get the same key. Keep the file if a row uses it again.
+  // (A re-upload landing between this check and the delete loses its file;
+  // its ingest then fails with a message to upload again, which re-stores it.)
+  const { storagePath } = result.deleted;
   try {
-    await deps.files.delete(result.deleted.storagePath);
+    if (await deps.repo.isStoragePathInUse(storagePath)) return true;
+    // The row is gone, so retrieval no longer sees the document. A file left
+    // behind by a storage error is harmless and only costs space.
+    await deps.files.delete(storagePath);
   } catch (error) {
     deps.log.warn({ documentId: id, err: error }, 'Could not delete stored file');
   }
-  return { deleted: true, version: result.version };
+  return true;
 }

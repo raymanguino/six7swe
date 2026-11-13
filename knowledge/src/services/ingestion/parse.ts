@@ -4,6 +4,10 @@ import { extractText as extractPdfText, getDocumentProxy } from 'unpdf';
 export const SUPPORTED_MIME_TYPES = ['application/pdf', 'text/markdown', 'text/plain'] as const;
 export type SupportedMimeType = (typeof SUPPORTED_MIME_TYPES)[number];
 
+export function isSupportedMime(mime: string): mime is SupportedMimeType {
+  return SUPPORTED_MIME_TYPES.some((supported) => supported === mime);
+}
+
 const EXTENSION_TO_MIME: Record<string, SupportedMimeType> = {
   '.pdf': 'application/pdf',
   '.md': 'text/markdown',
@@ -86,7 +90,10 @@ export async function extractText(bytes: Uint8Array, mime: SupportedMimeType): P
       const { text } = await extractPdfText(pdf, { mergePages: true });
       return normalizeText(text);
     } finally {
-      await pdf.cleanup();
+      // destroy() (not cleanup(), which only drops caches) releases the
+      // document and its worker-side state. The typings expose it on the
+      // loading task; PDFDocumentProxy.destroy() is the same call.
+      await pdf.loadingTask.destroy();
     }
   }
 

@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { DocumentRecord } from '../db/api/repository.js';
-import {
-  deleteDocument,
-  isUniqueViolation,
-  uploadDocument,
-  cleanFilename,
-} from '../services/documents.js';
+import { isUniqueViolation } from '../db/api/drizzleRepository.js';
+import { cleanFilename, deleteDocument, sha256Hex, uploadDocument } from '../services/documents.js';
+import { EmbeddingError } from '../services/embedding/errors.js';
 import { createHashingEmbedder } from '../services/embedding/hashing.js';
 import type { Embedder } from '../services/embedding/index.js';
-import { ingestDocument } from '../services/ingestion/pipeline.js';
+import {
+  createIngestionQueue,
+  ingestDocument,
+  publicIngestionError,
+} from '../services/ingestion/pipeline.js';
 import { SerialQueue } from '../services/ingestion/queue.js';
 import { retrieve } from '../services/retrieval.js';
 import { createMemoryRepository } from './support/memoryRepository.js';
@@ -26,9 +26,7 @@ const OWNER = 'owner-1';
 function setup(embedder: Embedder = createHashingEmbedder(256)) {
   const repo = createMemoryRepository();
   const files = createMemoryFileStore();
-  const queue = new SerialQueue<DocumentRecord>((doc) =>
-    ingestDocument({ repo, files, embedder, log: silentLogger }, doc),
-  );
+  const queue = createIngestionQueue({ repo, files, embedder }, silentLogger);
   const deps = { repo, files, queue, log: silentLogger };
   const upload = (
     filename: string,
@@ -37,6 +35,8 @@ function setup(embedder: Embedder = createHashingEmbedder(256)) {
   ) => uploadDocument(deps, { ownerId: OWNER, filename, bytes, kind });
   return { repo, files, queue, deps, embedder, upload };
 }
+
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe('SerialQueue', () => {
   it('runs items one at a time, skips duplicates, and survives a failing item', async () => {
@@ -61,6 +61,95 @@ describe('SerialQueue', () => {
     await queue.idle();
     expect(order).toEqual(['a', 'b', 'c']);
     expect(errors).toEqual(['b']);
+  });
+
+  it('runs an item enqueued from onError', async () => {
+    const seen: string[] = [];
+    const queue: SerialQueue<{ id: string }> = new SerialQueue<{ id: string }>(
+      async ({ id }) => {
+        seen.push(id);
+        if (id === 'a') throw new Error('retry me');
+      },
+      () => queue.enqueue({ id: 'retry' }),
+    );
+    queue.enqueue({ id: 'a' });
+    await queue.idle();
+    expect(seen).toEqual(['a', 'retry']);
+  });
+
+  it('runs an item enqueued right after a drain finishes', async () => {
+    const seen: string[] = [];
+    const queue = new SerialQueue<{ id: string }>(async ({ id }) => {
+      seen.push(id);
+    });
+    queue.enqueue({ id: 'a' });
+    // Enqueue in the microtask right after the first drain resolves.
+    const first = queue.idle().then(() => queue.enqueue({ id: 'b' }));
+    await first;
+    await queue.idle();
+    expect(seen).toEqual(['a', 'b']);
+  });
+
+  it('keeps running after a worker that throws synchronously', async () => {
+    const seen: string[] = [];
+    const queue = new SerialQueue<{ id: string }>((item) => {
+      seen.push(item.id);
+      if (item.id === 'sync') throw new Error('thrown before returning a promise');
+      return Promise.resolve();
+    });
+    queue.enqueue({ id: 'sync' });
+    await queue.idle();
+    queue.enqueue({ id: 'later' });
+    await queue.idle();
+    expect(seen).toEqual(['sync', 'later']);
+  });
+
+  it('reports waiting and running items with has()', async () => {
+    let release: () => void = () => {};
+    const queue = new SerialQueue<{ id: string }>(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    queue.enqueue({ id: 'a' });
+    queue.enqueue({ id: 'b' });
+    await tick();
+    expect(queue.has('a')).toBe(true); // running
+    expect(queue.has('b')).toBe(true); // waiting
+    expect(queue.has('c')).toBe(false);
+    release();
+    await tick();
+    expect(queue.has('a')).toBe(false);
+    release();
+    await queue.idle();
+  });
+
+  it('stop() drops waiting items, waits for the running one, and refuses new work', async () => {
+    const seen: string[] = [];
+    let release: () => void = () => {};
+    const queue = new SerialQueue<{ id: string }>(
+      ({ id }) =>
+        new Promise<void>((resolve) => {
+          seen.push(id);
+          release = resolve;
+        }),
+    );
+    queue.enqueue({ id: 'a' });
+    queue.enqueue({ id: 'b' });
+    await tick();
+
+    let stopped = false;
+    const stopping = queue.stop().then((dropped) => {
+      stopped = true;
+      return dropped;
+    });
+    await tick();
+    expect(stopped).toBe(false); // still waiting for 'a'
+    release();
+    expect(await stopping).toBe(1);
+    expect(seen).toEqual(['a']);
+    expect(queue.enqueue({ id: 'c' })).toBe(false);
   });
 });
 
@@ -92,7 +181,18 @@ describe('upload → ingest → retrieve', () => {
     expect((await repo.getDocument(OWNER, second.document.id))?.isPrimaryResume).toBe(true);
   });
 
-  it('treats identical bytes as a no-op', async () => {
+  it('does not demote the primary resume when an older resume is uploaded again', async () => {
+    const { repo, queue, upload } = setup();
+    const old = await upload('old.md', utf8('# Old resume'), 'resume');
+    const current = await upload('new.md', utf8('# New resume'), 'resume');
+    await queue.idle();
+    const again = await upload('old.md', utf8('# Old resume'), 'resume');
+    expect(again.deduplicated).toBe(true);
+    expect(again.document.id).toBe(old.document.id);
+    expect((await repo.getDocument(OWNER, current.document.id))?.isPrimaryResume).toBe(true);
+  });
+
+  it('treats identical bytes of a ready document as a no-op', async () => {
     const { repo, files, queue, upload } = setup();
     const first = await upload('a.md', utf8(RESUME_MD));
     await queue.idle();
@@ -125,7 +225,54 @@ describe('upload → ingest → retrieve', () => {
     expect(files.files.size).toBe(1);
   });
 
-  it('keeps the previous chunks when a re-ingest fails', async () => {
+  it('stores the bytes again when retrying, so a lost file is recovered', async () => {
+    const { repo, queue, upload, files } = setup();
+    const { document } = await upload('a.md', utf8(RESUME_MD));
+    files.files.clear(); // the stored copy is lost before ingestion runs
+    await queue.idle();
+    const failed = await repo.getDocument(OWNER, document.id);
+    expect(failed?.status).toBe('failed');
+    expect(failed?.error).toMatch(/Could not load the stored file/);
+
+    await upload('a.md', utf8(RESUME_MD));
+    await queue.idle();
+    expect((await repo.getDocument(OWNER, document.id))?.status).toBe('ready');
+  });
+
+  it('retries a document stranded in pending or processing that nothing is working on', async () => {
+    const { repo, queue, upload } = setup();
+    // Simulate a crash: the row exists and is `processing`, but the queue is empty.
+    const { document } = await repo.createDocument({
+      ownerId: OWNER,
+      filename: 'a.md',
+      mimeType: 'text/markdown',
+      sizeBytes: utf8(RESUME_MD).byteLength,
+      sha256: sha256Hex(utf8(RESUME_MD)),
+      storagePath: `${OWNER}/stranded.md`,
+      kind: 'supporting',
+    });
+    await repo.markProcessing(document.id);
+
+    const again = await upload('a.md', utf8(RESUME_MD));
+    expect(again.deduplicated).toBe(true);
+    expect(again.document.status).toBe('pending');
+    await queue.idle();
+    expect((await repo.getDocument(OWNER, document.id))?.status).toBe('ready');
+  });
+
+  it('does not re-enqueue a document the queue is already working on', async () => {
+    const { queue, upload } = setup();
+    const first = await upload('a.md', utf8(RESUME_MD));
+    expect(queue.has(first.document.id)).toBe(true);
+    const enqueue = vi.spyOn(queue, 'enqueue');
+    const again = await upload('a.md', utf8(RESUME_MD));
+    expect(again.deduplicated).toBe(true);
+    expect(again.document.status).not.toBe('failed');
+    expect(enqueue).not.toHaveBeenCalled();
+    await queue.idle();
+  });
+
+  it('hides the previous chunks and bumps the version when a re-ingest fails', async () => {
     const good = createHashingEmbedder(256);
     let fail = false;
     const flaky: Embedder = {
@@ -137,15 +284,43 @@ describe('upload → ingest → retrieve', () => {
     await queue.idle();
     const before = [...repo.chunks];
     expect(before.length).toBeGreaterThan(0);
+    expect(await repo.getVersion(OWNER)).toBe(1);
 
     fail = true;
     await ingestDocument({ repo, files, embedder: flaky, log: silentLogger }, document);
 
     const after = await repo.getDocument(OWNER, document.id);
     expect(after?.status).toBe('failed');
-    expect(after?.error).toBe('provider down');
+    // The raw provider message stays in the logs; the owner sees a generic reason.
+    expect(after?.error).not.toContain('provider down');
+    // The chunks are kept (a successful retry replaces them) but no longer served,
+    // and the version moved when they left the corpus.
     expect(repo.chunks).toEqual(before);
-    expect(await repo.getVersion(OWNER)).toBe(1);
+    expect(await repo.getVersion(OWNER)).toBe(2);
+    const result = await retrieve({ repo, embedder: good }, OWNER, 'Kafka', 5);
+    expect(result).toEqual({ version: 2, chunks: [] });
+  });
+
+  it('logs and survives a failure that cannot be recorded', async () => {
+    const { repo, files, embedder } = setup();
+    const { document } = await repo.createDocument({
+      ownerId: OWNER,
+      filename: 'gone.md',
+      mimeType: 'text/markdown',
+      sizeBytes: 1,
+      sha256: 'a'.repeat(64),
+      storagePath: `${OWNER}/gone.md`,
+      kind: 'supporting',
+    });
+    vi.spyOn(repo, 'failIngestion').mockRejectedValue(new Error('database down'));
+    const error = vi.fn();
+    const log = { ...silentLogger, error, warn: vi.fn() };
+
+    await expect(ingestDocument({ repo, files, embedder, log }, document)).resolves.toBeUndefined();
+    expect(error).toHaveBeenCalledWith(
+      expect.objectContaining({ documentId: document.id }),
+      expect.stringMatching(/Could not record/),
+    );
   });
 
   it('rejects unsupported files before storing anything', async () => {
@@ -156,14 +331,14 @@ describe('upload → ingest → retrieve', () => {
   });
 
   it('returns the winner when an identical upload races past the dedupe check', async () => {
-    const { repo, deps } = setup();
+    const { repo, deps, queue } = setup();
     const winner = await uploadDocument(deps, {
       ownerId: OWNER,
       filename: 'a.md',
       bytes: utf8('# A'),
       kind: 'supporting',
     });
-    // Simulate the race: the lookup misses, then the insert hits the unique index.
+    // Simulate the race: the lookup misses, then the insert finds the existing row.
     vi.spyOn(repo, 'findBySha256').mockResolvedValueOnce(null);
     const loser = await uploadDocument(deps, {
       ownerId: OWNER,
@@ -174,6 +349,7 @@ describe('upload → ingest → retrieve', () => {
     expect(loser.deduplicated).toBe(true);
     expect(loser.document.id).toBe(winner.document.id);
     expect(await repo.listDocuments(OWNER)).toHaveLength(1);
+    await queue.idle();
   });
 });
 
@@ -184,8 +360,8 @@ describe('deleteDocument', () => {
     await queue.idle();
     expect(await repo.getVersion(OWNER)).toBe(1);
 
-    const result = await deleteDocument(deps, OWNER, document.id);
-    expect(result).toEqual({ deleted: true, version: 2 });
+    expect(await deleteDocument(deps, OWNER, document.id)).toBe(true);
+    expect(await repo.getVersion(OWNER)).toBe(2);
     expect(repo.chunks).toHaveLength(0);
     expect(files.files.size).toBe(0);
   });
@@ -194,18 +370,24 @@ describe('deleteDocument', () => {
     const { repo, deps, upload } = setup();
     const { document } = await upload('scan.pdf', makePdf([]));
     // Not ingested: still pending.
-    const result = await deleteDocument(deps, OWNER, document.id);
-    expect(result.version).toBe(0);
+    expect(await deleteDocument(deps, OWNER, document.id)).toBe(true);
     expect(await repo.getVersion(OWNER)).toBe(0);
+  });
+
+  it('keeps the file when another row references the same storage key', async () => {
+    const { repo, files, queue, deps, upload } = setup();
+    const { document } = await upload('a.md', utf8(RESUME_MD));
+    await queue.idle();
+    // The same bytes re-uploaded between the row delete and the file delete.
+    vi.spyOn(repo, 'isStoragePathInUse').mockResolvedValueOnce(true);
+    expect(await deleteDocument(deps, OWNER, document.id)).toBe(true);
+    expect(files.files.size).toBe(1);
   });
 
   it('does not delete another owner’s document', async () => {
     const { deps, upload } = setup();
     const { document } = await upload('a.md', utf8('# A'));
-    expect(await deleteDocument(deps, 'someone-else', document.id)).toEqual({
-      deleted: false,
-      version: null,
-    });
+    expect(await deleteDocument(deps, 'someone-else', document.id)).toBe(false);
   });
 });
 
@@ -217,9 +399,30 @@ describe('helpers', () => {
     expect(cleanFilename('')).toBe('upload');
   });
 
+  it('cleanFilename truncates by code points and keeps the extension', () => {
+    const long = `${'é'.repeat(300)}.PDF`;
+    const cleaned = cleanFilename(long);
+    expect(Array.from(cleaned)).toHaveLength(255);
+    expect(cleaned.endsWith('.PDF')).toBe(true);
+
+    // Astral characters are two UTF-16 units; truncation never splits one.
+    const emoji = cleanFilename(`${'😀'.repeat(300)}.md`);
+    expect(Array.from(emoji)).toHaveLength(255);
+    expect(emoji.endsWith('😀.md')).toBe(true);
+  });
+
   it('isUniqueViolation finds 23505 directly or in a cause chain', () => {
     expect(isUniqueViolation({ code: '23505' })).toBe(true);
     expect(isUniqueViolation(new Error('wrapped', { cause: { code: '23505' } }))).toBe(true);
     expect(isUniqueViolation(new Error('other'))).toBe(false);
+  });
+
+  it('publicIngestionError hides provider and internal details', () => {
+    expect(
+      publicIngestionError(
+        new EmbeddingError('failed (503): secret detail', true, { status: 503 }),
+      ),
+    ).toBe('Embedding provider error (status 503)');
+    expect(publicIngestionError(new Error('ECONNREFUSED 10.0.0.1:5432'))).not.toMatch(/10\.0/);
   });
 });
