@@ -358,20 +358,29 @@ After an apply, `railway config plan` should report no changes.
 > `execFileSync`, without a shell. The npm and pnpm installs ship a `railway.cmd`, a `railway.ps1`
 > and a `railway` shell script, and Windows cannot spawn any of those without a shell, so the check
 > throws "This version of railway/iac requires Railway CLI 5.42.1 or newer" even on a current CLI
-> (5.74.0). The SDK resolves the CLI from the `_` environment variable, falling back to the bare
-> name `railway`, so it has to point at the real `.exe`.
+> (5.74.0).
 >
-> In PowerShell and cmd.exe, `_` is not set, so the SDK falls back to the bare name and the check
-> fails. Point it at the binary first:
+> The fix is the same in every shell: put the directory holding `railway.exe` on `PATH` ahead of
+> the shims, so the SDK resolves the real binary instead of the shim. The directory is
+> `$(npm root -g)\@railway\cli\bin`.
+>
+> PowerShell:
 >
 > ```powershell
-> $env:_ = "$(npm root -g)\@railway\cli\bin\railway.exe"
+> $env:PATH = "$(npm root -g)\@railway\cli\bin;$env:PATH"
 > railway config plan    # now works
 > ```
 >
-> In Git Bash, bash sets `_` to the path of the command it runs, so calling the binary directly
-> works with no setup:
+> cmd.exe (the `for /f` capture needs `%%i` instead of `%i` inside a batch file):
+>
+> ```cmd
+> for /f "delims=" %i in ('npm root -g') do set "PATH=%i\@railway\cli\bin;%PATH%"
+> railway config plan    # now works
+> ```
+>
+> Git Bash:
 >
 > ```bash
-> "$(npm root -g)/@railway/cli/bin/railway.exe" config plan
+> export PATH="$(npm root -g)/@railway/cli/bin:$PATH"
+> railway config plan    # now works
 > ```
