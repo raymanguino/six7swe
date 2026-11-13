@@ -26,6 +26,14 @@ export const prReviewResponseSchema = z.object({
         file: z.string().nullable().default(null),
         line: z.number().int().nullable().default(null),
         message: z.string().min(1),
+        // A finding with no kind, or a null one, is about the code. The
+        // domain caps and merges steering findings, so a model that forgets
+        // the field only loses that backstop for the finding, never the
+        // finding itself. An unrecognised kind still fails the review.
+        kind: z
+          .enum(['defect', 'steering'])
+          .nullish()
+          .transform((kind) => kind ?? 'defect'),
       }),
     )
     .default([]),
@@ -131,11 +139,6 @@ export async function reviewPullRequest(
 
   return {
     summary: parsed.summary,
-    findings: parsed.findings.map((finding) => ({
-      severity: finding.severity,
-      file: finding.file,
-      line: finding.line,
-      message: finding.message,
-    })),
+    findings: parsed.findings,
   };
 }

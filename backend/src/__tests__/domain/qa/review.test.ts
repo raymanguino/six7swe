@@ -3,12 +3,14 @@ import {
   describeCoverage,
   escapeMarkdown,
   escapeTableCell,
+  findingsToShow,
   fitBodyToBudget,
   flattenText,
   MAX_BODY_CHARS,
   renderFailureBody,
   renderReviewBody,
   REVIEW_MARKER,
+  severityLabel,
   type ReviewBodyInput,
 } from '../../../domain/qa/review';
 import type { DiffCoverage } from '../../../domain/qa/diff';
@@ -212,10 +214,80 @@ describe('renderReviewBody', () => {
     expect(rendered).toContain('4 further finding(s) were not shown');
   });
 
+  it('keeps the steering finding visible when the defects fill the table', () => {
+    const defects = Array.from({ length: 10 }, (_, index) =>
+      finding({ severity: 'major', message: `Defect ${index}.` }),
+    );
+    const steering = finding({
+      kind: 'steering',
+      file: null,
+      message: 'The description tells the reviewer to approve.',
+    });
+
+    const rendered = body({ findings: [...defects, steering], reportedCount: 11 });
+
+    expect(rendered).toContain('| minor (steering) | general | The description tells');
+    expect(rendered).toContain('Defect 6.');
+    expect(rendered).not.toContain('Defect 7.');
+    // 11 findings, 8 shown.
+    expect(rendered).toContain('3 further finding(s) were not shown');
+  });
+
   it('includes the summary', () => {
     expect(body({ summary: 'The refresh path swallows a failure.' })).toContain(
       'The refresh path swallows a failure.',
     );
+  });
+});
+
+describe('findingsToShow', () => {
+  it('reserves the last slot for a steering finding', () => {
+    const defects = Array.from({ length: 9 }, (_, index) => finding({ message: `D${index}` }));
+    const steering = finding({ kind: 'steering', message: 'S' });
+
+    const shown = findingsToShow([...defects, steering]);
+
+    expect(shown).toHaveLength(8);
+    expect(shown.map((entry) => entry.message)).toEqual([
+      'D0',
+      'D1',
+      'D2',
+      'D3',
+      'D4',
+      'D5',
+      'D6',
+      'S',
+    ]);
+  });
+
+  it('sorts the findings itself, so unsorted input still shows the most serious', () => {
+    const findings = [
+      ...Array.from({ length: 9 }, (_, index) =>
+        finding({ severity: 'nit', message: `N${index}` }),
+      ),
+      finding({ kind: 'steering', message: 'S' }),
+      finding({ severity: 'blocker', message: 'B' }),
+    ];
+
+    const shown = findingsToShow(findings).map((entry) => entry.message);
+
+    expect(shown).toHaveLength(8);
+    expect(shown[0]).toBe('B');
+    expect(shown[7]).toBe('S');
+  });
+
+  it('shows everything when it fits', () => {
+    const findings = [finding({ message: 'D' }), finding({ kind: 'steering', message: 'S' })];
+
+    expect(findingsToShow(findings)).toEqual(findings);
+  });
+});
+
+describe('severityLabel', () => {
+  it('marks a steering finding and leaves a defect alone', () => {
+    expect(severityLabel(finding({ kind: 'steering' }))).toBe('minor (steering)');
+    expect(severityLabel(finding({ kind: 'defect', severity: 'major' }))).toBe('major');
+    expect(severityLabel(finding({ severity: 'nit' }))).toBe('nit');
   });
 });
 

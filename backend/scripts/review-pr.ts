@@ -41,6 +41,7 @@ import {
   renderReviewBody,
   reviewEventForGate,
   sanitizeFindings,
+  severityLabel,
   sortFindingsBySeverity,
   type ChangedFile,
   type DiffCoverage,
@@ -283,7 +284,10 @@ async function main(): Promise<void> {
 
     // The findings are sanitized once, here. The same list is given to the
     // gate and rendered into the body, so what the reviewer reads is
-    // exactly what was decided on.
+    // exactly what was decided on. decideGate sanitizes its input again on
+    // purpose, so a caller that skips this step cannot have a hallucinated
+    // path or an uncapped steering finding block a merge; sanitizing is
+    // idempotent, so doing it twice changes nothing.
     const findings = sortFindingsBySeverity(sanitizeFindings(review.findings, changedFiles));
 
     const gate = decideGate({
@@ -298,7 +302,7 @@ async function main(): Promise<void> {
       `Model returned ${review.findings.length} finding(s); ${findings.length} survived sanitizing.`,
     );
     for (const finding of findings) {
-      logLine(`  ${finding.severity}: ${finding.message}`);
+      logLine(`  ${severityLabel(finding)}: ${finding.message}`);
     }
     logLine(`Gate outcome: ${gate}`);
 
