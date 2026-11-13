@@ -9,6 +9,8 @@ export type PortfolioData = {
   linkedinUrl: string | null;
   githubUrl: string | null;
   resumeFilename: string | null;
+  /** False when the backend has no PDF to serve; the download link is hidden then. */
+  resumeAvailable: boolean;
 };
 
 export function usePortfolio() {

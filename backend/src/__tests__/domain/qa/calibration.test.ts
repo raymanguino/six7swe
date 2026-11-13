@@ -10,7 +10,7 @@ import {
 
 function run(overrides: Partial<QaRunStats> = {}): QaRunStats {
   return {
-    v: 1,
+    v: 2,
     pr: 1,
     sha: 'aaa',
     mode: 'comment-only',
@@ -19,6 +19,9 @@ function run(overrides: Partial<QaRunStats> = {}): QaRunStats {
     backendFiles: 1,
     frontendFiles: 0,
     diffChars: 500,
+    omittedFiles: 0,
+    shortenedPatches: 0,
+    patchChars: 480,
     reported: 0,
     kept: { blocker: 0, major: 0, minor: 0, nit: 0 },
     tokens: { prompt: 1000, completion: 2000, reasoning: 1500 },
@@ -27,7 +30,7 @@ function run(overrides: Partial<QaRunStats> = {}): QaRunStats {
   };
 }
 
-const CONTEXT = { runs: 1, runsWithoutStats: 0, runsWithExpiredLogs: 0 };
+const CONTEXT = { runs: 1, runsWithoutStats: 0, runsWithExpiredLogs: 0, diffBudgetChars: 60_000 };
 
 describe('the stats line', () => {
   it('reads back what was written, through the runner timestamp', () => {
@@ -53,6 +56,26 @@ describe('the stats line', () => {
     ].join('\n');
 
     expect(parseStatsLines(log)).toEqual([]);
+  });
+
+  it('still reads a version 1 line, with no coverage counts', () => {
+    const {
+      omittedFiles: _omitted,
+      shortenedPatches: _shortened,
+      patchChars: _patch,
+      ...v1
+    } = run({ v: 1 });
+    const log = `QA_STATS ${JSON.stringify(v1)}`;
+
+    expect(parseStatsLines(log)).toEqual([
+      run({ v: 1, omittedFiles: null, shortenedPatches: null, patchChars: null }),
+    ]);
+  });
+
+  it('rejects a version 2 line without its coverage counts', () => {
+    const { omittedFiles: _omitted, ...missing } = run();
+
+    expect(parseStatsLines(`QA_STATS ${JSON.stringify(missing)}`)).toEqual([]);
   });
 
   it('accepts a failed run, which has no findings and may have no tokens', () => {
@@ -174,6 +197,7 @@ describe('renderCalibrationReport', () => {
       runs: 6,
       runsWithoutStats: 3,
       runsWithExpiredLogs: 2,
+      diffBudgetChars: 60_000,
     });
 
     expect(report).toContain('Counted from 1 of 6 workflow run(s).');
@@ -186,5 +210,23 @@ describe('renderCalibrationReport', () => {
 
     expect(report).toContain('| Runtime | no data |');
     expect(report).toContain('| Completion tokens | no data |');
+  });
+
+  it('reports coverage and reviewable size against the budget', () => {
+    const runs = [
+      run({ pr: 1, omittedFiles: 0, patchChars: 10_000 }),
+      run({ pr: 2, omittedFiles: 33, patchChars: 140_000 }),
+      run({ pr: 3, omittedFiles: 3, patchChars: 70_000 }),
+      run({ pr: 4, v: 1, omittedFiles: null, shortenedPatches: null, patchChars: null }),
+    ];
+
+    const report = renderCalibrationReport(summarizeCalibration(runs), CONTEXT);
+
+    expect(report).toContain('| Reviews with omitted files | 2 of 3 |');
+    expect(report).toContain('| Omitted files per review | 12 file(s) average, 33 file(s) max |');
+    expect(report).toContain(
+      '| Reviewable size (patch characters) | 70,000 median, 140,000 p90, 140,000 max (budget 60,000) |',
+    );
+    expect(report).toContain('1 review(s) carry no coverage counts');
   });
 });

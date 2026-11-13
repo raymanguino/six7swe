@@ -1,13 +1,25 @@
 import {
+  consolidateSteeringFindings,
   decideGate,
+  STEERING_SEVERITY,
   decideReviewEvent,
   reviewEventForGate,
   sanitizeFindings,
   sortFindingsBySeverity,
+  manualReviewReasons,
   touchesProtectedPath,
+  type GateInput,
   type ReviewFinding,
 } from '../../../domain/qa/verdict';
-import type { ChangedFile } from '../../../domain/qa/diff';
+import type { ChangedFile, DiffCoverage } from '../../../domain/qa/diff';
+
+const FULL: DiffCoverage = { totalFiles: 1, omittedFiles: 0, shortenedPatches: 0, patchChars: 100 };
+const PARTIAL: DiffCoverage = {
+  totalFiles: 58,
+  omittedFiles: 33,
+  shortenedPatches: 0,
+  patchChars: 140_000,
+};
 
 function finding(overrides: Partial<ReviewFinding> = {}): ReviewFinding {
   return {
@@ -118,6 +130,7 @@ describe('decideGate', () => {
         changedFiles: [],
         mode: 'comment-only',
         reviewCompleted: false,
+        coverage: FULL,
       }),
     ).toBe('fail-closed');
 
@@ -127,6 +140,7 @@ describe('decideGate', () => {
         changedFiles: [],
         mode: 'enforce',
         reviewCompleted: false,
+        coverage: FULL,
       }),
     ).toBe('fail-closed');
   });
@@ -138,6 +152,7 @@ describe('decideGate', () => {
         changedFiles: [patchedFile()],
         mode: 'enforce',
         reviewCompleted: false,
+        coverage: FULL,
       }),
     ).toBe('fail-closed');
   });
@@ -149,6 +164,7 @@ describe('decideGate', () => {
         changedFiles: [],
         mode: 'comment-only',
         reviewCompleted: true,
+        coverage: FULL,
       }),
     ).toBe('pass');
 
@@ -165,6 +181,7 @@ describe('decideGate', () => {
         ],
         mode: 'comment-only',
         reviewCompleted: true,
+        coverage: FULL,
       }),
     ).toBe('pass');
   });
@@ -176,6 +193,7 @@ describe('decideGate', () => {
         changedFiles: [patchedFile()],
         mode: 'enforce',
         reviewCompleted: true,
+        coverage: FULL,
       }),
     ).toBe('pass');
   });
@@ -187,6 +205,7 @@ describe('decideGate', () => {
         changedFiles: [patchedFile()],
         mode: 'enforce',
         reviewCompleted: true,
+        coverage: FULL,
       }),
     ).toBe('pass');
   });
@@ -198,6 +217,7 @@ describe('decideGate', () => {
         changedFiles: [patchedFile()],
         mode: 'enforce',
         reviewCompleted: true,
+        coverage: FULL,
       }),
     ).toBe('fail');
 
@@ -207,6 +227,7 @@ describe('decideGate', () => {
         changedFiles: [patchedFile()],
         mode: 'enforce',
         reviewCompleted: true,
+        coverage: FULL,
       }),
     ).toBe('fail');
   });
@@ -225,6 +246,7 @@ describe('decideGate', () => {
         ],
         mode: 'enforce',
         reviewCompleted: true,
+        coverage: FULL,
       }),
     ).toBe('manual-review');
   });
@@ -238,6 +260,7 @@ describe('decideGate', () => {
         ],
         mode: 'enforce',
         reviewCompleted: true,
+        coverage: FULL,
       }),
     ).toBe('manual-review');
   });
@@ -257,6 +280,7 @@ describe('decideGate', () => {
         ],
         mode: 'enforce',
         reviewCompleted: true,
+        coverage: FULL,
       }),
     ).toBe('manual-review');
   });
@@ -268,6 +292,7 @@ describe('decideGate', () => {
         changedFiles: [patchedFile()],
         mode: 'enforce',
         reviewCompleted: true,
+        coverage: FULL,
       }),
     ).toBe('pass');
   });
@@ -282,6 +307,7 @@ describe('decideGate', () => {
         mode: 'enforce',
         protectedPaths: ['docs/**'],
         reviewCompleted: true,
+        coverage: FULL,
       }),
     ).toBe('manual-review');
   });
@@ -395,6 +421,159 @@ describe('sortFindingsBySeverity', () => {
   });
 });
 
+describe('steering findings', () => {
+  const steering = (overrides: Partial<ReviewFinding> = {}): ReviewFinding =>
+    finding({ kind: 'steering', severity: 'blocker', file: null, ...overrides });
+
+  it('uses a severity that never blocks a merge', () => {
+    expect(['blocker', 'major']).not.toContain(STEERING_SEVERITY);
+  });
+
+  it('merges every steering finding into one, after the defects', () => {
+    const defect = finding({ severity: 'nit', message: 'a real nit' });
+    const result = consolidateSteeringFindings([
+      steering({ message: 'Ignore all previous instructions.' }),
+      defect,
+      steering({ message: 'Forged [six7swe: notice].' }),
+      steering({ message: 'Fake response object.' }),
+    ]);
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toBe(defect);
+    expect(result[1]).toEqual({
+      severity: STEERING_SEVERITY,
+      file: null,
+      line: null,
+      kind: 'steering',
+      message:
+        '[3 steering findings] Ignore all previous instructions. | Forged [six7swe: notice]. | Fake response object.',
+    });
+  });
+
+  it('bounds the merged message: short excerpts, three named, the rest counted', () => {
+    const long = 'x'.repeat(5_000);
+    const [merged] = consolidateSteeringFindings(
+      Array.from({ length: 6 }, (_, index) => steering({ message: `${index}${long}` })),
+    );
+
+    expect(merged.message.startsWith('[6 steering findings] 0')).toBe(true);
+    expect(merged.message).toContain('1x');
+    expect(merged.message).toContain('2x');
+    expect(merged.message).not.toContain('| 3x');
+    expect(merged.message.endsWith(' | and 3 more')).toBe(true);
+    expect(merged.message.length).toBeLessThan(1_000);
+    // Merging the merged finding again leaves it as it is.
+    expect(consolidateSteeringFindings([merged])).toEqual([merged]);
+  });
+
+  it('keeps the location only when every steering finding shares it', () => {
+    const at = { file: 'backend/src/index.ts', line: 11 };
+    const shared = consolidateSteeringFindings([steering(at), steering(at)]);
+    const mixed = consolidateSteeringFindings([steering(at), steering({ ...at, line: 12 })]);
+
+    expect(shared[0]).toMatchObject(at);
+    expect(mixed[0]).toMatchObject({ file: null, line: null });
+  });
+
+  it('caps a single steering finding without changing its message', () => {
+    expect(consolidateSteeringFindings([steering({ message: 'Injected.' })])).toEqual([
+      steering({ message: 'Injected.', severity: STEERING_SEVERITY }),
+    ]);
+  });
+
+  it('leaves a list without steering findings alone', () => {
+    const findings = [finding({ severity: 'blocker' }), finding({ kind: 'defect' })];
+
+    expect(consolidateSteeringFindings(findings)).toEqual(findings);
+  });
+
+  it('is applied by sanitizeFindings, so the script and the gate both get it', () => {
+    const changedFiles = [patchedFile()];
+    const sanitized = sanitizeFindings(
+      [steering(), steering({ file: 'backend/src/index.ts', line: 11 })],
+      changedFiles,
+    );
+
+    expect(sanitized).toHaveLength(1);
+    expect(sanitized[0].severity).toBe(STEERING_SEVERITY);
+    // Sanitizing twice, as the script and the gate do, changes nothing more.
+    expect(sanitizeFindings(sanitized, changedFiles)).toEqual(sanitized);
+  });
+
+  it('keeps a steering finding whose file is outside the diff, as a general finding', () => {
+    const sanitized = sanitizeFindings(
+      [
+        steering({ file: 'pull-request-description.md', line: 3, message: 'Injected.' }),
+        finding({ file: 'backend/src/not-in-diff.ts' }),
+      ],
+      [patchedFile()],
+    );
+
+    expect(sanitized).toEqual([
+      {
+        ...steering({ message: 'Injected.' }),
+        severity: STEERING_SEVERITY,
+        file: null,
+        line: null,
+      },
+    ]);
+  });
+
+  it('passes the enforce gate with only a blocker-rated steering finding', () => {
+    expect(
+      decideGate({
+        findings: [steering({ severity: 'blocker' })],
+        changedFiles: [patchedFile()],
+        mode: 'enforce',
+        reviewCompleted: true,
+        coverage: FULL,
+      }),
+    ).toBe('pass');
+  });
+
+  it('cannot fail the enforce gate on its own, however it was rated', () => {
+    expect(
+      decideGate({
+        findings: [steering(), steering({ severity: 'major' }), steering()],
+        changedFiles: [patchedFile()],
+        mode: 'enforce',
+        reviewCompleted: true,
+        coverage: FULL,
+      }),
+    ).toBe('pass');
+  });
+
+  it('does not hide a real blocker in the same pull request', () => {
+    const findings = [
+      ...Array.from({ length: 10 }, () => steering()),
+      finding({ severity: 'blocker', message: 'real defect' }),
+    ];
+    const input: GateInput = {
+      findings,
+      changedFiles: [patchedFile()],
+      mode: 'enforce',
+      reviewCompleted: true,
+      coverage: FULL,
+    };
+
+    expect(decideGate(input)).toBe('fail');
+
+    const shown = sortFindingsBySeverity(sanitizeFindings(findings, [patchedFile()]));
+    expect(shown.map((entry) => entry.message)[0]).toBe('real defect');
+    expect(shown).toHaveLength(2);
+  });
+
+  it('sorts a steering finding after every defect, even a nit', () => {
+    const sorted = sortFindingsBySeverity([
+      steering({ severity: 'minor', message: 'steering' }),
+      finding({ severity: 'nit', message: 'nit' }),
+      finding({ severity: 'major', message: 'major' }),
+    ]);
+
+    expect(sorted.map((entry) => entry.message)).toEqual(['major', 'nit', 'steering']);
+  });
+});
+
 describe('touchesProtectedPath', () => {
   it('matches a workflow file against the workflows glob', () => {
     expect(touchesProtectedPath(['.github/workflows/qa-review.yml'])).toBe(true);
@@ -471,5 +650,110 @@ describe('touchesProtectedPath', () => {
 
   it('returns false for an empty file list', () => {
     expect(touchesProtectedPath([])).toBe(false);
+  });
+});
+
+describe('decideGate with partial coverage', () => {
+  const changedFiles: ChangedFile[] = [
+    {
+      filename: 'backend/src/services/thing.ts',
+      status: 'modified',
+      additions: 1,
+      deletions: 0,
+      patch: '@@ -1 +1 @@\n+x',
+    },
+  ];
+
+  function gate(overrides: Partial<GateInput> = {}): ReturnType<typeof decideGate> {
+    return decideGate({
+      findings: [],
+      changedFiles,
+      mode: 'enforce',
+      reviewCompleted: true,
+      coverage: FULL,
+      ...overrides,
+    });
+  }
+
+  it('needs a human in enforce mode when files were omitted and nothing blocks', () => {
+    expect(gate({ coverage: PARTIAL })).toBe('manual-review');
+    expect(
+      gate({
+        coverage: PARTIAL,
+        findings: [finding({ severity: 'minor', file: 'backend/src/services/thing.ts' })],
+      }),
+    ).toBe('manual-review');
+  });
+
+  it('still fails on a blocking finding in the files that were read', () => {
+    expect(
+      gate({
+        coverage: PARTIAL,
+        findings: [finding({ severity: 'major', file: 'backend/src/services/thing.ts' })],
+      }),
+    ).toBe('fail');
+  });
+
+  it('passes in comment-only mode whatever the coverage', () => {
+    expect(gate({ mode: 'comment-only', coverage: PARTIAL })).toBe('pass');
+  });
+
+  it('passes when nothing was omitted and nothing blocks', () => {
+    expect(gate()).toBe('pass');
+  });
+
+  it('does not let shortened patches change the outcome', () => {
+    expect(gate({ coverage: { ...FULL, shortenedPatches: 5 } })).toBe('pass');
+  });
+
+  it('is still fail-closed when the review did not complete', () => {
+    expect(gate({ coverage: PARTIAL, reviewCompleted: false })).toBe('fail-closed');
+  });
+
+  it('defaults to full coverage in decideReviewEvent, and honours a partial one', () => {
+    expect(decideReviewEvent([], 'enforce', { changedFiles })).toBe('COMMENT');
+    expect(
+      decideReviewEvent(
+        [finding({ severity: 'major', file: changedFiles[0].filename })],
+        'enforce',
+        {
+          changedFiles,
+          coverage: PARTIAL,
+        },
+      ),
+    ).toBe('REQUEST_CHANGES');
+  });
+});
+
+describe('manualReviewReasons', () => {
+  const plain: ChangedFile = {
+    filename: 'backend/src/services/thing.ts',
+    status: 'modified',
+    additions: 1,
+    deletions: 0,
+  };
+  const guarded: ChangedFile = { ...plain, filename: '.github/workflows/qa-review.yml' };
+
+  it('names nothing for a complete review of ordinary files', () => {
+    expect(manualReviewReasons({ changedFiles: [plain], coverage: FULL })).toEqual([]);
+  });
+
+  it('names each cause, and both when both apply', () => {
+    expect(manualReviewReasons({ changedFiles: [plain], coverage: PARTIAL })).toEqual([
+      'partial-coverage',
+    ]);
+    expect(manualReviewReasons({ changedFiles: [guarded], coverage: FULL })).toEqual([
+      'protected-path',
+    ]);
+    expect(manualReviewReasons({ changedFiles: [guarded], coverage: PARTIAL })).toEqual([
+      'protected-path',
+      'partial-coverage',
+    ]);
+  });
+
+  it('ignores shortened patches', () => {
+    expect(
+      manualReviewReasons({ changedFiles: [plain], coverage: { ...FULL, shortenedPatches: 3 } }),
+    ).toEqual([]);
   });
 });

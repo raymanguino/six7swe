@@ -71,7 +71,8 @@ pnpm preview
 ## Railway Deployment
 
 This frontend is configured to deploy on Railway as part of a monorepo setup.
-The Railway configuration is in `railway.json`.
+The Railway configuration is the `frontend` service in `.railway/railway.ts` at the
+repository root, applied with `railway config apply` (see `DEPLOYMENT.md`).
 
 Set `VITE_API_URL`, `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` on the
 Railway service.

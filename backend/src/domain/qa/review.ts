@@ -18,9 +18,13 @@
  * "**Gate outcome: pass**" would otherwise fake the verdict.
  */
 
+import type { DiffCoverage } from './diff';
 import {
+  isSteering,
   MAX_REPORTED_FINDINGS,
+  sortFindingsBySeverity,
   type GateOutcome,
+  type ManualReviewReason,
   type ReviewFinding,
   type ReviewMode,
 } from './verdict';
@@ -127,6 +131,37 @@ function truncate(text: string, limit: number): string {
   return `${text.slice(0, limit - 3)}...`;
 }
 
+/**
+ * The severity cell, which marks a steering finding as one.
+ *
+ * A steering finding is about the pull request's text, not its code, and
+ * the reader has to be able to tell the two apart at a glance.
+ */
+export function severityLabel(finding: ReviewFinding): string {
+  return isSteering(finding) ? `${finding.severity} (steering)` : finding.severity;
+}
+
+/**
+ * Picks the findings the body shows, in order.
+ *
+ * The steering findings are kept, after the defects, by reserving their
+ * slots at the end. A plain slice of the sorted list would cut them as
+ * soon as there were enough defects, and the reader would never learn
+ * that the pull request tried to steer its review.
+ *
+ * It sorts the findings itself, so the most serious defects are the ones
+ * shown whether or not the caller sorted them first.
+ */
+export function findingsToShow(findings: readonly ReviewFinding[]): ReviewFinding[] {
+  const sorted = sortFindingsBySeverity(findings);
+  const steering = sorted.filter(isSteering).slice(0, MAX_REPORTED_FINDINGS);
+  const defects = sorted
+    .filter((finding) => !isSteering(finding))
+    .slice(0, MAX_REPORTED_FINDINGS - steering.length);
+
+  return [...defects, ...steering];
+}
+
 function location(finding: ReviewFinding): string {
   if (finding.file === null) {
     return 'general';
@@ -146,6 +181,99 @@ export interface ReviewBodyInput {
   reportedCount: number;
   gate: GateOutcome;
   commitSha: string;
+  /** How much of the pull request the model was shown, from the diff builder. */
+  coverage: DiffCoverage;
+  /** Why a human has to look. Only rendered when the gate is `manual-review`. */
+  manualReviewReasons: readonly ManualReviewReason[];
+}
+
+function reviewedFiles(coverage: DiffCoverage): number {
+  return coverage.totalFiles - coverage.omittedFiles;
+}
+
+function count(n: number, singular: string, plural: string): string {
+  return `${n} ${n === 1 ? singular : plural}`;
+}
+
+/**
+ * Says how much of the pull request the model read.
+ *
+ * Written by the domain from the builder's own counts, never by the model,
+ * so a reader can tell "found nothing" from "read less than half".
+ */
+export function describeCoverage(coverage: DiffCoverage): string {
+  const reviewed = reviewedFiles(coverage);
+  const files =
+    coverage.omittedFiles > 0
+      ? `Reviewed ${reviewed} of ${count(coverage.totalFiles, 'file', 'files')}.`
+      : coverage.totalFiles === 1
+        ? 'Reviewed the 1 file.'
+        : `Reviewed all ${coverage.totalFiles} files.`;
+
+  return coverage.shortenedPatches > 0
+    ? `${files} ${count(coverage.shortenedPatches, 'patch', 'patches')} shortened.`
+    : files;
+}
+
+/**
+ * Omitted files tolerated before advising a split. 0 means the note fires
+ * exactly when the diff budget forces files out of the review, so the
+ * initial threshold equals the budget by construction. Revisit from
+ * qa:calibration data (#59); the unit is a file count, so tuning it from
+ * size data later will change the constant's meaning.
+ */
+export const SIZE_ADVISORY_THRESHOLD = 0;
+
+/**
+ * A note, not a finding, that the pull request is too large to review in
+ * full. Returns null unless more than `threshold` files were omitted from
+ * the diff. It is advice to the author only: it has no part in the gate
+ * outcome, the review event or the exit code.
+ */
+export function sizeAdvisory(coverage: DiffCoverage, threshold: number): string | null {
+  if (coverage.omittedFiles <= threshold) {
+    return null;
+  }
+
+  return [
+    `This pull request is too large for a complete review (${reviewedFiles(coverage)} of ${coverage.totalFiles} files read).`,
+    'Consider splitting it, for example schema, ingestion and API as separate pull requests.',
+  ].join('\n');
+}
+
+/**
+ * The coverage line, and why a human has to look when the gate says so.
+ *
+ * `manual-review` has two causes, and the reader has to be told which one
+ * applies - or both. The coverage cause extends the coverage line rather
+ * than repeating it.
+ */
+function coverageAndReasons(input: ReviewBodyInput): string[] {
+  const reasons = input.gate === 'manual-review' ? input.manualReviewReasons : [];
+  const lines: string[] = [];
+
+  if (reasons.includes('partial-coverage')) {
+    const reviewed = reviewedFiles(input.coverage);
+    lines.push(
+      `Reviewed ${reviewed} of ${input.coverage.totalFiles} files. ${input.coverage.omittedFiles} file(s) were not shown to the model, so a clean result cannot be trusted.`,
+    );
+  } else {
+    lines.push(describeCoverage(input.coverage));
+  }
+
+  if (reasons.includes('protected-path')) {
+    lines.push(
+      'This pull request changes a path that judges or runs the review, so a human decides.',
+    );
+  }
+
+  return lines;
+}
+
+function advisoryLines(coverage: DiffCoverage): string[] {
+  const note = sizeAdvisory(coverage, SIZE_ADVISORY_THRESHOLD);
+
+  return note === null ? [] : ['', ...note.split('\n').map((line) => `_${line}_`)];
 }
 
 /**
@@ -167,38 +295,41 @@ export function renderReviewBody(input: ReviewBodyInput): string {
     '',
     `**Gate outcome: \`${input.gate}\`**`,
     `Reviewed commit: \`${escapeMarkdown(input.commitSha)}\``,
+    ...coverageAndReasons(input),
+    ...advisoryLines(input.coverage),
     '',
   ];
 
   const summary = escapeMarkdown(truncate(input.summary, MAX_SUMMARY_CHARS));
 
-  const rows = input.findings
-    .slice(0, MAX_REPORTED_FINDINGS)
-    .map(
-      (finding) =>
-        `| ${finding.severity} | ${location(finding)} | ${escapeTableCell(
-          truncate(finding.message, MAX_MESSAGE_CHARS),
-        )} |`,
-    );
+  const shown = findingsToShow(input.findings);
+  const rows = shown.map(
+    (finding) =>
+      `| ${severityLabel(finding)} | ${location(finding)} | ${escapeTableCell(
+        truncate(finding.message, MAX_MESSAGE_CHARS),
+      )} |`,
+  );
 
   const footer: string[] = [];
 
-  if (input.findings.length > MAX_REPORTED_FINDINGS) {
-    footer.push(
-      '',
-      `_${input.findings.length - MAX_REPORTED_FINDINGS} further finding(s) were not shown._`,
-    );
+  if (input.findings.length > shown.length) {
+    footer.push('', `_${input.findings.length - shown.length} further finding(s) were not shown._`);
   }
 
   // A model that reported findings which all pointed outside the diff
   // reported something, even though nothing survives sanitizing. Saying
   // "the model reported nothing" would be false.
+  //
+  // A partial review must not claim the model "reported nothing" either:
+  // it reported nothing about the part it was shown.
   if (rows.length === 0) {
     footer.push(
       '',
-      input.reportedCount === 0
-        ? 'No findings. The model reported nothing against this diff.'
-        : `No findings to show. The model reported ${input.reportedCount} finding(s), but none of them referenced a file in this diff, so none were kept.`,
+      input.reportedCount > 0
+        ? `No findings to show. The model reported ${input.reportedCount} finding(s), but none of them referenced a file in this diff, so none were kept.`
+        : input.coverage.omittedFiles > 0
+          ? `No findings in the files that were reviewed. ${input.coverage.omittedFiles} file(s) were not shown to the model.`
+          : 'No findings. The model reported nothing against this diff.',
     );
   }
 

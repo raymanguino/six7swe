@@ -61,6 +61,10 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      # CI never applies the Railway config; this only catches a file that would fail to plan.
+      - name: Type-check Railway config
+        run: pnpm exec tsc -p tsconfig.railway.json
+
       # Type-checks the knowledge sources together with its tests and config
       # files; the build only covers `src` without the tests.
       - name: Typecheck the knowledge service

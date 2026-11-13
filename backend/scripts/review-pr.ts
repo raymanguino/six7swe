@@ -27,19 +27,24 @@
 
 import { z } from 'zod';
 import {
-  buildReviewDiff,
   countAreas,
   countBySeverity,
   decideGate,
+  describeCoverage,
   formatStatsLine,
   flattenText,
   gateBlocksMerge,
+  manualReviewReasons,
+  prepareReviewDiff,
+  REVIEW_DIFF_BUDGET,
   renderFailureBody,
   renderReviewBody,
   reviewEventForGate,
   sanitizeFindings,
+  severityLabel,
   sortFindingsBySeverity,
   type ChangedFile,
+  type DiffCoverage,
   type FindingSeverity,
   type GateOutcome,
 } from '../src/domain/qa';
@@ -105,19 +110,6 @@ const envSchema = z.object({
    */
   REVIEW_MODE: z.enum(['comment-only', 'enforce']).default('comment-only'),
 });
-
-/**
- * How much of the diff the model is shown.
- *
- * The per-file budget keeps one large file from crowding out the rest; the
- * total budget bounds the whole prompt. Both are generous enough that a
- * normal pull request is shown in full.
- */
-const DIFF_BUDGET = {
-  perFileChars: 8_000,
-  totalChars: 60_000,
-  skipPatchesFor: [] as string[],
-};
 
 /** How many times the head SHA is re-checked when the pull request moves. */
 const HEAD_READ_ATTEMPTS = 3;
@@ -216,6 +208,7 @@ async function main(): Promise<void> {
   // fails part-way still says how far it got.
   let changedFiles: ChangedFile[] = [];
   let diffChars = 0;
+  let coverage: DiffCoverage | null = null;
   let usage: TokenUsage | null = null;
 
   /**
@@ -238,6 +231,9 @@ async function main(): Promise<void> {
         files: changedFiles.length,
         ...countAreas(changedFiles),
         diffChars,
+        omittedFiles: coverage?.omittedFiles ?? null,
+        shortenedPatches: coverage?.shortenedPatches ?? null,
+        patchChars: coverage?.patchChars ?? null,
         reported,
         kept,
         tokens: usage
@@ -263,11 +259,14 @@ async function main(): Promise<void> {
       );
     }
 
-    const diff = buildReviewDiff(changedFiles, DIFF_BUDGET);
+    const prepared = prepareReviewDiff(changedFiles, REVIEW_DIFF_BUDGET);
+    const diff = prepared.text;
+    const diffCoverage = prepared.coverage;
+    coverage = diffCoverage;
     diffChars = diff.length;
 
     logLine(
-      `Reviewing PR #${env.PR_NUMBER} at ${headSha}: ${changedFiles.length} file(s), ${diff.length} character(s) of diff sent to the model.`,
+      `Reviewing PR #${env.PR_NUMBER} at ${headSha}: ${changedFiles.length} file(s), ${diff.length} character(s) of diff sent to the model. ${describeCoverage(diffCoverage)}`,
     );
 
     const review = await reviewPullRequest(
@@ -285,7 +284,10 @@ async function main(): Promise<void> {
 
     // The findings are sanitized once, here. The same list is given to the
     // gate and rendered into the body, so what the reviewer reads is
-    // exactly what was decided on.
+    // exactly what was decided on. decideGate sanitizes its input again on
+    // purpose, so a caller that skips this step cannot have a hallucinated
+    // path or an uncapped steering finding block a merge; sanitizing is
+    // idempotent, so doing it twice changes nothing.
     const findings = sortFindingsBySeverity(sanitizeFindings(review.findings, changedFiles));
 
     const gate = decideGate({
@@ -293,13 +295,14 @@ async function main(): Promise<void> {
       changedFiles,
       mode,
       reviewCompleted: true,
+      coverage: diffCoverage,
     });
 
     logLine(
       `Model returned ${review.findings.length} finding(s); ${findings.length} survived sanitizing.`,
     );
     for (const finding of findings) {
-      logLine(`  ${finding.severity}: ${finding.message}`);
+      logLine(`  ${severityLabel(finding)}: ${finding.message}`);
     }
     logLine(`Gate outcome: ${gate}`);
 
@@ -310,6 +313,8 @@ async function main(): Promise<void> {
       reportedCount: review.findings.length,
       gate,
       commitSha: headSha,
+      coverage: diffCoverage,
+      manualReviewReasons: manualReviewReasons({ changedFiles, coverage: diffCoverage }),
     });
 
     // A COMMENT can be updated in place: only the body changes, and the
