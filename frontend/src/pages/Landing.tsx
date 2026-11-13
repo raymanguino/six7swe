@@ -875,7 +875,7 @@ export default function Landing({ onSectionChange }: LandingProps) {
                 </div>
               </div>
             )}
-            {portfolio && (
+            {portfolio?.resumeAvailable && (
             <div className="card">
               <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Resume</h3>
               <a
