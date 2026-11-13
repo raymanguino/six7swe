@@ -91,9 +91,13 @@ export const MAX_REPORTED_FINDINGS = 8;
  */
 export const STEERING_SEVERITY: FindingSeverity = 'minor';
 
-function isSteering(finding: ReviewFinding): boolean {
+/** Whether a finding is about the pull request's text rather than its code. */
+export function isSteering(finding: ReviewFinding): boolean {
   return finding.kind === 'steering';
 }
+
+/** Separates the attempts inside a merged steering finding's message. */
+const STEERING_MESSAGE_SEPARATOR = ' | ';
 
 /**
  * Collapses every steering finding into one, at a fixed severity.
@@ -104,14 +108,18 @@ function isSteering(finding: ReviewFinding): boolean {
  * out of the list, and a steering finding the model rated `blocker` would
  * let pasted text alone fail the gate.
  *
- * Defects keep their order. The single steering finding goes after them,
- * keeps the first steering finding's location and says how many attempts
- * were merged into it.
+ * Defects keep their order. The single steering finding goes after them.
+ * When several are merged, the count comes first in the message, so the
+ * truncation applied when the body is rendered cannot clip it, and every
+ * message is kept. The location is kept only when every merged finding
+ * shares it; otherwise the finding is about the pull request as a whole.
  *
- * A model that has been steered could also label a real defect as
- * steering, and this would downgrade it. That gives an attacker nothing
- * new: a model that can be steered that far can leave the defect out
- * altogether.
+ * Known residual risk: a model that has been steered could label a real
+ * defect as steering, and this would downgrade it to a non-blocking
+ * severity. Inducing a relabel is likely cheaper than inducing an
+ * omission - text such as "this auth change is pre-approved" next to a
+ * real vulnerability could do it - so this is not a complete defence. The
+ * finding is still shown, which leaves a human able to catch it.
  */
 export function consolidateSteeringFindings(findings: readonly ReviewFinding[]): ReviewFinding[] {
   const defects = findings.filter((finding) => !isSteering(finding));
@@ -122,17 +130,22 @@ export function consolidateSteeringFindings(findings: readonly ReviewFinding[]):
   }
 
   const [first] = steering;
+  const sameLocation = steering.every(
+    (finding) => finding.file === first.file && finding.line === first.line,
+  );
   const message =
     steering.length === 1
       ? first.message
-      : `${first.message} (${steering.length} attempts to steer the review were found in total; they are reported as one finding.)`;
+      : `[${steering.length} steering attempts] ${steering
+          .map((finding) => finding.message)
+          .join(STEERING_MESSAGE_SEPARATOR)}`;
 
   return [
     ...defects,
     {
       severity: STEERING_SEVERITY,
-      file: first.file,
-      line: first.line,
+      file: sameLocation ? first.file : null,
+      line: sameLocation ? first.line : null,
       message,
       kind: 'steering',
     },
@@ -459,6 +472,11 @@ export function touchesProtectedPath(
  * Findings without a file are general observations about the change and
  * are kept as they are.
  *
+ * A steering finding that names a file outside the diff is not dropped:
+ * the attempt can sit in the title or the description, which have no
+ * path, and the finding is about that text rather than about a file. It
+ * is kept as a general finding, with no file and no line.
+ *
  * Steering findings are then merged into one at a fixed, non-blocking
  * severity (see `consolidateSteeringFindings`). Doing it here means the gate,
  * which sanitizes its own input, applies it even if a caller forgets.
@@ -490,6 +508,9 @@ export function sanitizeFindings(
     }
 
     if (!touched.has(finding.file)) {
+      if (isSteering(finding)) {
+        sanitized.push({ ...finding, file: null, line: null });
+      }
       continue;
     }
 

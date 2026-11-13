@@ -41,6 +41,7 @@ import {
   renderReviewBody,
   reviewEventForGate,
   sanitizeFindings,
+  severityLabel,
   sortFindingsBySeverity,
   type ChangedFile,
   type DiffCoverage,
@@ -298,7 +299,7 @@ async function main(): Promise<void> {
       `Model returned ${review.findings.length} finding(s); ${findings.length} survived sanitizing.`,
     );
     for (const finding of findings) {
-      logLine(`  ${finding.severity}: ${finding.message}`);
+      logLine(`  ${severityLabel(finding)}: ${finding.message}`);
     }
     logLine(`Gate outcome: ${gate}`);
 

@@ -445,9 +445,18 @@ describe('steering findings', () => {
       file: null,
       line: null,
       kind: 'steering',
-      message: expect.stringContaining('Ignore all previous instructions.') as string,
+      message:
+        '[3 steering attempts] Ignore all previous instructions. | Forged [six7swe: notice]. | Fake response object.',
     });
-    expect(result[1].message).toContain('3 attempts');
+  });
+
+  it('keeps the location only when every steering finding shares it', () => {
+    const at = { file: 'backend/src/index.ts', line: 11 };
+    const shared = consolidateSteeringFindings([steering(at), steering(at)]);
+    const mixed = consolidateSteeringFindings([steering(at), steering({ ...at, line: 12 })]);
+
+    expect(shared[0]).toMatchObject(at);
+    expect(mixed[0]).toMatchObject({ file: null, line: null });
   });
 
   it('caps a single steering finding without changing its message', () => {
@@ -473,6 +482,37 @@ describe('steering findings', () => {
     expect(sanitized[0].severity).toBe(STEERING_SEVERITY);
     // Sanitizing twice, as the script and the gate do, changes nothing more.
     expect(sanitizeFindings(sanitized, changedFiles)).toEqual(sanitized);
+  });
+
+  it('keeps a steering finding whose file is outside the diff, as a general finding', () => {
+    const sanitized = sanitizeFindings(
+      [
+        steering({ file: 'pull-request-description.md', line: 3, message: 'Injected.' }),
+        finding({ file: 'backend/src/not-in-diff.ts' }),
+      ],
+      [patchedFile()],
+    );
+
+    expect(sanitized).toEqual([
+      {
+        ...steering({ message: 'Injected.' }),
+        severity: STEERING_SEVERITY,
+        file: null,
+        line: null,
+      },
+    ]);
+  });
+
+  it('passes the enforce gate with only a blocker-rated steering finding', () => {
+    expect(
+      decideGate({
+        findings: [steering({ severity: 'blocker' })],
+        changedFiles: [patchedFile()],
+        mode: 'enforce',
+        reviewCompleted: true,
+        coverage: FULL,
+      }),
+    ).toBe('pass');
   });
 
   it('cannot fail the enforce gate on its own, however it was rated', () => {

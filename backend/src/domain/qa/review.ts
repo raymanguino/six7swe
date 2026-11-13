@@ -20,6 +20,7 @@
 
 import type { DiffCoverage } from './diff';
 import {
+  isSteering,
   MAX_REPORTED_FINDINGS,
   type GateOutcome,
   type ManualReviewReason,
@@ -127,6 +128,33 @@ function truncate(text: string, limit: number): string {
   }
 
   return `${text.slice(0, limit - 3)}...`;
+}
+
+/**
+ * The severity cell, which marks a steering finding as one.
+ *
+ * A steering finding is about the pull request's text, not its code, and
+ * the reader has to be able to tell the two apart at a glance.
+ */
+export function severityLabel(finding: ReviewFinding): string {
+  return isSteering(finding) ? `${finding.severity} (steering)` : finding.severity;
+}
+
+/**
+ * Picks the findings the body shows, in order.
+ *
+ * The steering findings are kept, after the defects, by reserving their
+ * slots at the end. A plain slice of the sorted list would cut them as
+ * soon as there were enough defects, and the reader would never learn
+ * that the pull request tried to steer its review.
+ */
+export function findingsToShow(findings: readonly ReviewFinding[]): ReviewFinding[] {
+  const steering = findings.filter(isSteering).slice(0, MAX_REPORTED_FINDINGS);
+  const defects = findings
+    .filter((finding) => !isSteering(finding))
+    .slice(0, MAX_REPORTED_FINDINGS - steering.length);
+
+  return [...defects, ...steering];
 }
 
 function location(finding: ReviewFinding): string {
@@ -269,22 +297,18 @@ export function renderReviewBody(input: ReviewBodyInput): string {
 
   const summary = escapeMarkdown(truncate(input.summary, MAX_SUMMARY_CHARS));
 
-  const rows = input.findings
-    .slice(0, MAX_REPORTED_FINDINGS)
-    .map(
-      (finding) =>
-        `| ${finding.severity} | ${location(finding)} | ${escapeTableCell(
-          truncate(finding.message, MAX_MESSAGE_CHARS),
-        )} |`,
-    );
+  const shown = findingsToShow(input.findings);
+  const rows = shown.map(
+    (finding) =>
+      `| ${severityLabel(finding)} | ${location(finding)} | ${escapeTableCell(
+        truncate(finding.message, MAX_MESSAGE_CHARS),
+      )} |`,
+  );
 
   const footer: string[] = [];
 
-  if (input.findings.length > MAX_REPORTED_FINDINGS) {
-    footer.push(
-      '',
-      `_${input.findings.length - MAX_REPORTED_FINDINGS} further finding(s) were not shown._`,
-    );
+  if (input.findings.length > shown.length) {
+    footer.push('', `_${input.findings.length - shown.length} further finding(s) were not shown._`);
   }
 
   // A model that reported findings which all pointed outside the diff
