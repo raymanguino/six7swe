@@ -59,10 +59,14 @@ policy and the watch paths.
    `pnpm-workspace.yaml` and `tsconfig.base.json`, so a root directory of `backend` would make
    the build fail.
 2. Railway runs a Dockerfile service's start command in exec form, without a shell, so a
-   command with `cd` or `&&` does not work there. The start command is
-   `pnpm --dir backend start`, and the pre-deploy command is `pnpm --dir backend db:deploy`, a
-   package script (pnpm runs scripts in a shell). Write any new command for this service, such as
-   a cron command, the same way.
+   command with `cd` or `&&` does not work there. The image's working directory is
+   `/app/backend`, so commands need no `cd`: the start command is `pnpm start`, and the
+   pre-deploy command is `pnpm db:deploy`, a package script (pnpm runs scripts in a shell).
+   Write any new command for this service, such as a cron command, the same way. Running from
+   `backend/` also means pnpm is the version `backend/package.json` pins, which the image
+   fetches at build time.
+   The image sets `NODE_ENV=production`, which arms the guard that refuses to start with
+   `AUTH_DEV_BYPASS` set.
 3. Set environment variables on the service. `.railway/railway.ts` lists each secret as
    `preserve()`, which keeps the value set in Railway, so a new variable has to be added there as
    well or the next apply deletes it:
@@ -161,7 +165,7 @@ The backend service applies the migrations as a **pre-deploy** command, so every
 the hosted database in line with `src/db/schema/`:
 
 ```ts
-preDeploy: 'pnpm --dir backend db:deploy',
+preDeploy: 'pnpm db:deploy',
 ```
 
 `db:deploy` is a script in `backend/package.json`:
@@ -212,11 +216,11 @@ shows up in the Railway logs. The planned fix serves the PDF from the knowledge 
 
 The job-hunter can trigger a refresh over HTTP, but a refresh started that way
 does not survive a backend restart. For scheduled refreshes, add a **Cron** to
-the backend service in Railway. The cron runs inside the backend image, from `/app`, without a
-shell:
+the backend service in Railway. The cron runs inside the backend image, from `/app/backend`,
+without a shell:
 
 ```bash
-pnpm --dir backend jobs:refresh -- --profile 1
+pnpm jobs:refresh -- --profile 1
 ```
 
 `profileId` is the id of the search profile to refresh. The command uses the
@@ -229,11 +233,13 @@ startup, so a stale run never blocks the next one.
 
 The LinkedIn fetcher drives a headless Chrome through puppeteer. Chrome needs shared libraries
 (nss, atk, gbm, cups, fonts and others) that the slim Node base image does not have.
-`backend/Dockerfile` has two stages:
+`backend/Dockerfile` has three stages:
 
-- **build** installs the backend's dependencies, compiles it, and downloads Chrome with
-  `pnpm run browsers:install`. pnpm does not run puppeteer's postinstall, so the download is
-  explicit.
+- **base** is the Node image with corepack, which the other two start from.
+- **build** installs the backend's dependencies, downloads Chrome with
+  `pnpm run browsers:install`, and compiles the backend. pnpm does not run puppeteer's
+  postinstall, so the download is explicit. Chrome has its own layer, before the source is
+  copied, so it is downloaded again only when the dependencies change.
 - **runtime** installs Chrome's libraries with `apt-get`, then copies the app from the build
   stage. The list comes from the `deb.deps` file that ships with the Chrome build puppeteer
   downloaded, the same list `browsers install --install-deps` would use, so it follows Chrome
@@ -272,7 +278,7 @@ Check that Chrome launches in the image. Do this before deploying a change to th
 puppeteer upgrade:
 
 ```bash
-docker run --rm -w /app/backend six7-backend \
+docker run --rm six7-backend \
   node -e "require('puppeteer').launch({args:['--no-sandbox']}).then(b=>b.close()).then(()=>console.log('Chrome OK'))"
 ```
 
@@ -281,6 +287,9 @@ Run the server with your local environment file:
 ```bash
 docker run --rm -p 3000:3000 --env-file backend/.env -e PORT=3000 six7-backend
 ```
+
+The image runs with `NODE_ENV=production`, so the server refuses to start if `backend/.env` sets
+`AUTH_DEV_BYPASS=true`.
 
 ### Rolling Back the Builders
 
@@ -307,9 +316,12 @@ six7swe/
 
 ## Watch Paths
 
-`.railway/railway.ts` sets watch paths per service (`/backend/**` and `/.dockerignore` for the
-backend, `/frontend/**` for the frontend), so a change in one service does not rebuild the
-other.
+`.railway/railway.ts` sets watch paths per service, so a change in one service does not rebuild
+the other:
+
+- backend: `/backend/**`, plus the root files the Dockerfile reads (`/.dockerignore`,
+  `/package.json`, `/pnpm-lock.yaml`, `/pnpm-workspace.yaml`, `/tsconfig.base.json`)
+- frontend: `/frontend/**`
 
 ## Changing Railway config
 

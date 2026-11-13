@@ -21,3 +21,10 @@ frontend/dist
 **/*.p12
 **/*.jks
 **/*.keystore
+
+# Logs, local tool state and registry credentials.
+**/*.log
+.claude
+supabase/.temp
+supabase/.branches
+**/.npmrc

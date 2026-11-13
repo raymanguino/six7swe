@@ -61,6 +61,7 @@ describe('reviewTier', () => {
     ['backend/src/.dockerignore', 1],
     ['backend/scripts/.dockerignore', 1],
     ['__fixtures__/Dockerfile', 2],
+    ['backend/src/__tests__/fixtures/.dockerignore', 2],
     ['backend/railway.json', 0],
     ['backend/src/services/auth/jwks.ts', 0],
     ['backend/src/__tests__/services/auth/jwks.test.ts', 2],

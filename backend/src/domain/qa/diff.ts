@@ -129,8 +129,9 @@ export type ReviewTier = 0 | 1 | 2 | 3 | 4;
  * Build and deploy configuration, classed as tier 1 outside test directories.
  * `Dockerfile` is listed for completeness: `PINNED_FILE` already makes it
  * tier 0 everywhere except data fixture directories, which are test
- * directories too. `.dockerignore` is not pinned; it can only leave files
- * out of the image, not add code to it.
+ * directories too. `.dockerignore` is not pinned, because it cannot add code
+ * to the image, only leave files out. It still belongs in review: leaving
+ * out the wrong files (`migrations/`, say) breaks the build or the deploy.
  */
 const CONFIG_FILE =
   /^(package\.json|tsconfig[^/]*\.json|drizzle\.config\.ts|railway\.json|Dockerfile([.-][^/]+)?|\.dockerignore)$/;

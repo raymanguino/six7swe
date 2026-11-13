@@ -46,16 +46,25 @@ export default defineRailway(() => {
     // The Dockerfile's runtime stage installs Chrome's shared libraries, so the image that is
     // built is the image that runs (DEPLOYMENT.md, "Chrome for the job scraper"). Railway runs a
     // Dockerfile service's start command in exec form, without a shell, so neither command uses
-    // `cd` or `&&`. `db:deploy` is a package script, and pnpm runs scripts in a shell.
+    // `cd` or `&&`; the image's working directory is already /app/backend. `db:deploy` is a
+    // package script, and pnpm runs scripts in a shell.
     build: {
       builder: 'DOCKERFILE',
       dockerfilePath: 'backend/Dockerfile',
-      watchPatterns: ['/backend/**', '/.dockerignore'],
+      // The backend plus the root files the Dockerfile copies.
+      watchPatterns: [
+        '/backend/**',
+        '/.dockerignore',
+        '/package.json',
+        '/pnpm-lock.yaml',
+        '/pnpm-workspace.yaml',
+        '/tsconfig.base.json',
+      ],
     },
-    start: 'pnpm --dir backend start',
+    start: 'pnpm start',
     // `db:deploy` migrates, then secures: a table a migration creates starts with the default
     // Supabase grants, so `db:secure` must run after it (docs/SECURITY.md).
-    preDeploy: 'pnpm --dir backend db:deploy',
+    preDeploy: 'pnpm db:deploy',
     deploy: { ...restartPolicy },
     replicas: { 'us-west2': 1 },
     networking: { privateNetworkEndpoint: 'six7swebackend' },
