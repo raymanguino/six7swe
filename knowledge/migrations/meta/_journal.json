@@ -15,6 +15,13 @@
       "when": 1794450816494,
       "tag": "0001_knowledge_schema",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794537478861,
+      "tag": "0002_documents_storage_path_index",
+      "breakpoints": true
     }
   ]
 }

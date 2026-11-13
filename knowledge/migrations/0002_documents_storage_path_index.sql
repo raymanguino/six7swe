@@ -1,0 +1,1 @@
+CREATE INDEX "documents_storage_path_idx" ON "knowledge"."documents" USING btree ("storage_path");

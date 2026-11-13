@@ -76,15 +76,21 @@ export class ConflictError extends Error {
  * Retrieval only serves chunks of `ready` documents, so a ready document with
  * chunks moving to any other status bumps it, as does finishing an ingest or
  * deleting a ready document.
+ *
+ * And one rule about the primary resume: it is the owner's newest (by
+ * upload time) `ready` resume. It is recomputed when a resume finishes
+ * ingesting and when the primary is deleted, so a resume whose ingest fails
+ * never displaces a good one, and a re-upload of existing bytes never changes
+ * it. A primary whose re-ingest fails stays primary until another resume
+ * completes or it is deleted.
  */
 export interface KnowledgeRepository {
   findBySha256(ownerId: string, sha256: string): Promise<DocumentRecord | null>;
 
   /**
    * Inserts a pending document, or returns the existing one when the owner
-   * already has these bytes. Uploads are serialized per owner. A new `resume`
-   * becomes the owner's primary resume, replacing the previous one; a
-   * deduplicated upload never changes which resume is primary.
+   * already has these bytes. Creation and deletion are serialized per owner.
+   * A new document is never primary; see the primary-resume rule above.
    */
   createDocument(doc: NewDocument): Promise<CreateDocumentResult>;
 
@@ -99,7 +105,8 @@ export interface KnowledgeRepository {
 
   /**
    * Replaces the document's chunks, marks it ready and bumps the owner's
-   * corpus version, atomically. Returns the new version.
+   * corpus version, atomically. For a resume, also re-applies the
+   * primary-resume rule. Returns the new version.
    */
   completeIngestion(id: string, extractedText: string, chunks: NewChunk[]): Promise<number>;
 
@@ -107,13 +114,12 @@ export interface KnowledgeRepository {
   failIngestion(id: string, error: string): Promise<void>;
 
   /**
-   * Deletes the document and its chunks. Bumps the corpus version when the
-   * document had been contributing chunks. Returns null when nothing matched.
+   * Deletes the document and its chunks, and returns the deleted row (null
+   * when nothing matched). Bumps the corpus version when the document had
+   * been contributing chunks; deleting the primary resume promotes the next
+   * newest ready resume.
    */
-  deleteDocument(
-    ownerId: string,
-    id: string,
-  ): Promise<{ deleted: DocumentRecord; version: number } | null>;
+  deleteDocument(ownerId: string, id: string): Promise<DocumentRecord | null>;
 
   /** True when any document row still points at this file-store key. */
   isStoragePathInUse(storagePath: string): Promise<boolean>;

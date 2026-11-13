@@ -92,19 +92,28 @@ export async function uploadDocument(
  * document nothing is working on (left behind by a crash, by a failure that
  * could not be recorded, or by a boot with RESUME_INGESTION_ON_BOOT=false).
  * The bytes are stored again first, in case the stored copy was what failed.
+ *
+ * Only a `failed` document is reset to `pending` here; a stranded
+ * pending/processing one is just enqueued, and the worker's markProcessing
+ * moves it on. The queue is checked again after the (slow) store, so a
+ * concurrent re-upload that queued it meanwhile is not doubled.
  */
 async function resumeExisting(
   deps: DocumentServiceDeps,
   existing: DocumentRecord,
   bytes: Uint8Array,
 ): Promise<UploadResult> {
-  if (existing.status === 'ready' || deps.queue.has(existing.id)) {
-    return { document: existing, deduplicated: true };
-  }
+  const unchanged = { document: existing, deduplicated: true };
+  if (existing.status === 'ready' || deps.queue.has(existing.id)) return unchanged;
 
   await deps.files.put(existing.storagePath, bytes, existing.mimeType);
-  await deps.repo.resetToPending(existing.id);
-  const retried: DocumentRecord = { ...existing, status: 'pending', error: null };
+  if (deps.queue.has(existing.id)) return unchanged;
+
+  let retried = existing;
+  if (existing.status === 'failed') {
+    await deps.repo.resetToPending(existing.id);
+    retried = { ...existing, status: 'pending', error: null };
+  }
   deps.queue.enqueue(retried);
   return { document: retried, deduplicated: true };
 }
@@ -115,14 +124,16 @@ export async function deleteDocument(
   ownerId: string,
   id: string,
 ): Promise<boolean> {
-  const result = await deps.repo.deleteDocument(ownerId, id);
-  if (!result) return false;
+  const deleted = await deps.repo.deleteDocument(ownerId, id);
+  if (!deleted) return false;
+  // Not ingested yet: drop it from the queue so the worker never touches it.
+  deps.queue.cancel(id);
 
   // Keys are content-addressed, so the same bytes uploaded again after the
   // row was deleted get the same key. Keep the file if a row uses it again.
   // (A re-upload landing between this check and the delete loses its file;
   // its ingest then fails with a message to upload again, which re-stores it.)
-  const { storagePath } = result.deleted;
+  const { storagePath } = deleted;
   try {
     if (await deps.repo.isStoragePathInUse(storagePath)) return true;
     // The row is gone, so retrieval no longer sees the document. A file left

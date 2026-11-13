@@ -55,6 +55,22 @@ export function createMemoryRepository(): KnowledgeRepository & {
     update(id, patch);
     if (doc.status === 'ready' && doc.chunkCount > 0) bump(doc.ownerId);
   };
+  // Insertion order breaks createdAt ties (several uploads in one millisecond).
+  const sequence = new Map<string, number>();
+  const newestFirst = (a: DocumentRecord, b: DocumentRecord) =>
+    b.createdAt.getTime() - a.createdAt.getTime() ||
+    (sequence.get(b.id) ?? 0) - (sequence.get(a.id) ?? 0);
+  /** Same rule as the Drizzle repository: the newest ready resume is primary. */
+  const refreshPrimaryResume = (ownerId: string) => {
+    const [newest] = [...documents.values()]
+      .filter((d) => d.ownerId === ownerId && d.kind === 'resume' && d.status === 'ready')
+      .sort(newestFirst);
+    for (const d of documents.values()) {
+      if (d.ownerId !== ownerId) continue;
+      const primary = d.id === newest?.id;
+      if (d.isPrimaryResume !== primary) update(d.id, { isPrimaryResume: primary });
+    }
+  };
 
   return {
     documents,
@@ -73,14 +89,13 @@ export function createMemoryRepository(): KnowledgeRepository & {
       const existing = [...documents.values()].find(
         (d) => d.ownerId === doc.ownerId && d.sha256 === doc.sha256,
       );
-      // A duplicate returns the existing row and never touches the primary resume.
       if (existing) return { document: existing, created: false };
 
       const now = new Date();
       const record: DocumentRecord = {
         ...doc,
         id: randomUUID(),
-        isPrimaryResume: doc.kind === 'resume',
+        isPrimaryResume: false,
         status: 'pending',
         error: null,
         chunkCount: 0,
@@ -88,13 +103,7 @@ export function createMemoryRepository(): KnowledgeRepository & {
         updatedAt: now,
       };
       documents.set(record.id, record);
-      if (doc.kind === 'resume') {
-        for (const d of documents.values()) {
-          if (d.ownerId === doc.ownerId && d.isPrimaryResume && d.id !== record.id) {
-            update(d.id, { isPrimaryResume: false });
-          }
-        }
-      }
+      sequence.set(record.id, sequence.size);
       return { document: record, created: true };
     },
 
@@ -104,9 +113,7 @@ export function createMemoryRepository(): KnowledgeRepository & {
     },
 
     async listDocuments(ownerId) {
-      return [...documents.values()]
-        .filter((d) => d.ownerId === ownerId)
-        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      return [...documents.values()].filter((d) => d.ownerId === ownerId).sort(newestFirst);
     },
 
     async resetToPending(id) {
@@ -124,6 +131,7 @@ export function createMemoryRepository(): KnowledgeRepository & {
       chunks.push(...newChunks.map((c) => ({ ...c, id: randomUUID(), documentId: id })));
       extractedText.set(id, text);
       update(id, { status: 'ready', error: null, chunkCount: newChunks.length });
+      if (doc.kind === 'resume') refreshPrimaryResume(doc.ownerId);
       return bump(doc.ownerId);
     },
 
@@ -136,8 +144,9 @@ export function createMemoryRepository(): KnowledgeRepository & {
       if (!doc || doc.ownerId !== ownerId) return null;
       documents.delete(id);
       chunks = chunks.filter((c) => c.documentId !== id);
-      const contributed = doc.status === 'ready' && doc.chunkCount > 0;
-      return { deleted: doc, version: contributed ? bump(ownerId) : (versions.get(ownerId) ?? 0) };
+      if (doc.status === 'ready' && doc.chunkCount > 0) bump(ownerId);
+      if (doc.isPrimaryResume) refreshPrimaryResume(ownerId);
+      return doc;
     },
 
     async isStoragePathInUse(storagePath) {

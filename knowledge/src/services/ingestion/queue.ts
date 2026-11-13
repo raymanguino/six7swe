@@ -37,6 +37,17 @@ export class SerialQueue<T extends { id: string }> {
     return this.queued.has(id) || this.current?.id === id;
   }
 
+  /**
+   * Removes a waiting item. Returns false when nothing with this id was
+   * waiting; an item already being worked on is not interrupted.
+   */
+  cancel(id: string): boolean {
+    if (!this.queued.delete(id)) return false;
+    const index = this.items.findIndex((item) => item.id === id);
+    if (index !== -1) this.items.splice(index, 1);
+    return true;
+  }
+
   /** Resolves once the queue is empty. */
   async idle(): Promise<void> {
     while (this.running) await this.running;
@@ -54,10 +65,6 @@ export class SerialQueue<T extends { id: string }> {
     this.queued.clear();
     await this.idle();
     return dropped.length;
-  }
-
-  get size(): number {
-    return this.items.length;
   }
 
   private async drain(): Promise<void> {

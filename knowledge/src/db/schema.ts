@@ -58,7 +58,8 @@ export const documents = knowledge.table(
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()
       .defaultNow()
-      .$onUpdate(() => new Date()),
+      // The database clock, like the defaults and the corpus_state upsert.
+      .$onUpdate(() => sql`now()`),
   },
   (t) => [
     uniqueIndex('documents_owner_sha256_uq').on(t.ownerId, t.sha256),
@@ -66,6 +67,8 @@ export const documents = knowledge.table(
       .on(t.ownerId)
       .where(sql`${t.isPrimaryResume} = true`),
     index('documents_status_idx').on(t.status),
+    // Deleting a document checks whether its content-addressed file is still in use.
+    index('documents_storage_path_idx').on(t.storagePath),
   ],
 );
 
@@ -101,8 +104,5 @@ export const corpusState = knowledge.table('corpus_state', {
   updatedAt: timestamp('updated_at', { withTimezone: true })
     .notNull()
     .defaultNow()
-    .$onUpdate(() => new Date()),
+    .$onUpdate(() => sql`now()`),
 });
-
-export type DocumentRow = typeof documents.$inferSelect;
-export type ChunkRow = typeof chunks.$inferSelect;

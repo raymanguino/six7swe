@@ -35,6 +35,14 @@ describe('normalizeText', () => {
   it('normalizes line endings, BOM, control chars, trailing spaces and blank runs', () => {
     expect(normalizeText('\uFEFFa  \r\nb\r\n\r\n\r\n\r\nc\u0007\n')).toBe('a\nb\n\nc');
   });
+
+  it('handles a long whitespace run that is not trailing in linear time', () => {
+    const text = `${' '.repeat(200_000)}x`;
+    const started = Date.now();
+    expect(normalizeText(text)).toBe('x');
+    expect(normalizeText(`a${' \t'.repeat(100_000)}b \n`)).toBe(`a${' \t'.repeat(100_000)}b`);
+    expect(Date.now() - started).toBeLessThan(500);
+  });
 });
 
 describe('extractText', () => {

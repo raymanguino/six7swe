@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { isUniqueViolation } from '../db/api/drizzleRepository.js';
+import { isUniqueViolation, toConflictError } from '../db/api/drizzleRepository.js';
+import { ConflictError } from '../db/api/repository.js';
 import { cleanFilename, deleteDocument, sha256Hex, uploadDocument } from '../services/documents.js';
 import { EmbeddingError } from '../services/embedding/errors.js';
 import { createHashingEmbedder } from '../services/embedding/hashing.js';
@@ -42,15 +43,19 @@ describe('SerialQueue', () => {
   it('runs items one at a time, skips duplicates, and survives a failing item', async () => {
     const order: string[] = [];
     let running = 0;
+    let maxRunning = 0;
     const errors: string[] = [];
     const queue = new SerialQueue<{ id: string }>(
       async ({ id }) => {
         running++;
-        expect(running).toBe(1);
-        await new Promise((r) => setTimeout(r, 1));
-        order.push(id);
-        running--;
-        if (id === 'b') throw new Error('boom');
+        maxRunning = Math.max(maxRunning, running);
+        try {
+          await new Promise((r) => setTimeout(r, 1));
+          order.push(id);
+          if (id === 'b') throw new Error('boom');
+        } finally {
+          running--;
+        }
       },
       (item) => errors.push(item.id),
     );
@@ -59,8 +64,27 @@ describe('SerialQueue', () => {
     queue.enqueue({ id: 'b' });
     queue.enqueue({ id: 'c' });
     await queue.idle();
+    expect(maxRunning).toBe(1);
     expect(order).toEqual(['a', 'b', 'c']);
     expect(errors).toEqual(['b']);
+  });
+
+  it('cancel() removes a waiting item but not the running one', async () => {
+    const seen: string[] = [];
+    const queue = new SerialQueue<{ id: string }>(async ({ id }) => {
+      seen.push(id);
+      await new Promise((r) => setTimeout(r, 1));
+    });
+    queue.enqueue({ id: 'a' });
+    queue.enqueue({ id: 'b' });
+    queue.enqueue({ id: 'c' });
+    await tick();
+    expect(queue.cancel('a')).toBe(false); // running
+    expect(queue.cancel('b')).toBe(true);
+    expect(queue.cancel('b')).toBe(false);
+    expect(queue.has('b')).toBe(false);
+    await queue.idle();
+    expect(seen).toEqual(['a', 'c']);
   });
 
   it('runs an item enqueued from onError', async () => {
@@ -173,12 +197,24 @@ describe('upload → ingest → retrieve', () => {
     expect(result.chunks[0]?.content).toContain('Kubernetes');
   });
 
-  it('makes a resume the primary resume and demotes the previous one', async () => {
-    const { repo, upload } = setup();
+  it('makes a resume primary once it is ingested, demoting the previous one', async () => {
+    const { repo, queue, upload } = setup();
     const first = await upload('old.md', utf8('# Old resume'), 'resume');
     const second = await upload('new.md', utf8('# New resume'), 'resume');
+    expect(second.document.isPrimaryResume).toBe(false); // not yet ingested
+    await queue.idle();
     expect((await repo.getDocument(OWNER, first.document.id))?.isPrimaryResume).toBe(false);
     expect((await repo.getDocument(OWNER, second.document.id))?.isPrimaryResume).toBe(true);
+  });
+
+  it('never lets a resume whose ingest fails displace the primary', async () => {
+    const { repo, queue, upload } = setup();
+    const good = await upload('good.md', utf8('# Good resume'), 'resume');
+    await queue.idle();
+    const broken = await upload('scan.pdf', makePdf([]), 'resume');
+    await queue.idle();
+    expect((await repo.getDocument(OWNER, broken.document.id))?.status).toBe('failed');
+    expect((await repo.getDocument(OWNER, good.document.id))?.isPrimaryResume).toBe(true);
   });
 
   it('does not demote the primary resume when an older resume is uploaded again', async () => {
@@ -252,10 +288,13 @@ describe('upload → ingest → retrieve', () => {
       kind: 'supporting',
     });
     await repo.markProcessing(document.id);
+    const reset = vi.spyOn(repo, 'resetToPending');
 
     const again = await upload('a.md', utf8(RESUME_MD));
     expect(again.deduplicated).toBe(true);
-    expect(again.document.status).toBe('pending');
+    // Enqueued as is; the worker's markProcessing moves it on, no reset needed.
+    expect(again.document.status).toBe('processing');
+    expect(reset).not.toHaveBeenCalled();
     await queue.idle();
     expect((await repo.getDocument(OWNER, document.id))?.status).toBe('ready');
   });
@@ -269,6 +308,28 @@ describe('upload → ingest → retrieve', () => {
     expect(again.deduplicated).toBe(true);
     expect(again.document.status).not.toBe('failed');
     expect(enqueue).not.toHaveBeenCalled();
+    await queue.idle();
+  });
+
+  it('does not reset or re-enqueue a retry that another upload queued during the store', async () => {
+    const { repo, files, queue, upload } = setup();
+    const { document } = await upload('scan.pdf', makePdf([]));
+    await queue.idle();
+    expect((await repo.getDocument(OWNER, document.id))?.status).toBe('failed');
+
+    // While this retry stores the bytes, a concurrent retry queues the document.
+    const put = files.put.bind(files);
+    vi.spyOn(files, 'put').mockImplementationOnce(async (key, bytes, type) => {
+      queue.enqueue({ ...document, status: 'pending' });
+      await put(key, bytes, type);
+    });
+    const reset = vi.spyOn(repo, 'resetToPending');
+    const enqueue = vi.spyOn(queue, 'enqueue');
+
+    const retried = await upload('scan.pdf', makePdf([]));
+    expect(retried.deduplicated).toBe(true);
+    expect(reset).not.toHaveBeenCalled();
+    expect(enqueue).toHaveBeenCalledTimes(1); // only the concurrent one
     await queue.idle();
   });
 
@@ -389,6 +450,22 @@ describe('deleteDocument', () => {
     const { document } = await upload('a.md', utf8('# A'));
     expect(await deleteDocument(deps, 'someone-else', document.id)).toBe(false);
   });
+
+  it('cancels a document still waiting in the queue, so the worker never touches it', async () => {
+    const embedder = createHashingEmbedder(256);
+    const embed = vi.spyOn(embedder, 'embed');
+    const { repo, queue, deps, upload } = setup(embedder);
+    const markProcessing = vi.spyOn(repo, 'markProcessing');
+    const first = await upload('a.md', utf8('# First'));
+    const waiting = await upload('b.md', utf8('# Waiting'));
+    expect(queue.has(waiting.document.id)).toBe(true);
+
+    expect(await deleteDocument(deps, OWNER, waiting.document.id)).toBe(true);
+    expect(queue.has(waiting.document.id)).toBe(false);
+    await queue.idle();
+    expect(markProcessing.mock.calls.map(([id]) => id)).toEqual([first.document.id]);
+    expect(embed).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('helpers', () => {
@@ -415,6 +492,22 @@ describe('helpers', () => {
     expect(isUniqueViolation({ code: '23505' })).toBe(true);
     expect(isUniqueViolation(new Error('wrapped', { cause: { code: '23505' } }))).toBe(true);
     expect(isUniqueViolation(new Error('other'))).toBe(false);
+  });
+
+  it('toConflictError maps any unique violation to a 409 and leaves other errors alone', () => {
+    // e.g. the one-primary-resume index, not the (owner, sha256) dedupe.
+    const primaryIndex = new Error('Failed query', {
+      cause: Object.assign(new Error('duplicate key'), {
+        code: '23505',
+        constraint_name: 'documents_owner_primary_resume_uq',
+      }),
+    });
+    const mapped = toConflictError(primaryIndex);
+    expect(mapped).toBeInstanceOf(ConflictError);
+    expect(mapped).toMatchObject({ statusCode: 409, cause: primaryIndex });
+
+    const other = new Error('connection reset');
+    expect(toConflictError(other)).toBe(other);
   });
 
   it('publicIngestionError hides provider and internal details', () => {

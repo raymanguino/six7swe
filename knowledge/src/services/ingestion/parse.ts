@@ -68,17 +68,20 @@ export function detectMimeType(filename: string, bytes: Uint8Array): SupportedMi
  * no BOM or control characters, no trailing spaces, at most one blank line.
  */
 export function normalizeText(text: string): string {
-  return (
-    text
-      .replace(/^\uFEFF/, '')
-      .replace(/\r\n?/g, '\n')
-      // Control characters other than tab and newline.
-      // eslint-disable-next-line no-control-regex
-      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
-      .replace(/[ \t]+$/gm, '')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim()
-  );
+  const cleaned = text
+    .replace(/^\uFEFF/, '')
+    .replace(/\r\n?/g, '\n')
+    // Control characters other than tab and newline.
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
+  // Trailing whitespace is trimmed per line rather than with /[ \t]+$/gm,
+  // which retries from every position of a long space run (quadratic).
+  return cleaned
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 /** Extracts plain text from a supported file. */
