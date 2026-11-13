@@ -161,6 +161,12 @@ The frontend downloads the resume from the backend via `GET /resume`. The backen
 - Place your resume at `backend/public/resume.pdf` (or match `portfolio_profile.resume_filename`).
 - Ensure it is present in the deployed backend filesystem. Note that this repo's `.gitignore` ignores `backend/public/*.pdf` by default, so it will not deploy unless you change that policy.
 
+**Production currently has no resume** (#104): no PDF reaches the deployed image, so `GET /resume`
+returns 404. The site handles this. `GET /portfolio` reports `resumeAvailable`, using the same
+lookup as `/resume`, and the Landing page shows the Resume card only when it is true. Each miss
+is logged at `warn` as `Resume not found`, with the filename and directory it checked, so it
+shows up in the Railway logs. The planned fix serves the PDF from the knowledge service (#86).
+
 > Supabase Storage is **not** currently read by the backend — `@supabase/supabase-js` is not a dependency and no code path reads `SUPABASE_URL` or `SUPABASE_SECRET_KEY`. Serving the resume from Storage requires implementing that path first.
 
 ### 5. Update Resume / Portfolio Data
