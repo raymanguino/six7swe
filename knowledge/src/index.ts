@@ -1,13 +1,30 @@
 import { buildApp } from './app.js';
 import { loadEnv } from './config/env.js';
 import { createDrizzleRepository } from './db/api/drizzleRepository.js';
-import type { DocumentRecord } from './db/api/repository.js';
 import { createDb } from './db/index.js';
 import { EMBEDDING_DIMENSIONS } from './db/schema.js';
 import { createEmbedder } from './services/embedding/index.js';
-import { ingestDocument } from './services/ingestion/pipeline.js';
-import { SerialQueue } from './services/ingestion/queue.js';
 import { createFileStore } from './services/storage/index.js';
+
+/**
+ * How long shutdown waits for the document being ingested. Railway sends
+ * SIGKILL 30s after SIGTERM by default; this leaves room to close the pool.
+ * A document cut off here stays `processing` and is re-queued on next boot.
+ */
+const SHUTDOWN_TIMEOUT_MS = 20_000;
+
+/** Resolves true if `promise` settles in time, false if the timeout wins. */
+async function settlesWithin(promise: Promise<unknown>, ms: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), ms);
+  });
+  try {
+    return await Promise.race([promise.then(() => true), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 async function main(): Promise<void> {
   const env = loadEnv();
@@ -16,28 +33,13 @@ async function main(): Promise<void> {
   const files = createFileStore(env);
   const embedder = createEmbedder(env, EMBEDDING_DIMENSIONS);
 
-  // The queue needs a logger before the app exists; it is assigned below.
-  let log: import('fastify').FastifyBaseLogger | undefined;
-  const queue = new SerialQueue<DocumentRecord>(
-    (doc) => {
-      if (!log) throw new Error('logger not ready');
-      return ingestDocument({ repo, files, embedder, log }, doc);
-    },
-    (doc, error) => log?.error({ documentId: doc.id, err: error }, 'Ingestion worker crashed'),
-  );
-
   const app = await buildApp({
+    deps: { repo, files, embedder },
     serviceKey: env.KNOWLEDGE_SERVICE_KEY,
-    context: {
-      repo,
-      files,
-      embedder,
-      queue,
-      ownerId: env.OWNER_AUTH_ID,
-      maxUploadBytes: env.MAX_UPLOAD_BYTES,
-    },
+    ownerId: env.OWNER_AUTH_ID,
+    maxUploadBytes: env.MAX_UPLOAD_BYTES,
   });
-  log = app.log;
+  const queue = app.ingestionQueue;
 
   app.log.info({ embedder: embedder.name, files: files.name }, 'Knowledge service configured');
 
@@ -49,11 +51,27 @@ async function main(): Promise<void> {
     }
   }
 
+  let shuttingDown = false;
   const shutdown = async (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     app.log.info({ signal }, 'Shutting down');
-    await app.close();
-    await close();
-    process.exit(0);
+    try {
+      // Stop accepting requests first, so no upload enqueues behind the stop.
+      await app.close();
+      const stopped = queue.stop();
+      if (!(await settlesWithin(stopped, SHUTDOWN_TIMEOUT_MS))) {
+        app.log.warn(
+          { timeoutMs: SHUTDOWN_TIMEOUT_MS },
+          'Ingestion did not finish in time; it resumes on next boot',
+        );
+      }
+      await close();
+      process.exit(0);
+    } catch (error) {
+      app.log.error({ err: error }, 'Shutdown failed');
+      process.exit(1);
+    }
   };
   process.once('SIGTERM', () => void shutdown('SIGTERM'));
   process.once('SIGINT', () => void shutdown('SIGINT'));

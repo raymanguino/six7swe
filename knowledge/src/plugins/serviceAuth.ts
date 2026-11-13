@@ -1,18 +1,31 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
+import { SERVICE_KEY_HEADER } from '../contract.js';
+
+/**
+ * Who may call a route:
+ * - `public`: anyone, no credentials.
+ * - `service`: the portfolio and hunter backends, with the shared service key.
+ * - `owner`: the knowledge base's owner. Until the owner JWT gate lands, this
+ *   also takes the service key; the separate mode marks which routes move.
+ */
+export type RouteAccess = 'public' | 'service' | 'owner';
 
 declare module 'fastify' {
   interface FastifyContextConfig {
-    /** Set on a route to skip the service key check. */
-    public?: boolean;
+    /** Defaults to `service`: a route that forgets to declare access fails closed. */
+    access?: RouteAccess;
+  }
+  interface FastifyRequest {
+    /** The owner the request acts for; set by the auth hook, null on public routes. */
+    ownerId: string | null;
   }
 }
 
-/** Route config for the few endpoints that need no credentials. */
-export const PUBLIC_ROUTE = { config: { public: true } } as const;
-
-export const SERVICE_KEY_HEADER = 'x-knowledge-key';
+export const PUBLIC_ROUTE = { config: { access: 'public' } } as const;
+export const SERVICE_ROUTE = { config: { access: 'service' } } as const;
+export const OWNER_ROUTE = { config: { access: 'owner' } } as const;
 
 /** Compares in constant time; hashing first makes the lengths equal. */
 export function keysMatch(provided: string, expected: string): boolean {
@@ -21,8 +34,27 @@ export function keysMatch(provided: string, expected: string): boolean {
   return timingSafeEqual(a, b);
 }
 
+class UnauthorizedError extends Error {
+  readonly statusCode = 401;
+  constructor() {
+    super('Unauthorized');
+    this.name = 'UnauthorizedError';
+  }
+}
+
+/** The owner the request acts for. Throws a 401 on a route that set none. */
+export function requireOwner(req: FastifyRequest): string {
+  if (!req.ownerId) throw new UnauthorizedError();
+  return req.ownerId;
+}
+
 export interface ServiceAuthOptions {
   serviceKey: string;
+  /**
+   * The single owner every authenticated request acts for, until the owner
+   * JWT gate derives it per request from the token's `sub`.
+   */
+  ownerId: string;
 }
 
 /**
@@ -33,13 +65,19 @@ export interface ServiceAuthOptions {
  * end up in access logs or browser history.
  */
 const serviceAuth: FastifyPluginAsync<ServiceAuthOptions> = async (app, options) => {
+  app.decorateRequest('ownerId', null);
+
   app.addHook('onRequest', async (req, reply) => {
-    if (req.routeOptions.config.public === true) return;
+    // `config` is absent for requests that matched no route (the 404
+    // handler); those fail closed like any other non-public route.
+    const access: RouteAccess = req.routeOptions.config?.access ?? 'service';
+    if (access === 'public') return;
 
     const provided = req.headers[SERVICE_KEY_HEADER];
     if (typeof provided !== 'string' || !keysMatch(provided, options.serviceKey)) {
       return reply.code(401).send({ error: 'Unauthorized' });
     }
+    req.ownerId = options.ownerId;
   });
 };
 

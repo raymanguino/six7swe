@@ -47,4 +47,31 @@ describe('loadEnv', () => {
       }),
     ).toThrow(/at least 32 characters/);
   });
+
+  it.each(['../evil', 'a/b', 'has space', '.', '..'])(
+    'rejects OWNER_AUTH_ID %j, which would be an unsafe storage key',
+    (owner) => {
+      expect(() =>
+        loadEnv({ ...base, OWNER_AUTH_ID: owner, EMBEDDER: 'hashing', FILE_STORE: 'local' }),
+      ).toThrow(/OWNER_AUTH_ID/);
+    },
+  );
+
+  it('accepts a Supabase user id as OWNER_AUTH_ID', () => {
+    const owner = '6f1c2d3e-4b5a-4c6d-8e9f-0a1b2c3d4e5f';
+    expect(
+      loadEnv({ ...base, OWNER_AUTH_ID: owner, EMBEDDER: 'hashing', FILE_STORE: 'local' })
+        .OWNER_AUTH_ID,
+    ).toBe(owner);
+  });
+
+  it('caps MAX_UPLOAD_BYTES at 50 MB', () => {
+    const env = { ...base, EMBEDDER: 'hashing', FILE_STORE: 'local' };
+    expect(loadEnv({ ...env, MAX_UPLOAD_BYTES: String(50 * 1024 * 1024) }).MAX_UPLOAD_BYTES).toBe(
+      50 * 1024 * 1024,
+    );
+    expect(() => loadEnv({ ...env, MAX_UPLOAD_BYTES: String(50 * 1024 * 1024 + 1) })).toThrow(
+      /MAX_UPLOAD_BYTES must be at most 50 MB/,
+    );
+  });
 });

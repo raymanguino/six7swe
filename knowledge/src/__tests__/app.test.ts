@@ -1,16 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../app.js';
-import type { DocumentRecord } from '../db/api/repository.js';
 import { createHashingEmbedder } from '../services/embedding/hashing.js';
-import { ingestDocument } from '../services/ingestion/pipeline.js';
-import { SerialQueue } from '../services/ingestion/queue.js';
 import {
   createMemoryFileStore,
   multipartFile,
   PROJECT_NOTES_TXT,
   RESUME_MD,
-  silentLogger,
   utf8,
 } from './support/fixtures.js';
 import { createMemoryRepository } from './support/memoryRepository.js';
@@ -19,26 +15,27 @@ const KEY = 'k'.repeat(40);
 const auth = { 'x-knowledge-key': KEY };
 
 let app: FastifyInstance;
-let queue: SerialQueue<DocumentRecord>;
 
 beforeEach(async () => {
-  const repo = createMemoryRepository();
-  const files = createMemoryFileStore();
-  const embedder = createHashingEmbedder(256);
-  queue = new SerialQueue((doc) =>
-    ingestDocument({ repo, files, embedder, log: silentLogger }, doc),
-  );
   app = await buildApp({
+    deps: {
+      repo: createMemoryRepository(),
+      files: createMemoryFileStore(),
+      embedder: createHashingEmbedder(256),
+    },
     serviceKey: KEY,
+    ownerId: 'owner',
+    maxUploadBytes: 2048,
     logger: false,
-    context: { repo, files, embedder, queue, ownerId: 'owner', maxUploadBytes: 2048 },
   });
 });
 
 afterEach(async () => {
-  await queue.idle();
+  await app.ingestionQueue.idle();
   await app.close();
 });
+
+const idle = () => app.ingestionQueue.idle();
 
 async function uploadFile(name: string, text: string, kind?: string) {
   const { payload, headers } = multipartFile(name, utf8(text));
@@ -70,6 +67,20 @@ describe('auth', () => {
     const res = await app.inject({ method: 'GET', url: `/version?key=${KEY}` });
     expect(res.statusCode).toBe(401);
   });
+
+  it('requires the key on owner routes until the owner gate lands', async () => {
+    expect((await app.inject({ method: 'GET', url: '/documents' })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'GET', url: '/documents', headers: auth })).statusCode).toBe(
+      200,
+    );
+  });
+
+  it('answers an unknown path with 401 without a key and 404 with one, never 500', async () => {
+    const anonymous = await app.inject({ method: 'GET', url: '/no-such-route' });
+    expect(anonymous.statusCode).toBe(401);
+    const keyed = await app.inject({ method: 'POST', url: '/no-such-route', headers: auth });
+    expect(keyed.statusCode).toBe(404);
+  });
 });
 
 describe('documents and retrieval', () => {
@@ -87,7 +98,7 @@ describe('documents and retrieval', () => {
     expect(body.document).not.toHaveProperty('ownerId');
 
     await uploadFile('project.txt', PROJECT_NOTES_TXT);
-    await queue.idle();
+    await idle();
 
     const list = await app.inject({ method: 'GET', url: '/documents', headers: auth });
     expect(list.json<{ documents: { status: string }[] }>().documents.map((d) => d.status)).toEqual(
@@ -153,7 +164,7 @@ describe('documents and retrieval', () => {
 
   it('gets and deletes a document, 404 afterwards and for bad ids', async () => {
     const { document } = (await uploadFile('a.md', RESUME_MD)).json<{ document: { id: string } }>();
-    await queue.idle();
+    await idle();
 
     const got = await app.inject({
       method: 'GET',

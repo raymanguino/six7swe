@@ -1,4 +1,8 @@
 import { z } from 'zod';
+import { isSafeKeySegment } from '../services/storage/keys.js';
+
+/** Hard ceiling for MAX_UPLOAD_BYTES: uploads are buffered in memory. */
+export const MAX_UPLOAD_BYTES_CEILING = 50 * 1024 * 1024;
 
 /**
  * Service configuration, validated once at startup.
@@ -25,8 +29,18 @@ const EnvSchema = z
       .string()
       .min(32, 'KNOWLEDGE_SERVICE_KEY must be at least 32 characters'),
 
-    /** The Supabase auth subject that owns the knowledge base. */
-    OWNER_AUTH_ID: z.string().min(1, 'OWNER_AUTH_ID is required'),
+    /**
+     * The Supabase auth subject that owns the knowledge base. It becomes the
+     * first segment of every storage key, so it must be a safe key segment
+     * (a Supabase user id, a UUID, always is).
+     */
+    OWNER_AUTH_ID: z
+      .string()
+      .min(1, 'OWNER_AUTH_ID is required')
+      .max(255, 'OWNER_AUTH_ID must be at most 255 characters')
+      .refine(isSafeKeySegment, {
+        message: 'OWNER_AUTH_ID may only contain letters, digits, ".", "_" and "-"',
+      }),
 
     /**
      * `openrouter` calls a real embedding model. `hashing` is a deterministic,
@@ -44,11 +58,12 @@ const EnvSchema = z
     STORAGE_BUCKET: z.string().default('portfolio-files'),
     LOCAL_FILE_STORE_DIR: z.string().default('.data/files'),
 
-    /** Upload size limit in bytes (default 10 MB). */
+    /** Upload size limit in bytes (default 10 MB, at most 50 MB). */
     MAX_UPLOAD_BYTES: z.coerce
       .number()
       .int()
       .positive()
+      .max(MAX_UPLOAD_BYTES_CEILING, 'MAX_UPLOAD_BYTES must be at most 50 MB (52428800)')
       .default(10 * 1024 * 1024),
 
     /** Re-queue documents left pending or processing by a previous process. */

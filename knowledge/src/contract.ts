@@ -1,20 +1,37 @@
 import { z } from 'zod';
-import type { DocumentRecord, RetrievedChunk } from './db/api/repository.js';
-import { MAX_K } from './services/retrieval.js';
 
 /**
  * The service's wire contract. When the backends start calling this service,
- * these move to `packages/knowledge-types` so both sides share one definition.
+ * this file moves to `packages/knowledge-types` so both sides share one
+ * definition.
+ *
+ * It is a leaf module: it depends on zod and nothing else, so it can move
+ * without dragging the database or service layers along. The database enums
+ * are derived from the arrays below, not the other way around.
  */
+
+/** Header that carries the shared service key. Never accepted in a query string. */
+export const SERVICE_KEY_HEADER = 'x-knowledge-key';
+
+export const MAX_RETRIEVE_K = 20;
+export const DEFAULT_RETRIEVE_K = 6;
+
+export const DOCUMENT_KINDS = ['resume', 'supporting'] as const;
+export const DocumentKindSchema = z.enum(DOCUMENT_KINDS);
+export type DocumentKind = z.infer<typeof DocumentKindSchema>;
+
+export const DOCUMENT_STATUSES = ['pending', 'processing', 'ready', 'failed'] as const;
+export const DocumentStatusSchema = z.enum(DOCUMENT_STATUSES);
+export type DocumentStatus = z.infer<typeof DocumentStatusSchema>;
 
 export const RetrieveRequestSchema = z.object({
   query: z.string().trim().min(1).max(2000),
-  k: z.number().int().min(1).max(MAX_K).default(6),
+  k: z.number().int().min(1).max(MAX_RETRIEVE_K).default(DEFAULT_RETRIEVE_K),
 });
 export type RetrieveRequest = z.infer<typeof RetrieveRequestSchema>;
 
 export const UploadQuerySchema = z.object({
-  kind: z.enum(['resume', 'supporting']).default('supporting'),
+  kind: DocumentKindSchema.default('supporting'),
 });
 
 export const DocumentParamsSchema = z.object({ id: z.uuid() });
@@ -24,9 +41,10 @@ export interface DocumentDto {
   filename: string;
   mimeType: string;
   sizeBytes: number;
-  kind: DocumentRecord['kind'];
+  kind: DocumentKind;
   isPrimaryResume: boolean;
-  status: DocumentRecord['status'];
+  status: DocumentStatus;
+  /** A short, user-facing reason. Provider and parser details stay in the logs. */
   error: string | null;
   chunkCount: number;
   createdAt: string;
@@ -47,30 +65,9 @@ export interface RetrieveResponse {
   chunks: RetrievedChunkDto[];
 }
 
-/** Storage keys and owner ids are internal and never leave the service. */
-export function toDocumentDto(doc: DocumentRecord): DocumentDto {
-  return {
-    id: doc.id,
-    filename: doc.filename,
-    mimeType: doc.mimeType,
-    sizeBytes: doc.sizeBytes,
-    kind: doc.kind,
-    isPrimaryResume: doc.isPrimaryResume,
-    status: doc.status,
-    error: doc.error,
-    chunkCount: doc.chunkCount,
-    createdAt: doc.createdAt.toISOString(),
-    updatedAt: doc.updatedAt.toISOString(),
-  };
-}
-
-export function toChunkDto(chunk: RetrievedChunk): RetrievedChunkDto {
-  return {
-    chunkId: chunk.chunkId,
-    documentId: chunk.documentId,
-    filename: chunk.filename,
-    heading: chunk.heading,
-    content: chunk.content,
-    similarity: Math.round(chunk.similarity * 10_000) / 10_000,
-  };
-}
+/** The body of every 4xx/5xx response. `issues` is set for validation errors only. */
+export const ErrorResponseSchema = z.object({
+  error: z.string(),
+  issues: z.array(z.unknown()).optional(),
+});
+export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;

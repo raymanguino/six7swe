@@ -13,6 +13,7 @@ export interface FileStore {
 
 export function createFileStore(env: Env): FileStore {
   if (env.FILE_STORE === 'local') return createLocalFileStore(env.LOCAL_FILE_STORE_DIR);
+  // loadEnv already requires both for FILE_STORE=supabase; this narrows the types.
   if (!env.SUPABASE_URL || !env.SUPABASE_SECRET_KEY) {
     throw new Error('SUPABASE_URL and SUPABASE_SECRET_KEY are required for FILE_STORE=supabase');
   }
@@ -21,13 +22,4 @@ export function createFileStore(env: Env): FileStore {
     secretKey: env.SUPABASE_SECRET_KEY,
     bucket: env.STORAGE_BUCKET,
   });
-}
-
-const SAFE_KEY = /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
-
-/** Rejects keys that could escape a directory or a bucket prefix. */
-export function assertSafeKey(key: string): void {
-  if (!SAFE_KEY.test(key) || key.split('/').some((part) => part === '..' || part === '.')) {
-    throw new Error(`Unsafe storage key: ${key}`);
-  }
 }

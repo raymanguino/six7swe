@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
-import { assertSafeKey, type FileStore } from './index.js';
+import type { FileStore } from './index.js';
+import { assertSafeKey } from './keys.js';
 
 export interface SupabaseFileStoreOptions {
   url: string;

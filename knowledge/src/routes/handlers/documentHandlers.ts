@@ -1,7 +1,9 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { DocumentParamsSchema, toDocumentDto, UploadQuerySchema } from '../../contract.js';
+import { DocumentParamsSchema, UploadQuerySchema } from '../../contract.js';
+import { requireOwner } from '../../plugins/serviceAuth.js';
 import { deleteDocument, uploadDocument } from '../../services/documents.js';
 import type { KnowledgeContext } from '../context.js';
+import { toDocumentDto } from '../mappers.js';
 
 export function documentHandlers(ctx: KnowledgeContext) {
   const deps = (req: FastifyRequest) => ({
@@ -17,16 +19,18 @@ export function documentHandlers(ctx: KnowledgeContext) {
      * the query string (`?kind=resume`) so it does not depend on part order.
      */
     async upload(req: FastifyRequest, reply: FastifyReply) {
+      const ownerId = requireOwner(req);
       const { kind } = UploadQuerySchema.parse(req.query);
-      const part = await req.file({ limits: { fileSize: ctx.maxUploadBytes, files: 1 } });
+      // The size and file-count limits are the ones registered with the plugin.
+      const part = await req.file();
       if (!part) {
         return reply.code(400).send({ error: 'Expected a multipart body with a file part' });
       }
 
       // Throws a 413 (RequestFileTooLargeError) once the limit is crossed.
-      const bytes = new Uint8Array(await part.toBuffer());
+      const bytes = await part.toBuffer();
       const { document, deduplicated } = await uploadDocument(deps(req), {
-        ownerId: ctx.ownerId,
+        ownerId,
         filename: part.filename,
         bytes,
         kind,
@@ -38,21 +42,23 @@ export function documentHandlers(ctx: KnowledgeContext) {
       });
     },
 
-    async list() {
-      const documents = await ctx.repo.listDocuments(ctx.ownerId);
+    async list(req: FastifyRequest) {
+      const documents = await ctx.repo.listDocuments(requireOwner(req));
       return { documents: documents.map(toDocumentDto) };
     },
 
     async get(req: FastifyRequest, reply: FastifyReply) {
+      const ownerId = requireOwner(req);
       const { id } = DocumentParamsSchema.parse(req.params);
-      const document = await ctx.repo.getDocument(ctx.ownerId, id);
+      const document = await ctx.repo.getDocument(ownerId, id);
       if (!document) return reply.code(404).send({ error: 'Document not found' });
       return { document: toDocumentDto(document) };
     },
 
     async remove(req: FastifyRequest, reply: FastifyReply) {
+      const ownerId = requireOwner(req);
       const { id } = DocumentParamsSchema.parse(req.params);
-      const { deleted } = await deleteDocument(deps(req), ctx.ownerId, id);
+      const deleted = await deleteDocument(deps(req), ownerId, id);
       if (!deleted) return reply.code(404).send({ error: 'Document not found' });
       return reply.code(204).send();
     },
