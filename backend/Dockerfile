@@ -12,8 +12,10 @@
 # Exact tag so Dependabot can bump it. It must satisfy `engines.node` in the root package.json.
 FROM node:22.23.4-bookworm-slim AS base
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-# The corepack bundled with Node 22.12 carries npm signing keys that have since been rotated, so
-# it refuses to download pnpm ("Cannot find matching keyid"). Replace it with a current release.
+# Pin corepack instead of relying on the version the base image bundles. Node 22.12 shipped
+# corepack 0.29.4, whose npm signing keys have since been rotated, so it refused to download
+# pnpm ("Cannot find matching keyid"). Node 22.23 bundles 0.36.0 already, but the explicit
+# install keeps the working version from depending on which base image tag is in use.
 RUN npm install -g corepack@0.36.0 && corepack enable
 WORKDIR /app
 

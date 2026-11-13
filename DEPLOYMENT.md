@@ -32,7 +32,7 @@ CommonJS, and `puppeteer` (25+) is ESM only, so on anything older the backend cr
 startup with `ERR_REQUIRE_ESM`.
 
 The backend image gets its Node version from the base image tag in `backend/Dockerfile`
-(`node:22.12.0-bookworm-slim`), not from `engines`. Keep the two in agreement: the tag must
+(a `node:22.x-bookworm-slim` tag), not from `engines`. Keep the two in agreement: the tag must
 satisfy `engines.node`. Dependabot bumps the tag weekly and is told to ignore Node major
 versions (`.github/dependabot.yml`), so it stays on 22.
 
