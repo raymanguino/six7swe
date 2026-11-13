@@ -1,28 +1,31 @@
 
 Rules:
-- Routes never access the database directly
-- Services orchestrate use cases
 - Domain contains pure business logic only
-- Infrastructure owns all side effects
+- Route handlers handle HTTP only and call services
+- Services orchestrate use cases and own the side effects
+- Database queries live in `backend/src/db/api/`
 
 ---
 
 ## Architectural Rules (Hard Requirements)
 
-- **Domain is pure**
+- **Domain is pure** (`backend/src/domain/`)
   - No Fastify, MiniMax, Puppeteer, Drizzle, or Node APIs
   - No side effects
-- **Side effects are infrastructure-only**
-  - Database access
-  - Network calls
-  - Email sending
-  - Web scraping
+  - Must not depend on services, routes, or the database
+- **Route handlers are thin** (`backend/src/routes/handlers/`)
+  - Validate input, call a service, map the result or error to a response
+  - Never query the database (importing a type from `db/schema` is fine)
+  - Never call an external provider, the filesystem, or a browser directly
+- **Services own the I/O** (`backend/src/services/`)
+  - Orchestrate use cases and perform the side effects: external APIs
+    (MiniMax, Resend, GitHub), Puppeteer, the filesystem, and the database
+  - I/O in a service is the intended design
+- **Queries live in `backend/src/db/api/`**
+  - Called from services; no ad-hoc queries that bypass it
 - **AI agent logic is isolated**
   - No HTTP or scraping concerns
   - Tooling accessed via MCP abstractions
-- **No layer skipping**
-  - Routes must not call infrastructure directly
-  - Domain must not depend on services or infrastructure
 
 ---
 
@@ -43,7 +46,7 @@ Rules:
 
 - Use explicit error types
 - Throw errors; do not silently swallow failures
-- Infrastructure errors should be translated into domain-safe or HTTP-safe errors at boundaries
+- Provider and database errors should be translated into domain-safe or HTTP-safe errors at boundaries
 - No `console.log` for errors
 
 ---
@@ -74,7 +77,7 @@ Rules:
 ## Testing
 
 - Tests required for **core domain logic**
-- Infrastructure tests optional
+- Service and I/O tests optional
 - Prefer fast, deterministic tests
 - Avoid mocking domain logic
 
@@ -86,7 +89,6 @@ Rules:
 - The schema in `backend/src/db/schema/` is the source of truth. Migrations are generated
   from it with `pnpm run db:generate` and applied with `pnpm run db:migrate`
 - Tables and columns use `snake_case`
-- Database models live in **infrastructure**
 - Domain entities must be mapped explicitly from DB models
 - Transactions must be explicit (no implicit behavior)
 - Constraints that protect invariants belong in the schema (e.g. partial unique indexes),
@@ -144,7 +146,7 @@ Rules:
 ## What NOT to Do
 
 - Do not bypass layers
-- Do not mix infrastructure with domain logic
+- Do not mix I/O with domain logic
 - Do not add unnecessary abstractions
 - Do not introduce cleverness at the cost of readability
 - Do not generate large files without clear purpose
