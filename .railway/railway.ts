@@ -6,7 +6,9 @@
  * "Changing Railway config"). An apply is declarative: a service, variable or custom domain
  * missing from this file is deleted, so check the plan for destructive entries before applying.
  *
- * Both services build from the repository root, so their commands `cd` into the package.
+ * Both services build from the repository root (Root Directory `/`). The frontend builds with
+ * Railpack, and its commands `cd` into the package. The backend builds from `backend/Dockerfile`,
+ * whose build context is that same root.
  * Secrets are never written here: `preserve()` keeps the value already set in Railway.
  */
 import { defineRailway, github, preserve, project, service } from 'railway/iac';
@@ -21,9 +23,10 @@ const restartPolicy = {
 export default defineRailway(() => {
   const frontend = service('@six7swe/frontend', {
     source: repo,
+    // Railpack runs `pnpm install` at the workspace root before the build command.
     build: {
-      builder: 'NIXPACKS',
-      buildCommand: 'cd frontend && pnpm install && pnpm build',
+      builder: 'RAILPACK',
+      buildCommand: 'cd frontend && pnpm build',
       watchPatterns: ['/frontend/**'],
     },
     start: 'cd frontend && pnpm preview --host',
@@ -40,20 +43,19 @@ export default defineRailway(() => {
 
   const backend = service('@six7swe/backend', {
     source: repo,
-    // Nixpacks builds and runs in one image, so the Chrome libraries that
-    // `browsers:install --install-deps` installs with apt-get at build time are still there at
-    // runtime. Railpack (the dashboard default) uses a separate runtime image; moving to it needs
-    // those libraries listed as deploy apt packages first.
+    // The Dockerfile's runtime stage installs Chrome's shared libraries, so the image that is
+    // built is the image that runs (DEPLOYMENT.md, "Chrome for the job scraper"). Railway runs a
+    // Dockerfile service's start command in exec form, without a shell, so neither command uses
+    // `cd` or `&&`. `db:deploy` is a package script, and pnpm runs scripts in a shell.
     build: {
-      builder: 'NIXPACKS',
-      buildCommand:
-        'apt-get update && cd backend && pnpm install && pnpm run browsers:install --install-deps && pnpm build',
-      watchPatterns: ['/backend/**'],
+      builder: 'DOCKERFILE',
+      dockerfilePath: 'backend/Dockerfile',
+      watchPatterns: ['/backend/**', '/.dockerignore'],
     },
-    start: 'cd backend && pnpm start',
-    // Migrate first: a table a migration creates starts with the default Supabase grants, so
-    // `db:secure` must run after it (docs/SECURITY.md).
-    preDeploy: 'cd backend && pnpm db:migrate -- --remote && pnpm db:secure -- --remote',
+    start: 'pnpm --dir backend start',
+    // `db:deploy` migrates, then secures: a table a migration creates starts with the default
+    // Supabase grants, so `db:secure` must run after it (docs/SECURITY.md).
+    preDeploy: 'pnpm --dir backend db:deploy',
     deploy: { ...restartPolicy },
     replicas: { 'us-west2': 1 },
     networking: { privateNetworkEndpoint: 'six7swebackend' },

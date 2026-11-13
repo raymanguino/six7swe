@@ -125,7 +125,15 @@ export const NO_PATCH_MARKER = `${DIFF_NOTICE_PREFIX} no patch available]`;
  */
 export type ReviewTier = 0 | 1 | 2 | 3 | 4;
 
-const CONFIG_FILE = /^(package\.json|tsconfig[^/]*\.json|drizzle\.config\.ts|railway\.json)$/;
+/**
+ * Build and deploy configuration, classed as tier 1 outside test directories.
+ * `Dockerfile` is listed for completeness: `PINNED_FILE` already makes it
+ * tier 0 everywhere except data fixture directories, which are test
+ * directories too. `.dockerignore` is not pinned; it can only leave files
+ * out of the image, not add code to it.
+ */
+const CONFIG_FILE =
+  /^(package\.json|tsconfig[^/]*\.json|drizzle\.config\.ts|railway\.json|Dockerfile([.-][^/]+)?|\.dockerignore)$/;
 
 /**
  * Files that can change the build, CI, deploy or login path. They are named
