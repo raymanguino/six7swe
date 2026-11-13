@@ -4,6 +4,8 @@ Rules:
 - Route handlers handle HTTP only and call services
 - Services orchestrate use cases and own the side effects
 - Database queries live in `backend/src/db/api/`
+- Plugins (`backend/src/plugins/`) wire services and `db/api` modules into Fastify as decorators; no business logic
+- Known exception: `backend/src/services/portfolioService.ts` still queries Drizzle directly until #88; not a finding
 
 ---
 
@@ -20,9 +22,11 @@ Rules:
 - **Services own the I/O** (`backend/src/services/`)
   - Orchestrate use cases and perform the side effects: external APIs
     (MiniMax, Resend, GitHub), Puppeteer, the filesystem, and the database
-  - I/O in a service is the intended design
+  - I/O in a service is the intended design, but input reaching a file path, URL, query, or
+    command must still be validated
 - **Queries live in `backend/src/db/api/`**
-  - Called from services; no ad-hoc queries that bypass it
+  - Called only from services and plugins; a handler or domain module importing `db/api` is a violation
+  - No ad-hoc queries in services that bypass it
 - **AI agent logic is isolated**
   - No HTTP or scraping concerns
   - Tooling accessed via MCP abstractions
@@ -113,8 +117,8 @@ Rules:
 ## Scraping Rules
 
 - Puppeteer only
-- Scraping logic isolated from business logic
-- No scraping logic inside routes or services
+- Scraping logic lives in `backend/src/services/jobFetchers/`, isolated from business logic
+- No scraping logic inside routes, handlers, or the domain
 - Scraped data must be normalized before entering the domain
 
 ---
