@@ -361,8 +361,19 @@ After an apply, `railway config plan` should report no changes.
 > (5.74.0).
 >
 > The fix is the same in every shell: put the directory holding `railway.exe` on `PATH` ahead of
-> the shims, so the SDK resolves the real binary instead of the shim. The directory is
-> `$(npm root -g)\@railway\cli\bin`.
+> the shims. The directory is `$(npm root -g)\@railway\cli\bin`.
+>
+> The SDK resolves the CLI with `execFileSync(process.env._ || "railway")`, so what `_` holds
+> decides which one runs, and that differs by shell:
+>
+> - In PowerShell and cmd.exe, `_` is not set, so the SDK falls back to the bare name `railway`
+>   and Windows resolves it against `PATH`.
+> - In Git Bash, bash sets `_` to the command it just resolved, so `_` points at whichever
+>   `railway` came first on `PATH`.
+>
+> Prepending the executable's directory settles both: in bash, `railway` resolves to that
+> directory and `_` follows it; in PowerShell and cmd.exe, the fallback name resolves to the
+> executable instead of the shim.
 >
 > PowerShell:
 >
