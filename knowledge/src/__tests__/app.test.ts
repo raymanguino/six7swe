@@ -1,6 +1,14 @@
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../app.js';
+import {
+  DocumentDtoSchema,
+  ErrorResponseSchema,
+  RetrieveResponseSchema,
+  UploadResponseSchema,
+} from '../contract.js';
+import { ConflictError } from '../db/api/repository.js';
+import type { Authenticators } from '../plugins/serviceAuth.js';
 import { createHashingEmbedder } from '../services/embedding/hashing.js';
 import {
   createMemoryFileStore,
@@ -83,11 +91,91 @@ describe('auth', () => {
   });
 });
 
+describe('pluggable authenticators', () => {
+  async function appWith(authenticators: Partial<Authenticators>) {
+    return buildApp({
+      deps: {
+        repo: createMemoryRepository(),
+        files: createMemoryFileStore(),
+        embedder: createHashingEmbedder(256),
+      },
+      serviceKey: KEY,
+      ownerId: 'owner',
+      maxUploadBytes: 2048,
+      logger: false,
+      authenticators,
+    });
+  }
+
+  it('replaces only the owner check, leaving service routes on the key', async () => {
+    const custom = await appWith({
+      owner: (req) => (req.headers.authorization === 'Bearer owner-token' ? 'jwt-owner' : null),
+    });
+    try {
+      const owner = { authorization: 'Bearer owner-token' };
+      expect(
+        (await custom.inject({ method: 'GET', url: '/documents', headers: owner })).statusCode,
+      ).toBe(200);
+      // The service key no longer opens owner routes...
+      expect(
+        (await custom.inject({ method: 'GET', url: '/documents', headers: auth })).statusCode,
+      ).toBe(401);
+      // ...and the owner token does not open service routes.
+      expect(
+        (await custom.inject({ method: 'GET', url: '/version', headers: owner })).statusCode,
+      ).toBe(401);
+      expect(
+        (await custom.inject({ method: 'GET', url: '/version', headers: auth })).statusCode,
+      ).toBe(200);
+    } finally {
+      await custom.close();
+    }
+  });
+
+  it('rejects an owner id that is not a safe storage-key segment', async () => {
+    const custom = await appWith({ owner: () => '../escape' });
+    try {
+      expect((await custom.inject({ method: 'GET', url: '/documents' })).statusCode).toBe(401);
+    } finally {
+      await custom.close();
+    }
+  });
+});
+
+describe('errors', () => {
+  it('maps a repository ConflictError to 409', async () => {
+    const repo = createMemoryRepository();
+    repo.createDocument = () => Promise.reject(new ConflictError('The document conflicts'));
+    const conflicted = await buildApp({
+      deps: { repo, files: createMemoryFileStore(), embedder: createHashingEmbedder(256) },
+      serviceKey: KEY,
+      ownerId: 'owner',
+      maxUploadBytes: 2048,
+      logger: false,
+    });
+    try {
+      const { payload, headers } = multipartFile('a.md', utf8('# A'));
+      const res = await conflicted.inject({
+        method: 'POST',
+        url: '/documents',
+        payload,
+        headers: { ...headers, ...auth },
+      });
+      expect(res.statusCode).toBe(409);
+      expect(ErrorResponseSchema.parse(res.json())).toEqual({ error: 'The document conflicts' });
+    } finally {
+      await conflicted.close();
+    }
+  });
+});
+
 describe('documents and retrieval', () => {
   it('uploads, ingests, lists and retrieves', async () => {
     const res = await uploadFile('resume.md', RESUME_MD, 'resume');
     expect(res.statusCode).toBe(202);
-    const body = res.json<{ document: Record<string, unknown>; deduplicated: boolean }>();
+    // The response matches the wire contract exactly.
+    const body = UploadResponseSchema.strict().parse(res.json());
+    expect(DocumentDtoSchema.strict().safeParse(body.document).success).toBe(true);
     expect(body.deduplicated).toBe(false);
     expect(body.document).toMatchObject({
       filename: 'resume.md',
@@ -115,7 +203,7 @@ describe('documents and retrieval', () => {
       payload: { query: 'pgvector retrieval assistant', k: 1 },
     });
     expect(retrieved.statusCode).toBe(200);
-    const result = retrieved.json<{ version: number; chunks: { filename: string }[] }>();
+    const result = RetrieveResponseSchema.parse(retrieved.json());
     expect(result.version).toBe(2);
     expect(result.chunks).toHaveLength(1);
     expect(result.chunks[0]?.filename).toBe('project.txt');

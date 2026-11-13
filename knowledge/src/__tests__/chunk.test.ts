@@ -30,7 +30,11 @@ describe('splitMarkdownSections', () => {
   });
 
   it('keeps text before the first heading with a null path', () => {
-    expect(splitMarkdownSections('intro\n\n# A\n\nbody')[0]).toEqual({ path: null, text: 'intro' });
+    expect(splitMarkdownSections('intro\n\n# A\n\nbody')[0]).toEqual({
+      trail: [],
+      path: null,
+      text: 'intro',
+    });
   });
 
   it('ignores heading-like lines inside fenced code', () => {
@@ -168,15 +172,33 @@ describe('chunkDocument', () => {
   it('returns no chunks for empty text', () => {
     expect(chunkDocument('', 'text/markdown')).toEqual([]);
   });
+
+  it('labels a packed chunk with the deepest heading all its sections share', () => {
+    const md = '# Resume\n\n## Experience\n\n### Acme\n\na\n\n### Globex\n\nb\n\n## Education\n\nc';
+    const [all] = chunkDocument(md, 'text/markdown');
+    expect(all?.heading).toBe('Resume');
+
+    const experience = chunkDocument(
+      // The intro section alone is exactly 60 tokens, so the next heading overflows it.
+      `# Resume\n\nintro ${words(58)}\n\n## Experience\n\n### Acme\n\na\n\n### Globex\n\nb`,
+      'text/markdown',
+      { maxTokens: 60, overlapRatio: 0.15 },
+    );
+    // The first chunk holds only the intro; the rest share "Resume > Experience".
+    expect(experience.map((c) => c.heading)).toEqual(['Resume', 'Resume > Experience']);
+
+    // Text before any heading shares nothing with a headed section.
+    expect(chunkDocument('intro\n\n# A\n\nbody', 'text/markdown')[0]?.heading).toBeNull();
+  });
 });
 
 describe('embeddingInput', () => {
-  it('prefixes the heading when the content does not already contain it', () => {
+  it('prefixes the heading path whenever there is one', () => {
     expect(embeddingInput({ heading: 'Exp > Acme', content: 'Led things' })).toBe(
       'Exp > Acme\n\nLed things',
     );
-    expect(embeddingInput({ heading: 'Acme', content: '# Acme\n\nLed things' })).toBe(
-      '# Acme\n\nLed things',
+    expect(embeddingInput({ heading: 'Exp > Acme', content: '### Acme\n\nLed things' })).toBe(
+      'Exp > Acme\n\n### Acme\n\nLed things',
     );
     expect(embeddingInput({ heading: null, content: 'x' })).toBe('x');
   });

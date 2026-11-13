@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import { EmbeddingError } from '../services/embedding/errors.js';
 import { hashEmbed, tokenize } from '../services/embedding/hashing.js';
 import {
   createOpenRouterEmbedder,
   defaultBackoffMs,
-  EmbeddingError,
   isRetryable,
   parseRetryAfter,
 } from '../services/embedding/openrouter.js';
@@ -131,14 +131,36 @@ describe('OpenRouter embedder', () => {
     expect(error).toMatchObject({ status: 429, details: { retryAfterMs: 0 } });
     expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
+
+  it('wraps transport failures and timeouts in a retryable EmbeddingError with the cause', async () => {
+    const network = new TypeError('fetch failed');
+    const timeout = new DOMException('timed out', 'TimeoutError');
+    const fetchImpl = vi
+      .fn()
+      .mockRejectedValueOnce(network)
+      .mockRejectedValueOnce(timeout)
+      .mockRejectedValueOnce(network);
+    const embedder = createOpenRouterEmbedder({ ...base, fetchImpl });
+    const error: unknown = await embedder.embed(['x']).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(EmbeddingError);
+    expect(error).toMatchObject({ retryable: true, cause: network });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not retry a body that is not JSON', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response('<html>', { status: 200 }));
+    const embedder = createOpenRouterEmbedder({ ...base, fetchImpl });
+    await expect(embedder.embed(['x'])).rejects.toThrow(/not JSON/);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('retry helpers', () => {
-  it('isRetryable covers provider, timeout and network errors only', () => {
+  it('isRetryable reads only EmbeddingError.retryable', () => {
     expect(isRetryable(new EmbeddingError('x', true))).toBe(true);
     expect(isRetryable(new EmbeddingError('x', false))).toBe(false);
-    expect(isRetryable(new TypeError('fetch failed'))).toBe(true);
-    expect(isRetryable(new DOMException('timed out', 'TimeoutError'))).toBe(true);
+    // Raw errors never reach the retry loop from fetch; anything else is a bug.
+    expect(isRetryable(new TypeError('fetch failed'))).toBe(false);
     expect(isRetryable(new SyntaxError('bad json'))).toBe(false);
   });
 
