@@ -88,7 +88,7 @@ export const silentLogger: FastifyBaseLogger = (() => {
     silent: noop,
     child: () => log,
   };
-  return log as unknown as FastifyBaseLogger;
+  return log;
 })();
 
 /** A fictional person; tests must not read as anyone's real history. */

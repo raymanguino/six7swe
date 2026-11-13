@@ -1,8 +1,8 @@
 {
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
-    // An ES module package: unpdf and the MCP SDK are ESM first, and a new
-    // service has no CommonJS consumers to stay compatible with.
+    // An ES module package: unpdf is ESM first, and a new service has no
+    // CommonJS consumers to stay compatible with.
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",

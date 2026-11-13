@@ -1,11 +1,11 @@
 {
-  // Type-checks everything: the sources, the tests, the scripts and the
-  // config files. The build tsconfig only covers `src` without the tests.
+  // Type-checks everything: the sources, the tests and the config files. The
+  // build tsconfig only covers `src` without the tests.
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "rootDir": ".",
     "noEmit": true
   },
-  "include": ["src/**/*", "scripts/**/*", "drizzle.config.ts", "vitest.config.ts"],
+  "include": ["src/**/*", "drizzle.config.ts", "vitest.config.ts"],
   "exclude": ["node_modules", "dist"]
 }

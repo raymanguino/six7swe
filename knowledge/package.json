@@ -12,13 +12,13 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "tsx scripts/db-migrate.ts",
+    "db:migrate": "tsx --env-file-if-exists=.env src/db/migrate.ts",
+    "db:migrate:prod": "node dist/db/migrate.js",
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
     "@fastify/multipart": "^10.1.8",
     "@supabase/supabase-js": "^2.119.0",
-    "dotenv": "^17.2.3",
     "drizzle-orm": "^0.45.4",
     "fastify": "^5.12.8",
     "fastify-plugin": "^5.1.0",
@@ -28,6 +28,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.10.11",
+    "dotenv": "^17.2.3",
     "drizzle-kit": "^0.31.11",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",

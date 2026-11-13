@@ -139,6 +139,7 @@ export default [
       ],
       '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/no-floating-promises': 'error',
+      '@typescript-eslint/no-unnecessary-type-assertion': 'error',
       // TypeScript already rejects undefined names, and this rule does not
       // understand type-only globals such as `NodeJS.ProcessEnv`.
       'no-undef': 'off',

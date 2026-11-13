@@ -1,13 +1,6 @@
 import 'dotenv/config';
 import { defineConfig } from 'drizzle-kit';
-
-/**
- * Where the migration ledger lives. Not `knowledge` itself (the migrator
- * would create that schema before the first migration's `CREATE SCHEMA`), and
- * not the shared `drizzle` schema, which the backend's `db:reset` drops.
- */
-export const MIGRATIONS_SCHEMA = 'knowledge_migrations';
-export const MIGRATIONS_TABLE = '__drizzle_migrations';
+import { MIGRATIONS_SCHEMA, MIGRATIONS_TABLE } from './src/db/ledger.js';
 
 export default defineConfig({
   // Migrations are generated from src/db/schema.ts and never edited by hand,
