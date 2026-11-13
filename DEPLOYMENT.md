@@ -3,6 +3,15 @@
 This monorepo is configured to deploy on Railway with separate services for frontend and backend.
 Both services are declared in `.railway/railway.ts` (Railway Infrastructure as Code).
 
+| Service  | Builder    | Build definition                                     |
+| -------- | ---------- | ---------------------------------------------------- |
+| backend  | Dockerfile | `backend/Dockerfile`, built from the repository root |
+| frontend | Railpack   | `cd frontend && pnpm build`                          |
+
+The backend uses a Dockerfile because the job scraper launches Chrome, which needs system
+libraries at runtime (see [Chrome for the job scraper](#chrome-for-the-job-scraper)). The frontend
+is a plain Vite build that Railpack handles with no extra files.
+
 Before deploying, complete the local setup steps in `SETUP.md` (install dependencies, configure environment variables, and seed your portfolio/resume data).
 
 ## Node Version
@@ -17,9 +26,12 @@ The backend needs **Node 22.12 or later** on the 22 line. The root `package.json
 CommonJS, and `puppeteer` (25+) is ESM only, so on anything older the backend crashes on
 startup with `ERR_REQUIRE_ESM`.
 
-Railway's Nixpacks builder reads that field and installs the matching Node
-version. Without it the builder falls back to Node 18, which is end of life and
-too old for some dependencies.
+The backend image gets its Node version from the base image tag in `backend/Dockerfile`
+(`node:22.12.0-bookworm-slim`), not from `engines`. Keep the two in agreement: the tag must
+satisfy `engines.node`. Dependabot bumps the tag weekly and is told to ignore Node major
+versions (`.github/dependabot.yml`), so it stays on 22.
+
+Railpack, which builds the frontend, reads `engines.node` and installs a matching version.
 
 > Node 18 crashes the backend on startup with `ERR_REQUIRE_ESM`. The
 > `content-disposition` package that `@fastify/static` depends on is ESM only,
@@ -36,14 +48,26 @@ too old for some dependencies.
 
 ### 1. Backend Service
 
-The `backend` service in `.railway/railway.ts` sets the source repository, the Nixpacks
-builder, the build, start and pre-deploy commands, the restart policy and the watch path.
+The `backend` service in `.railway/railway.ts` sets the source repository, the Dockerfile
+builder and its path (`backend/Dockerfile`), the start and pre-deploy commands, the restart
+policy and the watch paths.
 `railway config apply` creates the service if it does not exist (see
 [Changing Railway config](#changing-railway-config)).
 
-1. Leave the **Root Directory** at the default (`/`), the repository root. The commands
-   already `cd` into `backend`, so a root directory of `backend` would make them fail.
-2. Set environment variables on the service. `.railway/railway.ts` lists each secret as
+1. Leave the **Root Directory** at the default (`/`), the repository root. It is the
+   Dockerfile's build context: the image needs the root `package.json`, `pnpm-lock.yaml`,
+   `pnpm-workspace.yaml` and `tsconfig.base.json`, so a root directory of `backend` would make
+   the build fail.
+2. Railway runs a Dockerfile service's start command in exec form, without a shell, so a
+   command with `cd` or `&&` does not work there. The image's working directory is
+   `/app/backend`, so commands need no `cd`: the start command is `pnpm start`, and the
+   pre-deploy command is `pnpm db:deploy`, a package script (pnpm runs scripts in a shell).
+   Write any new command for this service, such as a cron command, the same way. Running from
+   `backend/` also means pnpm is the version `backend/package.json` pins, which the image
+   fetches at build time.
+   The image sets `NODE_ENV=production`, which arms the guard that refuses to start with
+   `AUTH_DEV_BYPASS` set.
+3. Set environment variables on the service. `.railway/railway.ts` lists each secret as
    `preserve()`, which keeps the value set in Railway, so a new variable has to be added there as
    well or the next apply deletes it:
    - `DATABASE_URL` - PostgreSQL connection string
@@ -72,14 +96,21 @@ builder, the build, start and pre-deploy commands, the restart policy and the wa
 
 ### 2. Frontend Service
 
-The `frontend` service in `.railway/railway.ts` follows the same pattern.
+The `frontend` service in `.railway/railway.ts` builds with Railpack. Railpack runs
+`pnpm install` at the workspace root, then the build command `cd frontend && pnpm build`. The
+start command is `cd frontend && pnpm preview --host`, which serves the build on port 4173.
 
-1. Leave the **Root Directory** at the default (`/`), the repository root, for the same reason as
-   the backend service.
+1. Leave the **Root Directory** at the default (`/`), the repository root, so Railpack sees the
+   pnpm workspace and the lockfile.
 2. Set environment variables (also listed in `.railway/railway.ts`):
    - `VITE_API_URL` - URL of your backend service (e.g., `https://your-backend.railway.app`)
    - `VITE_SUPABASE_URL` - Supabase project URL, for job-hunter sign-in
    - `VITE_SUPABASE_ANON_KEY` - Supabase anon key, for job-hunter sign-in
+
+> Vite inlines `VITE_*` variables into the bundle at build time, not at runtime. Railpack passes
+> service variables to the build, but after a builder change check that the deployed bundle
+> points at the right backend: the site should load the portfolio, and the browser's network tab
+> should show requests going to `VITE_API_URL`.
 
 ### 3. Apply the Migrations to the Remote Database
 
@@ -134,13 +165,20 @@ The backend service applies the migrations as a **pre-deploy** command, so every
 the hosted database in line with `src/db/schema/`:
 
 ```ts
-deploy: {
-  preDeployCommand: ['cd backend && pnpm db:migrate -- --remote && pnpm db:secure -- --remote'],
-},
+preDeploy: 'pnpm db:deploy',
 ```
 
-`preDeployCommand` runs after the build succeeds and before the new version starts, so the schema
-is in place before the code that depends on it. The frontend service does not need one.
+`db:deploy` is a script in `backend/package.json`:
+`pnpm db:migrate -- --remote && pnpm db:secure -- --remote`.
+
+`preDeployCommand` runs inside the newly built backend image after the build succeeds and before
+the new version starts, so the schema is in place before the code that depends on it. This is why
+the image keeps dev dependencies: `db:migrate` and `db:secure` run through `tsx`. The frontend
+service does not need a pre-deploy command.
+
+> Railway PR environments inherit this command, and `--remote` points it at `DATABASE_URL`. Do
+> not enable PR environments unless their `DATABASE_URL` points at a database other than the
+> hosted one.
 
 The two steps are in that order on purpose. `db:migrate` applies the migrations, and a table that
 a migration created starts out with the default Supabase grants, so `db:secure` has to run after
@@ -178,10 +216,11 @@ shows up in the Railway logs. The planned fix serves the PDF from the knowledge 
 
 The job-hunter can trigger a refresh over HTTP, but a refresh started that way
 does not survive a backend restart. For scheduled refreshes, add a **Cron** to
-the backend service in Railway:
+the backend service in Railway. The cron runs inside the backend image, from `/app/backend`,
+without a shell:
 
 ```bash
-pnpm run jobs:refresh -- --profile 1
+pnpm jobs:refresh -- --profile 1
 ```
 
 `profileId` is the id of the search profile to refresh. The command uses the
@@ -192,26 +231,74 @@ startup, so a stale run never blocks the next one.
 
 #### Chrome for the job scraper
 
-The LinkedIn fetcher drives a headless Chrome through puppeteer. pnpm does not run
-puppeteer's postinstall, so the Railway build installs Chrome explicitly:
+The LinkedIn fetcher drives a headless Chrome through puppeteer. Chrome needs shared libraries
+(nss, atk, gbm, cups, fonts and others) that the slim Node base image does not have.
+`backend/Dockerfile` has three stages:
+
+- **base** is the Node image with corepack, which the other two start from.
+- **build** installs the backend's dependencies, downloads Chrome with
+  `pnpm run browsers:install`, and compiles the backend. pnpm does not run puppeteer's
+  postinstall, so the download is explicit. Chrome has its own layer, before the source is
+  copied, so it is downloaded again only when the dependencies change.
+- **runtime** installs Chrome's libraries with `apt-get`, then copies the app from the build
+  stage. The list comes from the `deb.deps` file that ships with the Chrome build puppeteer
+  downloaded, the same list `browsers install --install-deps` would use, so it follows Chrome
+  rather than a hand-written list. It includes `ca-certificates` and `fonts-liberation`.
+
+The image that is built is the image that runs, so the libraries the runtime stage installs are
+there when the scraper launches Chrome. A builder with a separate, slimmer runtime image
+(Railpack) would drop libraries installed during its build, and Chrome would fail only when a
+refresh runs, not at boot.
+
+- `backend/.puppeteerrc.cjs` sets puppeteer's cache to `backend/.cache/puppeteer`. Chrome is
+  downloaded inside the app directory, so it is copied into the runtime stage with the app, and
+  the runtime looks in the same place.
+- The browser version follows the installed puppeteer release. A puppeteer upgrade picks up the
+  new Chrome, and its library list, on the next deploy.
+- The container runs as root, and `services/jobFetchers/browser.ts` launches Chrome with
+  `--no-sandbox`.
+
+If a refresh fails with `Could not find Chrome`, check the build log for the `browsers:install`
+step. A failure that names a missing `.so` file is a library missing from the runtime stage; add
+an `apt-get install` for it there.
+
+### 7. Running the Backend Image Locally
+
+Build from the repository root, which is the build context Railway uses:
 
 ```bash
-apt-get update && cd backend && pnpm install && pnpm run browsers:install --install-deps && pnpm build
+docker build -f backend/Dockerfile -t six7-backend .
 ```
 
-- `backend/.puppeteerrc.cjs` sets puppeteer's cache to `backend/.cache/puppeteer`. Chrome
-  is downloaded inside the app directory, so it ships in the deployed image, and the
-  runtime looks in the same place. The default, `~/.cache/puppeteer`, is not reliable
-  across the build and the running container.
-- `--install-deps` installs the shared libraries Chrome needs (nss, atk, gbm, cups, fonts
-  and others) with `apt-get`, from the `deb.deps` list that ships with each Chrome build.
-  It does not refresh the package index itself, so `apt-get update` runs first.
-- The browser version follows the installed puppeteer release. A puppeteer upgrade picks
-  up the new Chrome on the next deploy.
+`.dockerignore` keeps `node_modules`, `.env` files, build output, the Chrome cache and the
+private portfolio data out of the build context. Railway builds from git, so gitignored files
+never reach its build either.
 
-If a refresh fails with `Could not find Chrome`, check the build log for the
-`browsers:install` step. A failure that names a missing `.so` file is a library that
-`--install-deps` did not cover.
+Check that Chrome launches in the image. Do this before deploying a change to the Dockerfile or a
+puppeteer upgrade:
+
+```bash
+docker run --rm six7-backend \
+  node -e "require('puppeteer').launch({args:['--no-sandbox']}).then(b=>b.close()).then(()=>console.log('Chrome OK'))"
+```
+
+Run the server with your local environment file:
+
+```bash
+docker run --rm -p 3000:3000 --env-file backend/.env -e PORT=3000 six7-backend
+```
+
+The image runs with `NODE_ENV=production`, so the server refuses to start if `backend/.env` sets
+`AUTH_DEV_BYPASS=true`.
+
+### Rolling Back the Builders
+
+To go back to Nixpacks, set the service's `builder` to `NIXPACKS` in `.railway/railway.ts`,
+restore its `buildCommand` and its old start and pre-deploy commands, and apply the config. The
+backend's build command was
+`apt-get update && cd backend && pnpm install && pnpm run browsers:install --install-deps && pnpm build`
+and the frontend's `cd frontend && pnpm install && pnpm build`. Nixpacks is deprecated, so treat
+this as a short-term fallback.
 
 ## Monorepo Structure
 
@@ -219,7 +306,9 @@ If a refresh fails with `Could not find Chrome`, check the build log for the
 six7swe/
 ├── .railway/
 │   └── railway.ts    # Railway services (Infrastructure as Code)
+├── .dockerignore     # Build context filter for the backend image
 ├── backend/          # Backend service (Fastify API)
+│   ├── Dockerfile    # Backend image (build context: repository root)
 │   └── public/       # Static files (resume.pdf)
 ├── frontend/         # Frontend service (React app)
 └── package.json      # Root workspace config
@@ -227,8 +316,16 @@ six7swe/
 
 ## Watch Paths
 
-`.railway/railway.ts` sets a watch path per service (`/backend/**` and `/frontend/**`), so a
-change in one service does not rebuild the other.
+`.railway/railway.ts` sets watch paths per service, so a change in one service does not rebuild
+the other:
+
+- backend: `/backend/**`, plus the root files the Dockerfile reads (`/.dockerignore`,
+  `/package.json`, `/pnpm-lock.yaml`, `/pnpm-workspace.yaml`, `/tsconfig.base.json`)
+- frontend: `/frontend/**`, plus the root files its build reads (`/package.json`,
+  `/pnpm-lock.yaml`, `/pnpm-workspace.yaml`, `/tsconfig.base.json`). Railpack installs from the
+  workspace root, and `frontend/tsconfig.json` extends `tsconfig.base.json`.
+
+A change to one of the shared root files rebuilds both services.
 
 ## Changing Railway config
 

@@ -1,0 +1,30 @@
+# Build context for backend/Dockerfile is the repository root. Railway builds from git, so
+# gitignored files never reach its build; this keeps a local `docker build` the same.
+.git
+**/node_modules
+**/.env
+**/.env.*
+!**/.env.example
+**/dist
+**/coverage
+**/*.tsbuildinfo
+backend/.cache
+backend/content
+backend/public/*.pdf
+backend/scripts/portfolio-data.json
+frontend/dist
+
+# Private keys and certificates (see .gitignore).
+**/*.pem
+**/*.key
+**/*.pfx
+**/*.p12
+**/*.jks
+**/*.keystore
+
+# Logs, local tool state and registry credentials.
+**/*.log
+.claude
+supabase/.temp
+supabase/.branches
+**/.npmrc

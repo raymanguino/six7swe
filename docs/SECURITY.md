@@ -131,8 +131,8 @@ pnpm run db:secure -- --remote    # the hosted database
 source of truth for the tables, but Drizzle ORM 0.33 cannot express row level
 security or role grants, so the rules live in `backend/src/db/security.ts`
 and have to be applied separately. `db:reset` applies them automatically, and
-the backend's Railway `preDeployCommand` (`.railway/railway.ts`) runs `db:migrate` followed
-by `db:secure`.
+the backend's Railway `preDeployCommand` (`.railway/railway.ts`) runs `db:deploy`,
+which runs `db:migrate` followed by `db:secure`.
 
 ### Verifying it
 

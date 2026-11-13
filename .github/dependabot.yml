@@ -80,6 +80,21 @@ updates:
         update-types:
           - version-update:semver-major
 
+  # Keep the base image tag in backend/Dockerfile current.
+  - package-ecosystem: docker
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+      time: '07:00'
+      timezone: America/Bogota
+    ignore:
+      # Stay on Node 22: `engines.node` in the root package.json is `>=22.12 <23`,
+      # and CI tests on 22. Moving to a new major is a deliberate change to both.
+      - dependency-name: node
+        update-types:
+          - version-update:semver-major
+
   # Keep the action versions in .github/workflows current.
   - package-ecosystem: github-actions
     directory: /

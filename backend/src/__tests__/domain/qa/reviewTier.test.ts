@@ -54,6 +54,14 @@ describe('reviewTier', () => {
     ['backend/Dockerfile-dev', 0],
     ['mydockerfile-x', 1],
     ['backend/nixpacks.toml', 0],
+    ['backend/Dockerfile', 0],
+    ['.dockerignore', 1],
+    ['backend/.dockerignore', 1],
+    // Under `src/` or `scripts/` it would otherwise be tier 0 like code.
+    ['backend/src/.dockerignore', 1],
+    ['backend/scripts/.dockerignore', 1],
+    ['__fixtures__/Dockerfile', 2],
+    ['backend/src/__tests__/fixtures/.dockerignore', 2],
     ['backend/railway.json', 0],
     ['backend/src/services/auth/jwks.ts', 0],
     ['backend/src/__tests__/services/auth/jwks.test.ts', 2],
@@ -108,6 +116,8 @@ describe('isPinnedPath', () => {
     // Only the top-level Railway directory is the deploy definition.
     ['backend/.railway/railway.ts', false],
     ['nixpacks.toml', true],
+    ['backend/Dockerfile', true],
+    ['.dockerignore', false],
     ['backend/src/services/auth/index.ts', true],
     ['CLAUDE.md', true],
     ['AGENTS.md', true],
