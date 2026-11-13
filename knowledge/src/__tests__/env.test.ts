@@ -4,6 +4,7 @@ import { loadEnv } from '../config/env.js';
 const base = {
   DATABASE_URL: 'postgres://localhost/db',
   KNOWLEDGE_SERVICE_KEY: 'k'.repeat(32),
+  KNOWLEDGE_OWNER_KEY: 'o'.repeat(32),
   OWNER_AUTH_ID: 'owner',
 };
 
@@ -21,7 +22,17 @@ describe('loadEnv', () => {
 
   it('lists every problem at once', () => {
     expect(() => loadEnv({})).toThrow(
-      /DATABASE_URL[\s\S]*KNOWLEDGE_SERVICE_KEY[\s\S]*OWNER_AUTH_ID/,
+      /DATABASE_URL[\s\S]*KNOWLEDGE_SERVICE_KEY[\s\S]*KNOWLEDGE_OWNER_KEY[\s\S]*OWNER_AUTH_ID/,
+    );
+  });
+
+  it('requires an owner key of at least 32 characters that differs from the service key', () => {
+    const env = { ...base, EMBEDDER: 'hashing', FILE_STORE: 'local' };
+    expect(() => loadEnv({ ...env, KNOWLEDGE_OWNER_KEY: 'short' })).toThrow(
+      /KNOWLEDGE_OWNER_KEY must be at least 32 characters/,
+    );
+    expect(() => loadEnv({ ...env, KNOWLEDGE_OWNER_KEY: base.KNOWLEDGE_SERVICE_KEY })).toThrow(
+      /KNOWLEDGE_OWNER_KEY must differ from KNOWLEDGE_SERVICE_KEY/,
     );
   });
 

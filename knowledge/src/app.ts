@@ -20,7 +20,10 @@ declare module 'fastify' {
 
 export interface BuildAppOptions {
   deps: KnowledgeDeps;
+  /** Opens service routes only. */
   serviceKey: string;
+  /** Opens owner routes only, until the owner JWT gate (step 2, #83) replaces it. */
+  ownerKey: string;
   /** The owner every authenticated request acts for, until the owner JWT gate lands. */
   ownerId: string;
   maxUploadBytes: number;
@@ -81,6 +84,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   await app.register(serviceAuth, {
     serviceKey: options.serviceKey,
+    ownerKey: options.ownerKey,
     ownerId: options.ownerId,
     authenticators: options.authenticators,
   });

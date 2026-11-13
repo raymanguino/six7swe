@@ -20,7 +20,11 @@ import {
 import { createMemoryRepository } from './support/memoryRepository.js';
 
 const KEY = 'k'.repeat(40);
+const OWNER_KEY = 'o'.repeat(40);
+/** The service key, for service routes (`/retrieve`, `/version`). */
 const auth = { 'x-knowledge-key': KEY };
+/** The owner key, for owner routes (`/documents`). */
+const ownerAuth = { 'x-knowledge-key': OWNER_KEY };
 
 let app: FastifyInstance;
 
@@ -32,6 +36,7 @@ beforeEach(async () => {
       embedder: createHashingEmbedder(256),
     },
     serviceKey: KEY,
+    ownerKey: OWNER_KEY,
     ownerId: 'owner',
     maxUploadBytes: 2048,
     logger: false,
@@ -51,7 +56,7 @@ async function uploadFile(name: string, text: string, kind?: string) {
     method: 'POST',
     url: kind ? `/documents?kind=${kind}` : '/documents',
     payload,
-    headers: { ...headers, ...auth },
+    headers: { ...headers, ...ownerAuth },
   });
 }
 
@@ -76,11 +81,28 @@ describe('auth', () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it('requires the key on owner routes until the owner gate lands', async () => {
-    expect((await app.inject({ method: 'GET', url: '/documents' })).statusCode).toBe(401);
-    expect((await app.inject({ method: 'GET', url: '/documents', headers: auth })).statusCode).toBe(
-      200,
-    );
+  it('opens owner routes with the owner key only', async () => {
+    const status = async (headers?: Record<string, string>) =>
+      (await app.inject({ method: 'GET', url: '/documents', headers })).statusCode;
+    expect(await status()).toBe(401);
+    expect(await status(ownerAuth)).toBe(200);
+    // The shared service key cannot upload, list or delete.
+    expect(await status(auth)).toBe(401);
+  });
+
+  it('opens service routes with the service key only', async () => {
+    const status = async (headers?: Record<string, string>) =>
+      (await app.inject({ method: 'GET', url: '/version', headers })).statusCode;
+    expect(await status(auth)).toBe(200);
+    // The owner key is not a service credential either.
+    expect(await status(ownerAuth)).toBe(401);
+    const retrieve = await app.inject({
+      method: 'POST',
+      url: '/retrieve',
+      headers: ownerAuth,
+      payload: { query: 'x' },
+    });
+    expect(retrieve.statusCode).toBe(401);
   });
 
   it('answers an unknown path with 401 without a key and 404 with one, never 500', async () => {
@@ -100,6 +122,7 @@ describe('pluggable authenticators', () => {
         embedder: createHashingEmbedder(256),
       },
       serviceKey: KEY,
+      ownerKey: OWNER_KEY,
       ownerId: 'owner',
       maxUploadBytes: 2048,
       logger: false,
@@ -149,6 +172,7 @@ describe('errors', () => {
     const conflicted = await buildApp({
       deps: { repo, files: createMemoryFileStore(), embedder: createHashingEmbedder(256) },
       serviceKey: KEY,
+      ownerKey: OWNER_KEY,
       ownerId: 'owner',
       maxUploadBytes: 2048,
       logger: false,
@@ -159,7 +183,7 @@ describe('errors', () => {
         method: 'POST',
         url: '/documents',
         payload,
-        headers: { ...headers, ...auth },
+        headers: { ...headers, ...ownerAuth },
       });
       expect(res.statusCode).toBe(409);
       expect(ErrorResponseSchema.parse(res.json())).toEqual({ error: 'The document conflicts' });
@@ -188,7 +212,7 @@ describe('documents and retrieval', () => {
     await uploadFile('project.txt', PROJECT_NOTES_TXT);
     await idle();
 
-    const list = await app.inject({ method: 'GET', url: '/documents', headers: auth });
+    const list = await app.inject({ method: 'GET', url: '/documents', headers: ownerAuth });
     expect(list.json<{ documents: { status: string }[] }>().documents.map((d) => d.status)).toEqual(
       ['ready', 'ready'],
     );
@@ -226,7 +250,7 @@ describe('documents and retrieval', () => {
     const json = await app.inject({
       method: 'POST',
       url: '/documents',
-      headers: auth,
+      headers: ownerAuth,
       payload: { not: 'multipart' },
     });
     expect(json.statusCode).toBeGreaterThanOrEqual(400);
@@ -257,24 +281,28 @@ describe('documents and retrieval', () => {
     const got = await app.inject({
       method: 'GET',
       url: `/documents/${document.id}`,
-      headers: auth,
+      headers: ownerAuth,
     });
     expect(got.json()).toMatchObject({ document: { id: document.id, status: 'ready' } });
 
     const del = await app.inject({
       method: 'DELETE',
       url: `/documents/${document.id}`,
-      headers: auth,
+      headers: ownerAuth,
     });
     expect(del.statusCode).toBe(204);
     const gone = await app.inject({
       method: 'DELETE',
       url: `/documents/${document.id}`,
-      headers: auth,
+      headers: ownerAuth,
     });
     expect(gone.statusCode).toBe(404);
 
-    const bad = await app.inject({ method: 'GET', url: '/documents/not-a-uuid', headers: auth });
+    const bad = await app.inject({
+      method: 'GET',
+      url: '/documents/not-a-uuid',
+      headers: ownerAuth,
+    });
     expect(bad.statusCode).toBe(400);
   });
 });

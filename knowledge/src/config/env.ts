@@ -21,13 +21,19 @@ const EnvSchema = z
 
     DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
 
-    /**
-     * Shared secret for service-to-service calls (the portfolio and hunter
-     * backends) and, until the owner JWT gate lands, for the owner endpoints.
-     */
+    /** Shared secret for service-to-service calls (the portfolio and hunter backends). */
     KNOWLEDGE_SERVICE_KEY: z
       .string()
       .min(32, 'KNOWLEDGE_SERVICE_KEY must be at least 32 characters'),
+
+    /**
+     * Secret for the owner endpoints (upload, list, delete) until the owner
+     * JWT gate replaces it in step 2. Must differ from the service key, so a
+     * leaked service key cannot change the knowledge base.
+     */
+    KNOWLEDGE_OWNER_KEY: z
+      .string()
+      .min(32, 'KNOWLEDGE_OWNER_KEY must be at least 32 characters'),
 
     /**
      * The Supabase auth subject that owns the knowledge base. It becomes the
@@ -90,6 +96,14 @@ const EnvSchema = z
         code: 'custom',
         path: ['OPENROUTER_API_KEY'],
         message: 'OPENROUTER_API_KEY is required when EMBEDDER=openrouter',
+      });
+    }
+
+    if (env.KNOWLEDGE_OWNER_KEY === env.KNOWLEDGE_SERVICE_KEY) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['KNOWLEDGE_OWNER_KEY'],
+        message: 'KNOWLEDGE_OWNER_KEY must differ from KNOWLEDGE_SERVICE_KEY',
       });
     }
 

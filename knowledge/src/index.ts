@@ -17,6 +17,7 @@ async function main(): Promise<void> {
   const app = await buildApp({
     deps: { repo, files, embedder },
     serviceKey: env.KNOWLEDGE_SERVICE_KEY,
+    ownerKey: env.KNOWLEDGE_OWNER_KEY,
     ownerId: env.OWNER_AUTH_ID,
     maxUploadBytes: env.MAX_UPLOAD_BYTES,
   });
