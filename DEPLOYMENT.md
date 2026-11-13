@@ -1,6 +1,7 @@
 # Railway Deployment Guide
 
 This monorepo is configured to deploy on Railway with separate services for frontend and backend.
+Both services are declared in `.railway/railway.ts` (Railway Infrastructure as Code).
 
 Before deploying, complete the local setup steps in `SETUP.md` (install dependencies, configure environment variables, and seed your portfolio/resume data).
 
@@ -35,13 +36,16 @@ too old for some dependencies.
 
 ### 1. Backend Service
 
-1. Create a new service in Railway
-2. Connect your GitHub repository
-3. Leave the **Root Directory** at the default (`/`), the repository root. The commands in
-   `railway.json` already `cd` into `backend`, so a root directory of `backend` would make them
-   fail.
-4. Railway will automatically detect the `railway.json` configuration
-5. Set environment variables on the service:
+The `backend` service in `.railway/railway.ts` sets the source repository, the Nixpacks
+builder, the build, start and pre-deploy commands, the restart policy and the watch path.
+`railway config apply` creates the service if it does not exist (see
+[Changing Railway config](#changing-railway-config)).
+
+1. Leave the **Root Directory** at the default (`/`), the repository root. The commands
+   already `cd` into `backend`, so a root directory of `backend` would make them fail.
+2. Set environment variables on the service. `.railway/railway.ts` lists each secret as
+   `preserve()`, which keeps the value set in Railway, so a new variable has to be added there as
+   well or the next apply deletes it:
    - `DATABASE_URL` - PostgreSQL connection string
    - `PORT` - Port (Railway sets this automatically)
    - `NODE_ENV` - Set to `production`
@@ -68,12 +72,11 @@ too old for some dependencies.
 
 ### 2. Frontend Service
 
-1. Create a new service in Railway
-2. Connect the same GitHub repository
-3. Leave the **Root Directory** at the default (`/`), the repository root, for the same reason as
+The `frontend` service in `.railway/railway.ts` follows the same pattern.
+
+1. Leave the **Root Directory** at the default (`/`), the repository root, for the same reason as
    the backend service.
-4. Railway will automatically detect the `railway.json` configuration
-5. Set environment variables:
+2. Set environment variables (also listed in `.railway/railway.ts`):
    - `VITE_API_URL` - URL of your backend service (e.g., `https://your-backend.railway.app`)
    - `VITE_SUPABASE_URL` - Supabase project URL, for job-hunter sign-in
    - `VITE_SUPABASE_ANON_KEY` - Supabase anon key, for job-hunter sign-in
@@ -130,10 +133,10 @@ without a profile.
 The backend service applies the migrations as a **pre-deploy** command, so every deploy brings
 the hosted database in line with `src/db/schema/`:
 
-```json
-"deploy": {
-  "preDeployCommand": "cd backend && pnpm db:migrate -- --remote && pnpm db:secure -- --remote"
-}
+```ts
+deploy: {
+  preDeployCommand: ['cd backend && pnpm db:migrate -- --remote && pnpm db:secure -- --remote'],
+},
 ```
 
 `preDeployCommand` runs after the build succeeds and before the new version starts, so the schema
@@ -208,19 +211,45 @@ If a refresh fails with `Could not find Chrome`, check the build log for the
 
 ```
 six7swe/
+├── .railway/
+│   └── railway.ts    # Railway services (Infrastructure as Code)
 ├── backend/          # Backend service (Fastify API)
-│   ├── railway.json  # Railway config
-│   └── public/        # Static files (resume.pdf)
+│   └── public/       # Static files (resume.pdf)
 ├── frontend/         # Frontend service (React app)
-│   └── railway.json  # Railway config
 └── package.json      # Root workspace config
 ```
 
-## Watch Paths (Optional)
+## Watch Paths
 
-To prevent unnecessary rebuilds, configure watch paths in Railway:
+`.railway/railway.ts` sets a watch path per service (`/backend/**` and `/frontend/**`), so a
+change in one service does not rebuild the other.
 
-- **Backend**: `/backend/**`
-- **Frontend**: `/frontend/**`
+## Changing Railway config
 
-This ensures that changes in one service don't trigger rebuilds of the other.
+Railway does not read `.railway/railway.ts` during deploys. Code pushes to `main` deploy as usual,
+but a change to the file itself (a command, a variable, a domain, a new service) reaches Railway
+only when you apply it. This is done by hand; CI only type-checks the file.
+
+One-time setup: install the Railway CLI (5.63 or later), then `railway login` and `railway link`
+to the six7swe project and the production environment.
+
+```bash
+railway config plan    # read-only: what would change
+railway config apply   # plans again, asks for confirmation, then applies
+```
+
+An apply is **declarative**: a service, variable or domain that exists in Railway but not in the
+file is deleted. Read the plan before applying, and stop if it shows a destructive entry you did
+not intend. In particular, every variable set on a service must appear in the file, with
+`preserve()` for secrets. Never write a secret value into the file.
+
+After an apply, `railway config plan` should report no changes.
+
+> **Windows:** `railway/iac` 3.17 checks the CLI version by running `railway --version` without a
+> shell, which cannot run the `railway.cmd` shim that npm and pnpm install, so evaluation fails
+> with "requires Railway CLI 5.42.1 or newer" even on a newer CLI. The SDK uses `$_` when it is
+> set, so point it at the real binary first (PowerShell):
+>
+> ```powershell
+> $env:_ = "$(npm root -g)\@railway\cli\bin\railway.exe"
+> ```

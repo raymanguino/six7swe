@@ -110,14 +110,17 @@ export const NO_PATCH_MARKER = `${DIFF_NOTICE_PREFIX} no patch available]`;
  * - 4: generated files (migration metadata, snapshots)
  *
  * The order the rules are checked in is load-bearing: tier 4 first, then
- * `.github/**`, `.sql` and named config files (1; the latter two only
+ * `.github/**` and `.railway/**`, `.sql` and named config files (1; the latter two only
  * outside test directories, so fixtures stay tier 2), then documentation
  * (3), then tests (2), then `src/` and `scripts/` (0), and anything left
  * is 1. A `.md` file under `src/` skips the documentation rule and stays 0.
  */
 export type ReviewTier = 0 | 1 | 2 | 3 | 4;
 
-const CONFIG_FILE = /^(package\.json|tsconfig[^/]*\.json|drizzle\.config\.ts|railway\.json)$/;
+const CONFIG_FILE = /^(package\.json|tsconfig[^/]*\.json|drizzle\.config\.ts)$/;
+
+/** Top-level directories that hold only infrastructure and CI configuration. */
+const CONFIG_DIRECTORIES: readonly string[] = ['.github', '.railway'];
 
 const TEST_DIRECTORIES: readonly string[] = [
   '__tests__',
@@ -147,7 +150,7 @@ export function reviewTier(path: string): ReviewTier {
   }
 
   if (
-    directories[0] === '.github' ||
+    CONFIG_DIRECTORIES.includes(directories[0] ?? '') ||
     (!inTestDirectory && (base.endsWith('.sql') || CONFIG_FILE.test(base)))
   ) {
     return 1;
