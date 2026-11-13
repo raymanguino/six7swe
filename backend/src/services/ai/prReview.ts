@@ -26,6 +26,10 @@ export const prReviewResponseSchema = z.object({
         file: z.string().nullable().default(null),
         line: z.number().int().nullable().default(null),
         message: z.string().min(1),
+        // A finding with no kind is about the code. The domain caps and
+        // merges steering findings, so a model that forgets the field only
+        // loses that backstop for the finding, never the finding itself.
+        kind: z.enum(['defect', 'steering']).default('defect'),
       }),
     )
     .default([]),
@@ -136,6 +140,7 @@ export async function reviewPullRequest(
       file: finding.file,
       line: finding.line,
       message: finding.message,
+      kind: finding.kind,
     })),
   };
 }

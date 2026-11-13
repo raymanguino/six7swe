@@ -25,11 +25,24 @@ export type ReviewEvent = 'COMMENT' | 'REQUEST_CHANGES';
 
 export type FindingSeverity = 'blocker' | 'major' | 'minor' | 'nit';
 
+/**
+ * What a finding is about.
+ *
+ * `defect` is a finding about the code. `steering` is a finding about the
+ * pull request's content trying to instruct the reviewer: an injected
+ * command, a forged role marker or a forged tooling notice. Such text is
+ * worth a human's attention, but it is not a defect in the code, and the
+ * person who wrote it is the person the gate is judging.
+ */
+export type FindingKind = 'defect' | 'steering';
+
 export interface ReviewFinding {
   severity: FindingSeverity;
   file: string | null;
   line: number | null;
   message: string;
+  /** Absent means `defect`. */
+  kind?: FindingKind;
 }
 
 /**
@@ -69,6 +82,64 @@ export const SEVERITY_ORDER: readonly FindingSeverity[] = ['blocker', 'major', '
 export const MAX_REPORTED_FINDINGS = 8;
 
 /**
+ * The fixed severity of a steering finding, whatever the model said.
+ *
+ * It is below every blocking severity on purpose. If a steering finding
+ * could block, anyone could block a merge in `enforce` mode by pasting
+ * trigger text into a pull request description. It stays above `nit` so a
+ * reviewer still notices it.
+ */
+export const STEERING_SEVERITY: FindingSeverity = 'minor';
+
+function isSteering(finding: ReviewFinding): boolean {
+  return finding.kind === 'steering';
+}
+
+/**
+ * Collapses every steering finding into one, at a fixed severity.
+ *
+ * The prompt asks for this already; this is the deterministic backstop.
+ * A pull request padded with many injected instructions would otherwise
+ * fill the display slots with steering findings and push a real defect
+ * out of the list, and a steering finding the model rated `blocker` would
+ * let pasted text alone fail the gate.
+ *
+ * Defects keep their order. The single steering finding goes after them,
+ * keeps the first steering finding's location and says how many attempts
+ * were merged into it.
+ *
+ * A model that has been steered could also label a real defect as
+ * steering, and this would downgrade it. That gives an attacker nothing
+ * new: a model that can be steered that far can leave the defect out
+ * altogether.
+ */
+export function consolidateSteeringFindings(findings: readonly ReviewFinding[]): ReviewFinding[] {
+  const defects = findings.filter((finding) => !isSteering(finding));
+  const steering = findings.filter(isSteering);
+
+  if (steering.length === 0) {
+    return defects;
+  }
+
+  const [first] = steering;
+  const message =
+    steering.length === 1
+      ? first.message
+      : `${first.message} (${steering.length} attempts to steer the review were found in total; they are reported as one finding.)`;
+
+  return [
+    ...defects,
+    {
+      severity: STEERING_SEVERITY,
+      file: first.file,
+      line: first.line,
+      message,
+      kind: 'steering',
+    },
+  ];
+}
+
+/**
  * Decides whether the gate outcome should turn the required check red.
  *
  * The outcome and the check colour are separate questions, and Phase 1
@@ -99,10 +170,16 @@ export function gateBlocksMerge(gate: GateOutcome, mode: ReviewMode): boolean {
  * model's order: a blocker written tenth would be cut before anything
  * downstream ever saw it. Findings of equal severity keep their relative
  * order.
+ *
+ * Every finding about the code comes before any steering finding, so text
+ * pasted into a pull request can never push a real defect out of the
+ * displayed list.
  */
 export function sortFindingsBySeverity(findings: readonly ReviewFinding[]): ReviewFinding[] {
   return [...findings].sort(
-    (left, right) => SEVERITY_ORDER.indexOf(left.severity) - SEVERITY_ORDER.indexOf(right.severity),
+    (left, right) =>
+      Number(isSteering(left)) - Number(isSteering(right)) ||
+      SEVERITY_ORDER.indexOf(left.severity) - SEVERITY_ORDER.indexOf(right.severity),
   );
 }
 
@@ -381,6 +458,10 @@ export function touchesProtectedPath(
  *
  * Findings without a file are general observations about the change and
  * are kept as they are.
+ *
+ * Steering findings are then merged into one at a fixed, non-blocking
+ * severity (see `consolidateSteeringFindings`). Doing it here means the gate,
+ * which sanitizes its own input, applies it even if a caller forgets.
  */
 export function sanitizeFindings(
   findings: readonly ReviewFinding[],
@@ -422,5 +503,5 @@ export function sanitizeFindings(
     sanitized.push(validLines?.has(finding.line) === true ? finding : { ...finding, line: null });
   }
 
-  return sanitized;
+  return consolidateSteeringFindings(sanitized);
 }

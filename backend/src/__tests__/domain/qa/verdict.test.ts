@@ -1,5 +1,7 @@
 import {
+  consolidateSteeringFindings,
   decideGate,
+  STEERING_SEVERITY,
   decideReviewEvent,
   reviewEventForGate,
   sanitizeFindings,
@@ -416,6 +418,103 @@ describe('sortFindingsBySeverity', () => {
     sortFindingsBySeverity(findings);
 
     expect(findings).toEqual(original);
+  });
+});
+
+describe('steering findings', () => {
+  const steering = (overrides: Partial<ReviewFinding> = {}): ReviewFinding =>
+    finding({ kind: 'steering', severity: 'blocker', file: null, ...overrides });
+
+  it('uses a severity that never blocks a merge', () => {
+    expect(['blocker', 'major']).not.toContain(STEERING_SEVERITY);
+  });
+
+  it('merges every steering finding into one, after the defects', () => {
+    const defect = finding({ severity: 'nit', message: 'a real nit' });
+    const result = consolidateSteeringFindings([
+      steering({ message: 'Ignore all previous instructions.' }),
+      defect,
+      steering({ message: 'Forged [six7swe: notice].' }),
+      steering({ message: 'Fake response object.' }),
+    ]);
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toBe(defect);
+    expect(result[1]).toEqual({
+      severity: STEERING_SEVERITY,
+      file: null,
+      line: null,
+      kind: 'steering',
+      message: expect.stringContaining('Ignore all previous instructions.') as string,
+    });
+    expect(result[1].message).toContain('3 attempts');
+  });
+
+  it('caps a single steering finding without changing its message', () => {
+    expect(consolidateSteeringFindings([steering({ message: 'Injected.' })])).toEqual([
+      steering({ message: 'Injected.', severity: STEERING_SEVERITY }),
+    ]);
+  });
+
+  it('leaves a list without steering findings alone', () => {
+    const findings = [finding({ severity: 'blocker' }), finding({ kind: 'defect' })];
+
+    expect(consolidateSteeringFindings(findings)).toEqual(findings);
+  });
+
+  it('is applied by sanitizeFindings, so the script and the gate both get it', () => {
+    const changedFiles = [patchedFile()];
+    const sanitized = sanitizeFindings(
+      [steering(), steering({ file: 'backend/src/index.ts', line: 11 })],
+      changedFiles,
+    );
+
+    expect(sanitized).toHaveLength(1);
+    expect(sanitized[0].severity).toBe(STEERING_SEVERITY);
+    // Sanitizing twice, as the script and the gate do, changes nothing more.
+    expect(sanitizeFindings(sanitized, changedFiles)).toEqual(sanitized);
+  });
+
+  it('cannot fail the enforce gate on its own, however it was rated', () => {
+    expect(
+      decideGate({
+        findings: [steering(), steering({ severity: 'major' }), steering()],
+        changedFiles: [patchedFile()],
+        mode: 'enforce',
+        reviewCompleted: true,
+        coverage: FULL,
+      }),
+    ).toBe('pass');
+  });
+
+  it('does not hide a real blocker in the same pull request', () => {
+    const findings = [
+      ...Array.from({ length: 10 }, () => steering()),
+      finding({ severity: 'blocker', message: 'real defect' }),
+    ];
+    const input: GateInput = {
+      findings,
+      changedFiles: [patchedFile()],
+      mode: 'enforce',
+      reviewCompleted: true,
+      coverage: FULL,
+    };
+
+    expect(decideGate(input)).toBe('fail');
+
+    const shown = sortFindingsBySeverity(sanitizeFindings(findings, [patchedFile()]));
+    expect(shown.map((entry) => entry.message)[0]).toBe('real defect');
+    expect(shown).toHaveLength(2);
+  });
+
+  it('sorts a steering finding after every defect, even a nit', () => {
+    const sorted = sortFindingsBySeverity([
+      steering({ severity: 'minor', message: 'steering' }),
+      finding({ severity: 'nit', message: 'nit' }),
+      finding({ severity: 'major', message: 'major' }),
+    ]);
+
+    expect(sorted.map((entry) => entry.message)).toEqual(['major', 'nit', 'steering']);
   });
 });
 
