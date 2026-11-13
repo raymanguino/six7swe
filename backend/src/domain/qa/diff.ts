@@ -193,7 +193,7 @@ function splitPath(path: string): { base: string; directories: string[] } {
  *
  * These are the files a hostile pull request would most want to slip past
  * the review: CI workflows (`.github/**`), the build and deploy definition
- * (`package.json`, `Dockerfile`, `railway.json`, `nixpacks.toml`), the login
+ * (`package.json`, `Dockerfile`, `.railway/**`, `railway.json`, `nixpacks.toml`), the login
  * path (any `auth/` directory and `AUTH_GATE_FILES`) and the instructions
  * coding agents follow (`CLAUDE.md`, `AGENTS.md`, `.claude/**`). They are
  * tier 0, and within tier 0 they come first, so padding a pull request with
@@ -212,6 +212,7 @@ export function isPinnedPath(path: string): boolean {
 
   return (
     directories[0] === '.github' ||
+    directories[0] === '.railway' ||
     directories.some((directory) => directory.toLowerCase() === '.claude') ||
     AGENT_INSTRUCTION_FILE.test(base) ||
     AUTH_GATE_FILES.some((file) => normalized === file || normalized.endsWith(`/${file}`)) ||

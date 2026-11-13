@@ -42,6 +42,10 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      # CI never applies the Railway config; this only catches a file that would fail to plan.
+      - name: Type-check Railway config
+        run: pnpm exec tsc -p tsconfig.railway.json
+
       - name: Test
         run: pnpm test
 

@@ -23,6 +23,7 @@ describe('reviewTier', () => {
     ['backend/tsconfig.build.json', 1],
     ['backend/drizzle.config.ts', 1],
     ['railway.json', 0],
+    ['.railway/railway.ts', 0],
     ['knowledge/src/__tests__/a.ts', 2],
     ['backend/src/a.test.ts', 2],
     ['backend/src/a.spec.tsx', 2],
@@ -102,6 +103,10 @@ describe('isPinnedPath', () => {
     ['package.json', true],
     ['backend/package.json', true],
     ['railway.json', true],
+    ['.railway/railway.ts', true],
+    ['.railway/README.md', true],
+    // Only the top-level Railway directory is the deploy definition.
+    ['backend/.railway/railway.ts', false],
     ['nixpacks.toml', true],
     ['backend/src/services/auth/index.ts', true],
     ['CLAUDE.md', true],

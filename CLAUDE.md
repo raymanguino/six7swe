@@ -13,3 +13,4 @@ Portfolio + job-matching SWE platform. Full architecture in `docs/architecture.m
 - `portfolioService.ts` caches in memory; TTL via `PORTFOLIO_CACHE_TTL_MS` (default 10 min)
 - Lerna was removed: it was never used, and it pulled in `nx` and `axios`, which accounted for most of the dependency advisories. pnpm workspace scripts are authoritative
 - `packages/` is empty; no shared packages yet
+- **Railway config is `.railway/railway.ts`** (Infrastructure as Code; `railway.json` was retired before the 2026-12-01 cutoff). Railway does not read it on deploy: a change is applied by hand with `railway config plan` then `railway config apply`. Applies are declarative, so a variable missing from the file is deleted; secrets are listed as `preserve()`.
