@@ -354,11 +354,45 @@ not intend. In particular, every variable set on a service must appear in the fi
 
 After an apply, `railway config plan` should report no changes.
 
-> **Windows:** `railway/iac` 3.17 checks the CLI version by running `railway --version` without a
-> shell, which cannot run the `railway.cmd` shim that npm and pnpm install, so evaluation fails
-> with "requires Railway CLI 5.42.1 or newer" even on a newer CLI. The SDK uses `$_` when it is
-> set, so point it at the real binary first (PowerShell):
+> **Windows:** `railway/iac` 3.17 checks the CLI version by running `railway --version` through
+> `execFileSync`, without a shell. The npm and pnpm installs ship a `railway.cmd`, a `railway.ps1`
+> and a `railway` shell script, and Windows cannot spawn any of those without a shell, so the check
+> throws "This version of railway/iac requires Railway CLI 5.42.1 or newer" even on a current CLI
+> (5.74.0).
+>
+> The fix is the same in every shell: put the directory holding `railway.exe` on `PATH` ahead of
+> the shims. The directory is `$(npm root -g)\@railway\cli\bin`.
+>
+> The SDK resolves the CLI with `execFileSync(process.env._ || "railway")`, so what `_` holds
+> decides which one runs, and that differs by shell:
+>
+> - In PowerShell and cmd.exe, `_` is not set, so the SDK falls back to the bare name `railway`
+>   and Windows resolves it against `PATH`.
+> - In Git Bash, bash sets `_` to the command it just resolved, so `_` points at whichever
+>   `railway` came first on `PATH`.
+>
+> Prepending the executable's directory settles both: in bash, `railway` resolves to that
+> directory and `_` follows it; in PowerShell and cmd.exe, the fallback name resolves to the
+> executable instead of the shim.
+>
+> PowerShell:
 >
 > ```powershell
-> $env:_ = "$(npm root -g)\@railway\cli\bin\railway.exe"
+> $env:PATH = "$(npm root -g)\@railway\cli\bin;$env:PATH"
+> railway config plan    # now works
+> ```
+>
+> cmd.exe (the `for /f` capture needs `%%i` instead of `%i` inside a batch file):
+>
+> ```cmd
+> for /f "delims=" %i in ('npm root -g') do set "PATH=%i\@railway\cli\bin;%PATH%"
+> railway config plan    # now works
+> ```
+>
+> Git Bash (use `cygpath -u` on the result: `npm root -g` prints a Windows path, and its `C:` drive
+> letter would otherwise split the `PATH` entry):
+>
+> ```bash
+> export PATH="$(cygpath -u "$(npm root -g)")/@railway/cli/bin:$PATH"
+> railway config plan    # now works
 > ```
