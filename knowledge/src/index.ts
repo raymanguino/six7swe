@@ -5,33 +5,14 @@ import { createDb } from './db/index.js';
 import { EMBEDDING_DIMENSIONS } from './db/schema.js';
 import { createEmbedder } from './services/embedding/index.js';
 import { createFileStore } from './services/storage/index.js';
-
-/**
- * How long shutdown waits for the document being ingested. Railway sends
- * SIGKILL 30s after SIGTERM by default; this leaves room to close the pool.
- * A document cut off here stays `processing` and is re-queued on next boot.
- */
-const SHUTDOWN_TIMEOUT_MS = 20_000;
-
-/** Resolves true if `promise` settles in time, false if the timeout wins. */
-async function settlesWithin(promise: Promise<unknown>, ms: number): Promise<boolean> {
-  let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<false>((resolve) => {
-    timer = setTimeout(() => resolve(false), ms);
-  });
-  try {
-    return await Promise.race([promise.then(() => true), timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
+import { createShutdown } from './shutdown.js';
 
 async function main(): Promise<void> {
   const env = loadEnv();
   const { db, close } = createDb(env.DATABASE_URL);
   const repo = createDrizzleRepository(db);
-  const files = createFileStore(env);
-  const embedder = createEmbedder(env, EMBEDDING_DIMENSIONS);
+  const files = createFileStore(env.fileStore);
+  const embedder = createEmbedder(env.embedder, EMBEDDING_DIMENSIONS);
 
   const app = await buildApp({
     deps: { repo, files, embedder },
@@ -51,28 +32,13 @@ async function main(): Promise<void> {
     }
   }
 
-  let shuttingDown = false;
-  const shutdown = async (signal: string) => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    app.log.info({ signal }, 'Shutting down');
-    try {
-      // Stop accepting requests first, so no upload enqueues behind the stop.
-      await app.close();
-      const stopped = queue.stop();
-      if (!(await settlesWithin(stopped, SHUTDOWN_TIMEOUT_MS))) {
-        app.log.warn(
-          { timeoutMs: SHUTDOWN_TIMEOUT_MS },
-          'Ingestion did not finish in time; it resumes on next boot',
-        );
-      }
-      await close();
-      process.exit(0);
-    } catch (error) {
-      app.log.error({ err: error }, 'Shutdown failed');
-      process.exit(1);
-    }
-  };
+  const shutdown = createShutdown({
+    closeApp: () => app.close(),
+    stopQueue: () => queue.stop(),
+    closeDb: close,
+    log: app.log,
+    exit: (code) => process.exit(code),
+  });
   process.once('SIGTERM', () => void shutdown('SIGTERM'));
   process.once('SIGINT', () => void shutdown('SIGINT'));
 

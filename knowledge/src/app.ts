@@ -2,7 +2,7 @@ import fastifyMultipart from '@fastify/multipart';
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import { ZodError } from 'zod';
 import { SERVICE_KEY_HEADER, type ErrorResponse } from './contract.js';
-import serviceAuth from './plugins/serviceAuth.js';
+import serviceAuth, { type Authenticators } from './plugins/serviceAuth.js';
 import { registerRoutes } from './routes/index.js';
 import type { KnowledgeDeps } from './services/deps.js';
 import {
@@ -26,6 +26,8 @@ export interface BuildAppOptions {
   maxUploadBytes: number;
   logger?: FastifyServerOptions['logger'];
   chunkOptions?: PipelineDeps['chunkOptions'];
+  /** Per-access-mode overrides; see plugins/serviceAuth.ts. */
+  authenticators?: Partial<Authenticators>;
 }
 
 /** The HTTP status an error carries (`statusCode`, as Fastify and its plugins set it), else 500. */
@@ -77,7 +79,11 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     return reply.code(status).send(body);
   });
 
-  await app.register(serviceAuth, { serviceKey: options.serviceKey, ownerId: options.ownerId });
+  await app.register(serviceAuth, {
+    serviceKey: options.serviceKey,
+    ownerId: options.ownerId,
+    authenticators: options.authenticators,
+  });
   // The only place the upload limits are set; `req.file()` inherits them.
   await app.register(fastifyMultipart, {
     limits: { fileSize: options.maxUploadBytes, files: 1, fields: 5 },

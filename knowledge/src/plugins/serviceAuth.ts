@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
 import { SERVICE_KEY_HEADER } from '../contract.js';
+import { isSafeKeySegment } from '../lib/storageKeys.js';
 
 /**
  * Who may call a route:
@@ -48,6 +49,27 @@ export function requireOwner(req: FastifyRequest): string {
   return req.ownerId;
 }
 
+/**
+ * Decides whether a request may use a route, and for which owner. Returns
+ * the owner id, or null to reject with 401.
+ */
+export type Authenticator = (req: FastifyRequest) => string | null | Promise<string | null>;
+
+/** One authenticator per non-public access mode. */
+export type Authenticators = Record<Exclude<RouteAccess, 'public'>, Authenticator>;
+
+/**
+ * Accepts the shared service key from its header (never a query string, so
+ * it does not end up in access logs or browser history) and acts for the
+ * single configured owner.
+ */
+export function serviceKeyAuthenticator(serviceKey: string, ownerId: string): Authenticator {
+  return (req) => {
+    const provided = req.headers[SERVICE_KEY_HEADER];
+    return typeof provided === 'string' && keysMatch(provided, serviceKey) ? ownerId : null;
+  };
+}
+
 export interface ServiceAuthOptions {
   serviceKey: string;
   /**
@@ -55,16 +77,26 @@ export interface ServiceAuthOptions {
    * JWT gate derives it per request from the token's `sub`.
    */
   ownerId: string;
+  /**
+   * Overrides per access mode. Step 2 replaces `owner` with the JWT check;
+   * `service` keeps the key.
+   */
+  authenticators?: Partial<Authenticators>;
 }
 
 /**
- * Every route requires the shared service key unless it opts out with
- * `PUBLIC_ROUTE`, mirroring the backend's private-by-default rule.
- *
- * The key is accepted in a header only, never a query string, so it does not
- * end up in access logs or browser history.
+ * Every route requires credentials unless it opts out with `PUBLIC_ROUTE`,
+ * mirroring the backend's private-by-default rule. Which credentials depends
+ * on the route's access mode; today both modes take the service key.
  */
 const serviceAuth: FastifyPluginAsync<ServiceAuthOptions> = async (app, options) => {
+  const byKey = serviceKeyAuthenticator(options.serviceKey, options.ownerId);
+  const authenticators: Authenticators = {
+    service: byKey,
+    owner: byKey,
+    ...options.authenticators,
+  };
+
   app.decorateRequest('ownerId', null);
 
   app.addHook('onRequest', async (req, reply) => {
@@ -73,11 +105,12 @@ const serviceAuth: FastifyPluginAsync<ServiceAuthOptions> = async (app, options)
     const access: RouteAccess = req.routeOptions.config?.access ?? 'service';
     if (access === 'public') return;
 
-    const provided = req.headers[SERVICE_KEY_HEADER];
-    if (typeof provided !== 'string' || !keysMatch(provided, options.serviceKey)) {
+    const ownerId = await authenticators[access](req);
+    // The owner id becomes a storage-key segment, whatever produced it.
+    if (!ownerId || !isSafeKeySegment(ownerId)) {
       return reply.code(401).send({ error: 'Unauthorized' });
     }
-    req.ownerId = options.ownerId;
+    req.ownerId = ownerId;
   });
 };
 

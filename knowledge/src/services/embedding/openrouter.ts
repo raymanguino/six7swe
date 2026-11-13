@@ -2,8 +2,6 @@ import { z } from 'zod';
 import { EmbeddingError } from './errors.js';
 import type { Embedder } from './index.js';
 
-export { EmbeddingError } from './errors.js';
-
 const OPENROUTER_EMBEDDINGS_URL = 'https://openrouter.ai/api/v1/embeddings';
 
 /** Inputs per request. Well under the provider's limit, and keeps a retry cheap. */
@@ -42,30 +40,55 @@ export function parseRetryAfter(value: string | null, now = Date.now()): number 
 }
 
 /**
- * Whether another attempt could succeed: rate limits, server errors,
- * timeouts and network failures (fetch rejects with a TypeError when the
- * connection fails), but never a malformed request or response.
+ * Whether another attempt could succeed. Every failure the embedder raises is
+ * an EmbeddingError that already says so: rate limits, server errors,
+ * timeouts and transport failures are retryable; a malformed request or
+ * response is not. Anything else is a bug and is not retried.
  */
 export function isRetryable(error: unknown): boolean {
-  if (error instanceof EmbeddingError) return error.retryable;
-  if (error instanceof Error && error.name === 'TimeoutError') return true;
-  return error instanceof TypeError;
+  return error instanceof EmbeddingError && error.retryable;
 }
 
 export function createOpenRouterEmbedder(options: OpenRouterEmbedderOptions): Embedder {
   const fetchImpl = options.fetchImpl ?? fetch;
   const backoffMs = options.backoffMs ?? defaultBackoffMs;
 
+  /** One HTTP call. A transport failure or timeout becomes a retryable EmbeddingError. */
+  async function send(inputs: string[]): Promise<Response> {
+    try {
+      return await fetchImpl(OPENROUTER_EMBEDDINGS_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${options.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ model: options.model, input: inputs }),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
+    } catch (error) {
+      const timedOut = error instanceof Error && error.name === 'TimeoutError';
+      throw new EmbeddingError(
+        timedOut
+          ? `Embedding request timed out after ${TIMEOUT_MS}ms`
+          : 'Embedding request could not be sent',
+        true,
+        {},
+        { cause: error },
+      );
+    }
+  }
+
+  /** Reads the JSON body; a body that is not JSON is a provider fault, not ours. */
+  async function readJson(res: Response): Promise<unknown> {
+    try {
+      return await res.json();
+    } catch (error) {
+      throw new EmbeddingError('Embedding response was not JSON', false, {}, { cause: error });
+    }
+  }
+
   async function embedBatch(inputs: string[]): Promise<number[][]> {
-    const res = await fetchImpl(OPENROUTER_EMBEDDINGS_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${options.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ model: options.model, input: inputs }),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
+    const res = await send(inputs);
 
     if (!res.ok) {
       // The provider's body goes into the message for the logs only; the
@@ -78,7 +101,7 @@ export function createOpenRouterEmbedder(options: OpenRouterEmbedderOptions): Em
       );
     }
 
-    const parsed = ResponseSchema.safeParse(await res.json());
+    const parsed = ResponseSchema.safeParse(await readJson(res));
     if (!parsed.success) {
       throw new EmbeddingError('Embedding response had an unexpected shape', false);
     }

@@ -36,34 +36,44 @@ export const UploadQuerySchema = z.object({
 
 export const DocumentParamsSchema = z.object({ id: z.uuid() });
 
-export interface DocumentDto {
-  id: string;
-  filename: string;
-  mimeType: string;
-  sizeBytes: number;
-  kind: DocumentKind;
-  isPrimaryResume: boolean;
-  status: DocumentStatus;
+export const DocumentDtoSchema = z.object({
+  id: z.uuid(),
+  filename: z.string(),
+  mimeType: z.string(),
+  sizeBytes: z.number().int().nonnegative(),
+  kind: DocumentKindSchema,
+  /** The newest ready resume; set when its ingest completes, not on upload. */
+  isPrimaryResume: z.boolean(),
+  status: DocumentStatusSchema,
   /** A short, user-facing reason. Provider and parser details stay in the logs. */
-  error: string | null;
-  chunkCount: number;
-  createdAt: string;
-  updatedAt: string;
-}
+  error: z.string().nullable(),
+  chunkCount: z.number().int().nonnegative(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+});
+export type DocumentDto = z.infer<typeof DocumentDtoSchema>;
 
-export interface RetrievedChunkDto {
-  chunkId: string;
-  documentId: string;
-  filename: string;
-  heading: string | null;
-  content: string;
-  similarity: number;
-}
+export const UploadResponseSchema = z.object({
+  document: DocumentDtoSchema,
+  deduplicated: z.boolean(),
+});
+export type UploadResponse = z.infer<typeof UploadResponseSchema>;
 
-export interface RetrieveResponse {
-  version: number;
-  chunks: RetrievedChunkDto[];
-}
+export const RetrievedChunkDtoSchema = z.object({
+  chunkId: z.uuid(),
+  documentId: z.uuid(),
+  filename: z.string(),
+  heading: z.string().nullable(),
+  content: z.string(),
+  similarity: z.number(),
+});
+export type RetrievedChunkDto = z.infer<typeof RetrievedChunkDtoSchema>;
+
+export const RetrieveResponseSchema = z.object({
+  version: z.number().int().nonnegative(),
+  chunks: z.array(RetrievedChunkDtoSchema),
+});
+export type RetrieveResponse = z.infer<typeof RetrieveResponseSchema>;
 
 /** The body of every 4xx/5xx response. `issues` is set for validation errors only. */
 export const ErrorResponseSchema = z.object({

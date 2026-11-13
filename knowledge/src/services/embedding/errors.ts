@@ -1,4 +1,8 @@
-/** A failed call to an embedding provider. */
+/**
+ * A failed call to an embedding provider. Every failure of the OpenRouter
+ * embedder, including transport errors and timeouts, is one of these, so
+ * the retry policy only has to read `retryable`.
+ */
 export class EmbeddingError extends Error {
   constructor(
     message: string,
@@ -9,8 +13,9 @@ export class EmbeddingError extends Error {
       /** How long the provider asked us to wait (Retry-After), in milliseconds. */
       retryAfterMs?: number;
     } = {},
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
     this.name = 'EmbeddingError';
   }
 

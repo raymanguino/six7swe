@@ -18,14 +18,8 @@ import { fileURLToPath } from 'node:url';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
+import { describeError } from '../lib/describeError.js';
 import { MIGRATIONS_SCHEMA, MIGRATIONS_TABLE } from './ledger.js';
-
-/** The message plus its cause, which is where postgres.js puts the database error. */
-export function describeError(error: unknown): string {
-  if (!(error instanceof Error)) return String(error);
-  if (error.cause instanceof Error) return `${error.message}\n  cause: ${error.cause.message}`;
-  return error.message;
-}
 
 async function main(): Promise<void> {
   const url = process.env.DATABASE_URL;

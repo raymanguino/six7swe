@@ -10,11 +10,12 @@ import type { Embedder } from './index.js';
  * refuses `EMBEDDER=hashing` when NODE_ENV=production).
  */
 
-const STOPWORDS = new Set(
-  'a an and are as at be by for from has have i in is it its of on or that the this to was were with you your'.split(
-    ' ',
-  ),
-);
+// prettier-ignore
+const STOPWORDS = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'has', 'have', 'i', 'in',
+  'is', 'it', 'its', 'of', 'on', 'or', 'that', 'the', 'this', 'to', 'was', 'were', 'with',
+  'you', 'your',
+]);
 
 /** FNV-1a, 32-bit. */
 function fnv1a(input: string): number {

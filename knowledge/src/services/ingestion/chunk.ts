@@ -3,11 +3,14 @@ import type { SupportedMimeType } from './parse.js';
 /**
  * Splits extracted text into retrieval-sized chunks.
  *
- * Markdown is split at headings first, because a heading is the best signal
- * of where one topic ends and the next begins (a resume's "Experience" and
- * "Education" should never share a chunk if they can help it). Small
- * consecutive sections are packed together so a resume with many tiny
- * headings does not produce dozens of one-line chunks.
+ * Markdown is split into sections at headings, because a heading is the best
+ * signal of where one topic ends and the next begins. Consecutive sections
+ * are then packed greedily into one chunk while they fit the limit, so a
+ * resume with many tiny headings does not produce dozens of one-line chunks;
+ * a new chunk starts at the first heading that would overflow it. Packing
+ * does cross topic boundaries (a short resume becomes one chunk), and a
+ * packed chunk is labelled with the deepest heading every packed section
+ * shares.
  *
  * Anything longer than the limit (a long section, or a PDF/plain-text file
  * with no headings) falls back to a sliding window over paragraphs, then
@@ -43,8 +46,30 @@ export function estimateTokens(text: string): number {
 }
 
 interface Section {
+  /** The heading titles above this section, outermost first; empty before any heading. */
+  trail: string[];
+  /** `trail` joined with " > ", or null when it is empty. */
   path: string | null;
   text: string;
+}
+
+const HEADING_SEPARATOR = ' > ';
+
+function joinTrail(trail: string[]): string | null {
+  return trail.length > 0 ? trail.join(HEADING_SEPARATOR) : null;
+}
+
+/** The longest heading trail every section shares, e.g. [A, B] for "A > B > C" and "A > B > D". */
+function sharedTrail(sections: Section[]): string[] {
+  const [first, ...rest] = sections;
+  if (!first) return [];
+  let length = first.trail.length;
+  for (const section of rest) {
+    let i = 0;
+    while (i < length && section.trail[i] === first.trail[i]) i++;
+    length = i;
+  }
+  return first.trail.slice(0, length);
 }
 
 // Linear-time patterns: the space run and the title cannot overlap (the
@@ -73,12 +98,12 @@ export function splitMarkdownSections(text: string): Section[] {
   const sections: Section[] = [];
   const stack: { level: number; title: string }[] = [];
   let current: string[] = [];
-  let currentPath: string | null = null;
+  let currentTrail: string[] = [];
   let inFence = false;
 
   const flush = () => {
     const body = current.join('\n').trim();
-    if (body) sections.push({ path: currentPath, text: body });
+    if (body) sections.push({ trail: currentTrail, path: joinTrail(currentTrail), text: body });
     current = [];
   };
 
@@ -90,7 +115,7 @@ export function splitMarkdownSections(text: string): Section[] {
       const level = match[1].length;
       while (stack.length > 0 && (stack[stack.length - 1]?.level ?? 0) >= level) stack.pop();
       stack.push({ level, title: headingTitle(match[2]) });
-      currentPath = stack.map((h) => h.title).join(' > ');
+      currentTrail = stack.map((h) => h.title);
     }
     current.push(line);
   }
@@ -239,7 +264,7 @@ export function chunkDocument(
   let packed: Section[] = [];
   const packedText = () => packed.map((s) => s.text).join('\n\n');
   const flushPacked = () => {
-    if (packed.length > 0) out.push(toChunk(packed[0]?.path ?? null, packedText()));
+    if (packed.length > 0) out.push(toChunk(joinTrail(sharedTrail(packed)), packedText()));
     packed = [];
   };
 
@@ -263,9 +288,12 @@ export function chunkDocument(
   return out;
 }
 
-/** What gets embedded: the heading path gives a window cut from a long section its context. */
+/**
+ * What gets embedded: the heading path, when there is one, then the content.
+ * The full path ("Experience > Acme") gives context even when the content
+ * repeats only the innermost heading line, or none (a window cut from a long
+ * section).
+ */
 export function embeddingInput(chunk: Pick<TextChunk, 'heading' | 'content'>): string {
-  return chunk.heading && !chunk.content.includes(chunk.heading)
-    ? `${chunk.heading}\n\n${chunk.content}`
-    : chunk.content;
+  return chunk.heading ? `${chunk.heading}\n\n${chunk.content}` : chunk.content;
 }

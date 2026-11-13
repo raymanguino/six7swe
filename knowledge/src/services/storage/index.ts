@@ -1,4 +1,4 @@
-import type { Env } from '../../config/env.js';
+import type { FileStoreConfig } from '../../config/env.js';
 import { createLocalFileStore } from './local.js';
 import { createSupabaseFileStore } from './supabase.js';
 
@@ -11,15 +11,15 @@ export interface FileStore {
   delete(key: string): Promise<void>;
 }
 
-export function createFileStore(env: Env): FileStore {
-  if (env.FILE_STORE === 'local') return createLocalFileStore(env.LOCAL_FILE_STORE_DIR);
-  // loadEnv already requires both for FILE_STORE=supabase; this narrows the types.
-  if (!env.SUPABASE_URL || !env.SUPABASE_SECRET_KEY) {
-    throw new Error('SUPABASE_URL and SUPABASE_SECRET_KEY are required for FILE_STORE=supabase');
+export function createFileStore(config: FileStoreConfig): FileStore {
+  switch (config.kind) {
+    case 'local':
+      return createLocalFileStore(config.dir);
+    case 'supabase':
+      return createSupabaseFileStore({
+        url: config.url,
+        secretKey: config.secretKey,
+        bucket: config.bucket,
+      });
   }
-  return createSupabaseFileStore({
-    url: env.SUPABASE_URL,
-    secretKey: env.SUPABASE_SECRET_KEY,
-    bucket: env.STORAGE_BUCKET,
-  });
 }

@@ -1,7 +1,7 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { FileStore } from './index.js';
-import { assertSafeKey } from './keys.js';
+import { assertSafeKey } from '../../lib/storageKeys.js';
 
 /** Keeps files on the local disk. For development only: Railway disks are ephemeral. */
 export function createLocalFileStore(rootDir: string): FileStore {

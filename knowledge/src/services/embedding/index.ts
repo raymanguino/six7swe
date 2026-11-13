@@ -1,4 +1,4 @@
-import type { Env } from '../../config/env.js';
+import type { EmbedderConfig } from '../../config/env.js';
 import { createHashingEmbedder } from './hashing.js';
 import { createOpenRouterEmbedder } from './openrouter.js';
 
@@ -11,13 +11,11 @@ export interface Embedder {
   embed(texts: string[]): Promise<number[][]>;
 }
 
-export function createEmbedder(env: Env, dimensions: number): Embedder {
-  if (env.EMBEDDER === 'hashing') return createHashingEmbedder(dimensions);
-  // loadEnv already requires the key for EMBEDDER=openrouter; this narrows the type.
-  if (!env.OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY is required');
-  return createOpenRouterEmbedder({
-    apiKey: env.OPENROUTER_API_KEY,
-    model: env.EMBEDDING_MODEL,
-    dimensions,
-  });
+export function createEmbedder(config: EmbedderConfig, dimensions: number): Embedder {
+  switch (config.kind) {
+    case 'hashing':
+      return createHashingEmbedder(dimensions);
+    case 'openrouter':
+      return createOpenRouterEmbedder({ apiKey: config.apiKey, model: config.model, dimensions });
+  }
 }

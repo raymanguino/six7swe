@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { isSafeKeySegment } from '../services/storage/keys.js';
+import { isSafeKeySegment } from '../lib/storageKeys.js';
 
 /** Hard ceiling for MAX_UPLOAD_BYTES: uploads are buffered in memory. */
 export const MAX_UPLOAD_BYTES_CEILING = 50 * 1024 * 1024;
@@ -69,22 +69,34 @@ const EnvSchema = z
     /** Re-queue documents left pending or processing by a previous process. */
     RESUME_INGESTION_ON_BOOT: booleanish.default(true),
   })
-  .superRefine((env, ctx) => {
-    if (env.EMBEDDER === 'openrouter' && !env.OPENROUTER_API_KEY) {
+  .transform((env, ctx) => {
+    // Cross-field rules, checked once here. The result carries the embedder
+    // and file-store settings as discriminated unions, so nothing downstream
+    // has to re-check that the variables a mode needs are present.
+    let embedder: EmbedderConfig | undefined;
+    if (env.EMBEDDER === 'hashing') {
+      if (env.NODE_ENV === 'production') {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['EMBEDDER'],
+          message: 'EMBEDDER=hashing is for development and tests only',
+        });
+      }
+      embedder = { kind: 'hashing' };
+    } else if (env.OPENROUTER_API_KEY) {
+      embedder = { kind: 'openrouter', apiKey: env.OPENROUTER_API_KEY, model: env.EMBEDDING_MODEL };
+    } else {
       ctx.addIssue({
         code: 'custom',
         path: ['OPENROUTER_API_KEY'],
         message: 'OPENROUTER_API_KEY is required when EMBEDDER=openrouter',
       });
     }
-    if (env.EMBEDDER === 'hashing' && env.NODE_ENV === 'production') {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['EMBEDDER'],
-        message: 'EMBEDDER=hashing is for development and tests only',
-      });
-    }
-    if (env.FILE_STORE === 'supabase') {
+
+    let fileStore: FileStoreConfig | undefined;
+    if (env.FILE_STORE === 'local') {
+      fileStore = { kind: 'local', dir: env.LOCAL_FILE_STORE_DIR };
+    } else {
       for (const key of ['SUPABASE_URL', 'SUPABASE_SECRET_KEY'] as const) {
         if (!env[key]) {
           ctx.addIssue({
@@ -94,8 +106,27 @@ const EnvSchema = z
           });
         }
       }
+      if (env.SUPABASE_URL && env.SUPABASE_SECRET_KEY) {
+        fileStore = {
+          kind: 'supabase',
+          url: env.SUPABASE_URL,
+          secretKey: env.SUPABASE_SECRET_KEY,
+          bucket: env.STORAGE_BUCKET,
+        };
+      }
     }
+
+    if (!embedder || !fileStore) return z.NEVER;
+    return { ...env, embedder, fileStore };
   });
+
+export type EmbedderConfig =
+  | { kind: 'hashing' }
+  | { kind: 'openrouter'; apiKey: string; model: string };
+
+export type FileStoreConfig =
+  | { kind: 'local'; dir: string }
+  | { kind: 'supabase'; url: string; secretKey: string; bucket: string };
 
 export type Env = z.infer<typeof EnvSchema>;
 
