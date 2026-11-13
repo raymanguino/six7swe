@@ -321,7 +321,11 @@ the other:
 
 - backend: `/backend/**`, plus the root files the Dockerfile reads (`/.dockerignore`,
   `/package.json`, `/pnpm-lock.yaml`, `/pnpm-workspace.yaml`, `/tsconfig.base.json`)
-- frontend: `/frontend/**`
+- frontend: `/frontend/**`, plus the root files its build reads (`/package.json`,
+  `/pnpm-lock.yaml`, `/pnpm-workspace.yaml`, `/tsconfig.base.json`). Railpack installs from the
+  workspace root, and `frontend/tsconfig.json` extends `tsconfig.base.json`.
+
+A change to one of the shared root files rebuilds both services.
 
 ## Changing Railway config
 

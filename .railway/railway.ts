@@ -27,7 +27,15 @@ export default defineRailway(() => {
     build: {
       builder: 'RAILPACK',
       buildCommand: 'cd frontend && pnpm build',
-      watchPatterns: ['/frontend/**'],
+      // The frontend plus the root files the build reads: Railpack installs from the workspace
+      // root, and frontend/tsconfig.json extends tsconfig.base.json.
+      watchPatterns: [
+        '/frontend/**',
+        '/package.json',
+        '/pnpm-lock.yaml',
+        '/pnpm-workspace.yaml',
+        '/tsconfig.base.json',
+      ],
     },
     start: 'cd frontend && pnpm preview --host',
     deploy: { ...restartPolicy },
