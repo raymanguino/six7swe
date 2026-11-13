@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   chunkDocument,
+  DEFAULT_CHUNK_OPTIONS,
   embeddingInput,
   estimateTokens,
   splitMarkdownSections,
@@ -37,6 +38,22 @@ describe('splitMarkdownSections', () => {
     const sections = splitMarkdownSections(md);
     expect(sections).toHaveLength(1);
     expect(sections[0]?.text).toContain('# not a heading');
+  });
+
+  it('strips an ATX closing sequence but keeps a hash that is part of the title', () => {
+    const md = '# Skills ##\n\na\n\n## C#\n\nb\n\n## Tabs\t#\t\n\nc';
+    expect(splitMarkdownSections(md).map((s) => s.path)).toEqual([
+      'Skills',
+      'Skills > C#',
+      'Skills > Tabs',
+    ]);
+  });
+
+  it('handles a pathological heading line in linear time', () => {
+    const line = `# a${' '.repeat(50_000)}b${' '.repeat(50_000)}`;
+    const started = Date.now();
+    expect(splitMarkdownSections(`${line}\n\nbody`)[0]?.path).toMatch(/^a +b$/);
+    expect(Date.now() - started).toBeLessThan(500);
   });
 });
 
@@ -82,6 +99,36 @@ describe('windowSplit', () => {
 
   it('returns nothing for blank text', () => {
     expect(windowSplit('  \n\n ', opts)).toEqual([]);
+  });
+
+  it('keeps an overlap between windows of large paragraphs', () => {
+    // Each paragraph is about 300 tokens, far above the 105-token overlap
+    // budget, so whole-unit carry-over alone would give no overlap.
+    const paragraphs = Array.from({ length: 4 }, (_, p) =>
+      Array.from({ length: 150 }, (_, i) => `p${p}w${i}`).join(' '),
+    );
+    const windows = windowSplit(paragraphs.join('\n\n'), DEFAULT_CHUNK_OPTIONS);
+    expect(windows.length).toBeGreaterThan(1);
+    for (let i = 1; i < windows.length; i++) {
+      const prev = windows[i - 1] ?? '';
+      const head = (windows[i] ?? '').split('\n\n')[0] ?? '';
+      // The next window opens with the end of the previous one, cut at a word.
+      expect(prev.endsWith(head)).toBe(true);
+      expect(head.split(' ')[0]).toMatch(/^p\dw\d+$/);
+      expect(estimateTokens(head)).toBeGreaterThan(50);
+      expect(estimateTokens(head)).toBeLessThanOrEqual(105);
+    }
+    for (const w of windows) expect(estimateTokens(w)).toBeLessThanOrEqual(700);
+  });
+
+  it('hard-splits a single word longer than the budget', () => {
+    const windows = windowSplit('x'.repeat(5000), DEFAULT_CHUNK_OPTIONS);
+    expect(windows.length).toBeGreaterThan(1);
+    for (const w of windows) expect(estimateTokens(w)).toBeLessThanOrEqual(700);
+    expect(windows.join('').replace(/\s/g, '').length).toBeGreaterThanOrEqual(5000);
+
+    const chunks = chunkDocument(`# Blob\n\n${'y'.repeat(5000)}`, 'text/markdown');
+    for (const c of chunks) expect(c.tokenCount).toBeLessThanOrEqual(700);
   });
 });
 

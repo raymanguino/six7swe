@@ -31,12 +31,15 @@ export interface ChunkOptions {
 
 export const DEFAULT_CHUNK_OPTIONS: ChunkOptions = { maxTokens: 700, overlapRatio: 0.15 };
 
+/** About four characters per token for English text. */
+export const CHARS_PER_TOKEN = 4;
+
 /**
- * A cheap token estimate: about four characters per token for English.
- * Only used for sizing, so it does not need to match the model's tokenizer.
+ * A cheap token estimate. Only used for sizing, so it does not need to match
+ * the model's tokenizer.
  */
 export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
+  return Math.ceil(text.length / CHARS_PER_TOKEN);
 }
 
 interface Section {
@@ -44,8 +47,26 @@ interface Section {
   text: string;
 }
 
-const HEADING = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
+// Linear-time patterns: the space run and the title cannot overlap (the
+// title starts with a non-space), so there is nothing to backtrack over.
+const HEADING = /^(#{1,6})[ \t]+(\S.*)$/;
 const FENCE = /^\s*(```|~~~)/;
+
+/**
+ * Drops an ATX closing sequence ("## Title ##" is "Title"). Done by hand
+ * rather than with a trailing-anchored regex, which backtracks
+ * quadratically over long runs of spaces.
+ */
+function headingTitle(raw: string): string {
+  const text = raw.trimEnd();
+  let end = text.length;
+  while (end > 0 && text[end - 1] === '#') end--;
+  if (end === text.length) return text;
+  // Only a run of hashes after whitespace closes the heading: "C#" keeps its hash.
+  const before = text[end - 1];
+  if (before !== ' ' && before !== '\t') return text;
+  return text.slice(0, end).trimEnd() || text;
+}
 
 /** Splits markdown into sections at ATX headings, ignoring fenced code. */
 export function splitMarkdownSections(text: string): Section[] {
@@ -68,13 +89,53 @@ export function splitMarkdownSections(text: string): Section[] {
       flush();
       const level = match[1].length;
       while (stack.length > 0 && (stack[stack.length - 1]?.level ?? 0) >= level) stack.pop();
-      stack.push({ level, title: match[2] });
+      stack.push({ level, title: headingTitle(match[2]) });
       currentPath = stack.map((h) => h.title).join(' > ');
     }
     current.push(line);
   }
   flush();
   return sections;
+}
+
+/**
+ * Cuts a "word" longer than the budget (a URL, a base64 blob, PDF text with
+ * no spaces) into pieces that fit. Cuts between code points, never inside a
+ * surrogate pair.
+ */
+function hardSplit(word: string, maxTokens: number): string[] {
+  const maxChars = maxTokens * CHARS_PER_TOKEN;
+  if (word.length <= maxChars) return [word];
+  const pieces: string[] = [];
+  let piece = '';
+  for (const char of word) {
+    if (piece && piece.length + char.length > maxChars) {
+      pieces.push(piece);
+      piece = '';
+    }
+    piece += char;
+  }
+  if (piece) pieces.push(piece);
+  return pieces;
+}
+
+/** Packs words into space-joined runs that each fit `maxTokens`. */
+function splitByWords(text: string, maxTokens: number): string[] {
+  const maxChars = maxTokens * CHARS_PER_TOKEN;
+  const runs: string[] = [];
+  let buffer = '';
+  for (const word of text.split(/\s+/)) {
+    for (const piece of hardSplit(word, maxTokens)) {
+      if (!piece) continue;
+      if (buffer && buffer.length + 1 + piece.length > maxChars) {
+        runs.push(buffer);
+        buffer = '';
+      }
+      buffer = buffer ? `${buffer} ${piece}` : piece;
+    }
+  }
+  if (buffer) runs.push(buffer);
+  return runs;
 }
 
 /** Breaks text into units no larger than `maxTokens`: paragraphs, else sentences, else words. */
@@ -93,18 +154,25 @@ function splitIntoUnits(text: string, maxTokens: number): string[] {
         continue;
       }
       // A single run-on "sentence" (common in PDF extraction): cut by words.
-      let buffer: string[] = [];
-      for (const word of sentence.split(/\s+/)) {
-        if (buffer.length > 0 && estimateTokens([...buffer, word].join(' ')) > maxTokens) {
-          units.push(buffer.join(' '));
-          buffer = [];
-        }
-        buffer.push(word);
-      }
-      if (buffer.length > 0) units.push(buffer.join(' '));
+      units.push(...splitByWords(sentence, maxTokens));
     }
   }
   return units;
+}
+
+/**
+ * The end of `text`, at most `maxTokens` long, starting at a word boundary.
+ * Empty when no boundary falls inside the budget.
+ */
+function wordSuffix(text: string, maxTokens: number): string {
+  const maxChars = maxTokens * CHARS_PER_TOKEN;
+  if (text.length <= maxChars) return text;
+  for (let start = text.length - maxChars; start < text.length; start++) {
+    if (/\s/.test(text[start - 1] ?? '') && !/\s/.test(text[start] ?? '')) {
+      return text.slice(start);
+    }
+  }
+  return '';
 }
 
 /** Packs units into windows of at most `maxTokens`, repeating a tail of each in the next. */
@@ -127,9 +195,18 @@ export function windowSplit(text: string, options: ChunkOptions): string[] {
       // Never the first unit: repeating the whole window would add nothing.
       let tail: string[] = [];
       for (let i = window.length - 1; i >= 1; i--) {
-        const candidate = [window[i] as string, ...tail];
+        const unitText = window[i];
+        if (unitText === undefined) break;
+        const candidate = [unitText, ...tail];
         if (size(candidate) > overlapTokens) break;
         tail = candidate;
+      }
+      // The last unit alone is bigger than the overlap budget (a long
+      // paragraph): carry the end of it instead, so the overlap still holds.
+      const last = window[window.length - 1];
+      if (tail.length === 0 && last !== undefined) {
+        const suffix = wordSuffix(last, overlapTokens);
+        if (suffix && suffix !== last) tail = [suffix];
       }
       // The overlap must never stop the next unit from fitting.
       while (tail.length > 0 && size([...tail, unit]) > maxTokens) tail = tail.slice(1);
