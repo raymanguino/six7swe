@@ -99,6 +99,36 @@ export function isSteering(finding: ReviewFinding): boolean {
 /** Separates the attempts inside a merged steering finding's message. */
 const STEERING_MESSAGE_SEPARATOR = ' | ';
 
+/** How many steering findings a merged message names before "and N more". */
+export const MAX_NAMED_STEERING_FINDINGS = 3;
+
+/** The longest text a merged message keeps from each steering finding. */
+export const MAX_STEERING_EXCERPT_CHARS = 200;
+
+function excerpt(text: string): string {
+  return text.length <= MAX_STEERING_EXCERPT_CHARS
+    ? text
+    : `${text.slice(0, MAX_STEERING_EXCERPT_CHARS - 3)}...`;
+}
+
+/**
+ * The message of a merged steering finding.
+ *
+ * It is bounded well below the length the review body renders, so the
+ * count and every named excerpt survive rendering: the count first, then
+ * a short excerpt of the first few findings, then how many were left
+ * out. The full text of every finding is still in the workflow log.
+ */
+function mergedSteeringMessage(steering: readonly ReviewFinding[]): string {
+  const named = steering
+    .slice(0, MAX_NAMED_STEERING_FINDINGS)
+    .map((finding) => excerpt(finding.message));
+  const rest = steering.length - named.length;
+  const parts = rest > 0 ? [...named, `and ${rest} more`] : named;
+
+  return `[${steering.length} steering findings] ${parts.join(STEERING_MESSAGE_SEPARATOR)}`;
+}
+
 /**
  * Collapses every steering finding into one, at a fixed severity.
  *
@@ -109,10 +139,13 @@ const STEERING_MESSAGE_SEPARATOR = ' | ';
  * let pasted text alone fail the gate.
  *
  * Defects keep their order. The single steering finding goes after them.
- * When several are merged, the count comes first in the message, so the
- * truncation applied when the body is rendered cannot clip it, and every
- * message is kept. The location is kept only when every merged finding
- * shares it; otherwise the finding is about the pull request as a whole.
+ * When several are merged, the message is bounded: the count comes first,
+ * then short excerpts of the first few, then how many more there were
+ * (see mergedSteeringMessage). The full text of each is in the workflow
+ * log, not in the review body. A single steering finding keeps its
+ * message unchanged, so merging twice changes nothing. The location is
+ * kept only when every merged finding shares it; otherwise the finding is
+ * about the pull request as a whole.
  *
  * Known residual risk: a model that has been steered could label a real
  * defect as steering, and this would downgrade it to a non-blocking
@@ -133,12 +166,7 @@ export function consolidateSteeringFindings(findings: readonly ReviewFinding[]):
   const sameLocation = steering.every(
     (finding) => finding.file === first.file && finding.line === first.line,
   );
-  const message =
-    steering.length === 1
-      ? first.message
-      : `[${steering.length} steering attempts] ${steering
-          .map((finding) => finding.message)
-          .join(STEERING_MESSAGE_SEPARATOR)}`;
+  const message = steering.length === 1 ? first.message : mergedSteeringMessage(steering);
 
   return [
     ...defects,

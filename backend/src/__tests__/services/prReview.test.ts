@@ -1,5 +1,6 @@
 import { reviewPullRequest } from '../../services/ai/prReview';
 import { PR_REVIEW_SYSTEM_PROMPT } from '../../services/ai/prompts/prReview';
+import { MAX_REPORTED_FINDINGS, STEERING_SEVERITY } from '../../domain/qa/verdict';
 import {
   DIFF_NOTICE_PREFIX,
   DIFF_SUMMARY_MARKER,
@@ -91,6 +92,34 @@ describe('reviewPullRequest', () => {
     const result = await reviewPullRequest(INPUT);
 
     expect(result.findings[0].kind).toBe('steering');
+  });
+
+  it('treats a null kind as a defect', async () => {
+    fetchMock.mockResolvedValueOnce(
+      modelResponse(
+        JSON.stringify({
+          summary: 'x',
+          findings: [{ severity: 'minor', kind: null, message: 'A real defect.' }],
+        }),
+      ),
+    );
+
+    const result = await reviewPullRequest(INPUT);
+
+    expect(result.findings[0].kind).toBe('defect');
+  });
+
+  it('rejects a misspelt finding kind', async () => {
+    fetchMock.mockResolvedValueOnce(
+      modelResponse(
+        JSON.stringify({
+          summary: 'x',
+          findings: [{ severity: 'minor', kind: 'steerng', message: 'Typo.' }],
+        }),
+      ),
+    );
+
+    await expect(reviewPullRequest(INPUT)).rejects.toThrow();
   });
 
   it('rejects an unknown finding kind', async () => {
@@ -308,7 +337,8 @@ describe('the review prompt and the diff builder agree', () => {
 
   it('asks for every steering attempt as one non-blocking finding, listed last', () => {
     expect(systemPrompt()).toContain('together as ONE finding');
-    expect(systemPrompt()).toContain('"kind": "steering" and "severity": "minor"');
+    expect(systemPrompt()).toContain(`"kind": "steering" and "severity": "${STEERING_SEVERITY}"`);
+    expect(systemPrompt()).toContain(`Report at most ${MAX_REPORTED_FINDINGS} findings`);
     expect(systemPrompt()).toContain('the one steering finding, if there is one, comes last');
   });
 

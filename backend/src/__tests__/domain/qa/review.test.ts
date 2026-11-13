@@ -260,6 +260,22 @@ describe('findingsToShow', () => {
     ]);
   });
 
+  it('sorts the findings itself, so unsorted input still shows the most serious', () => {
+    const findings = [
+      ...Array.from({ length: 9 }, (_, index) =>
+        finding({ severity: 'nit', message: `N${index}` }),
+      ),
+      finding({ kind: 'steering', message: 'S' }),
+      finding({ severity: 'blocker', message: 'B' }),
+    ];
+
+    const shown = findingsToShow(findings).map((entry) => entry.message);
+
+    expect(shown).toHaveLength(8);
+    expect(shown[0]).toBe('B');
+    expect(shown[7]).toBe('S');
+  });
+
   it('shows everything when it fits', () => {
     const findings = [finding({ message: 'D' }), finding({ kind: 'steering', message: 'S' })];
 

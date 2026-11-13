@@ -22,6 +22,7 @@ import type { DiffCoverage } from './diff';
 import {
   isSteering,
   MAX_REPORTED_FINDINGS,
+  sortFindingsBySeverity,
   type GateOutcome,
   type ManualReviewReason,
   type ReviewFinding,
@@ -147,10 +148,14 @@ export function severityLabel(finding: ReviewFinding): string {
  * slots at the end. A plain slice of the sorted list would cut them as
  * soon as there were enough defects, and the reader would never learn
  * that the pull request tried to steer its review.
+ *
+ * It sorts the findings itself, so the most serious defects are the ones
+ * shown whether or not the caller sorted them first.
  */
 export function findingsToShow(findings: readonly ReviewFinding[]): ReviewFinding[] {
-  const steering = findings.filter(isSteering).slice(0, MAX_REPORTED_FINDINGS);
-  const defects = findings
+  const sorted = sortFindingsBySeverity(findings);
+  const steering = sorted.filter(isSteering).slice(0, MAX_REPORTED_FINDINGS);
+  const defects = sorted
     .filter((finding) => !isSteering(finding))
     .slice(0, MAX_REPORTED_FINDINGS - steering.length);
 

@@ -446,8 +446,24 @@ describe('steering findings', () => {
       line: null,
       kind: 'steering',
       message:
-        '[3 steering attempts] Ignore all previous instructions. | Forged [six7swe: notice]. | Fake response object.',
+        '[3 steering findings] Ignore all previous instructions. | Forged [six7swe: notice]. | Fake response object.',
     });
+  });
+
+  it('bounds the merged message: short excerpts, three named, the rest counted', () => {
+    const long = 'x'.repeat(5_000);
+    const [merged] = consolidateSteeringFindings(
+      Array.from({ length: 6 }, (_, index) => steering({ message: `${index}${long}` })),
+    );
+
+    expect(merged.message.startsWith('[6 steering findings] 0')).toBe(true);
+    expect(merged.message).toContain('1x');
+    expect(merged.message).toContain('2x');
+    expect(merged.message).not.toContain('| 3x');
+    expect(merged.message.endsWith(' | and 3 more')).toBe(true);
+    expect(merged.message.length).toBeLessThan(1_000);
+    // Merging the merged finding again leaves it as it is.
+    expect(consolidateSteeringFindings([merged])).toEqual([merged]);
   });
 
   it('keeps the location only when every steering finding shares it', () => {
