@@ -4,6 +4,7 @@ import { getPortfolioHandler } from '../../routes/handlers/portfolioHandlers';
 import { resumeHandler } from '../../routes/handlers/resumeHandlers';
 import { getPortfolioData } from '../../services/portfolioService';
 import { findLocalResume, isResumeAvailable } from '../../services/resumeService';
+import type { PortfolioData } from '../../types/portfolio';
 
 jest.mock('../../services/portfolioService', () => ({ getPortfolioData: jest.fn() }));
 jest.mock('../../services/resumeService', () => ({
@@ -16,6 +17,26 @@ const mockedGetPortfolioData = jest.mocked(getPortfolioData);
 const mockedFindLocalResume = jest.mocked(findLocalResume);
 const mockedIsResumeAvailable = jest.mocked(isResumeAvailable);
 
+const portfolio: PortfolioData = {
+  profile: {
+    id: 1,
+    name: 'Ray',
+    title: 'Engineer',
+    email: 'ray@example.com',
+    phone: null,
+    location: null,
+    linkedinUrl: null,
+    githubUrl: null,
+    summary: null,
+    skills: [],
+    experience: [],
+    projects: [],
+    fullResumeText: '',
+    resumeFilename: 'ray.pdf',
+  },
+  contentSections: [],
+};
+
 /**
  * A deploy without a resume PDF must not advertise one (#104): `/portfolio` reports
  * `resumeAvailable: false`, and `/resume` logs the miss before answering 404.
@@ -26,9 +47,7 @@ describe('resume availability', () => {
 
   beforeEach(async () => {
     delete process.env.PORTFOLIO_DATA_SOURCE;
-    mockedGetPortfolioData.mockResolvedValue({
-      profile: { name: 'Ray', title: 'Engineer', resumeFilename: 'ray.pdf' },
-    } as never);
+    mockedGetPortfolioData.mockResolvedValue(portfolio);
 
     logLines = [];
     const stream = new Writable({

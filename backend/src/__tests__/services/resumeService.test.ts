@@ -1,7 +1,11 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { findLocalResume, isResumeAvailable } from '../../services/resumeService';
+import {
+  findLocalResume,
+  isResumeAvailable,
+  safeResumeFilename,
+} from '../../services/resumeService';
 
 describe('resumeService', () => {
   let directory: string;
@@ -40,6 +44,45 @@ describe('resumeService', () => {
 
     it('returns null when neither file exists', () => {
       expect(findLocalResume('ray.pdf', directory)).toBeNull();
+    });
+
+    it('never resolves a profile filename outside the directory', () => {
+      // A real file one level up, which a traversal would otherwise reach.
+      const outside = path.join(path.dirname(directory), `${path.basename(directory)}-secret.pdf`);
+      fs.writeFileSync(outside, 'secret');
+      try {
+        const traversal = `../${path.basename(outside)}`;
+        expect(findLocalResume(traversal, directory)).toBeNull();
+        expect(findLocalResume(outside, directory)).toBeNull();
+
+        write('resume.pdf');
+        expect(findLocalResume(traversal, directory)).toBe(path.join(directory, 'resume.pdf'));
+      } finally {
+        fs.rmSync(outside, { force: true });
+      }
+    });
+  });
+
+  describe('safeResumeFilename', () => {
+    it.each(['ray.manguino.pdf', 'Resume 2026.pdf'])('keeps the plain name %s', (name) => {
+      expect(safeResumeFilename(name)).toBe(name);
+    });
+
+    it.each([
+      null,
+      undefined,
+      '',
+      '.',
+      '..',
+      '../secret.pdf',
+      'sub/ray.pdf',
+      '/etc/passwd',
+      'C:\\secret.pdf',
+      '..\\secret.pdf',
+      'ray".pdf',
+      'ray\r\n.pdf',
+    ])('replaces %j with resume.pdf', (name) => {
+      expect(safeResumeFilename(name)).toBe('resume.pdf');
     });
   });
 

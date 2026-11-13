@@ -7,12 +7,13 @@ import {
   FALLBACK_RESUME_FILENAME,
   findLocalResume,
   resumeDirectory,
+  safeResumeFilename,
 } from '../../services/resumeService';
 
 export async function resumeHandler(request: FastifyRequest, reply: FastifyReply) {
   try {
     const { profile } = await getPortfolioData();
-    const filename = profile?.resumeFilename || FALLBACK_RESUME_FILENAME;
+    const filename = safeResumeFilename(profile?.resumeFilename);
 
     if (getPortfolioDataSource() === 'mcp' && isMcpConnectionConfigured()) {
       let buffer = await fetchResumePdfFromMcp(filename);

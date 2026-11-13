@@ -16,13 +16,34 @@ export function resumeDirectory(): string {
 }
 
 /**
+ * The profile's resume filename if it is a plain file name, else `resume.pdf`.
+ *
+ * The name comes from the database and is joined onto `public/`, sent to the MCP server and put
+ * in the `Content-Disposition` header, so anything with a directory part (`../x.pdf`, `/etc/x`,
+ * `a\b.pdf` on Windows), a quote or a control character is refused rather than trusted.
+ */
+export function safeResumeFilename(filename: string | null | undefined): string {
+  if (
+    !filename ||
+    filename === '.' ||
+    filename === '..' ||
+    path.basename(filename) !== filename ||
+    /["\\/\p{Cc}]/u.test(filename)
+  ) {
+    return FALLBACK_RESUME_FILENAME;
+  }
+  return filename;
+}
+
+/**
  * The local resume to serve: the profile's file if present, else `resume.pdf`, else null.
+ * Never a path outside `directory` (see `safeResumeFilename`).
  */
 export function findLocalResume(
   filename: string | null | undefined,
   directory: string = resumeDirectory(),
 ): string | null {
-  const candidates = [filename || FALLBACK_RESUME_FILENAME, FALLBACK_RESUME_FILENAME];
+  const candidates = [safeResumeFilename(filename), FALLBACK_RESUME_FILENAME];
   for (const candidate of candidates) {
     const candidatePath = path.join(directory, candidate);
     if (fs.existsSync(candidatePath)) {
