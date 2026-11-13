@@ -4,6 +4,8 @@
  * Drops everything in the `public` schema, then replays the migration
  * history from the start. The Supabase-managed schemas (auth, storage,
  * graphql_public) are left alone, so Supabase Auth users survive a reset.
+ * So are the knowledge service's `knowledge` and `knowledge_migrations`
+ * schemas: that service owns them and applies its own migrations.
  *
  * The database is left empty unless `--seed` is passed. The portfolio is
  * never seeded here: its data lives in gitignored files, so it is applied

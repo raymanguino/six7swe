@@ -1,12 +1,17 @@
 # Railway Deployment Guide
 
-This monorepo is configured to deploy on Railway with separate services for frontend and backend.
-Both services are declared in `.railway/railway.ts` (Railway Infrastructure as Code).
+This monorepo is configured to deploy on Railway with separate services for the frontend, the
+backend and the knowledge service. All of them are declared in `.railway/railway.ts` (Railway
+Infrastructure as Code).
 
-| Service  | Builder    | Build definition                                     |
-| -------- | ---------- | ---------------------------------------------------- |
-| backend  | Dockerfile | `backend/Dockerfile`, built from the repository root |
-| frontend | Railpack   | `cd frontend && pnpm build`                          |
+| Service   | Builder    | Build definition                                     |
+| --------- | ---------- | ---------------------------------------------------- |
+| backend   | Dockerfile | `backend/Dockerfile`, built from the repository root |
+| frontend  | Railpack   | `cd frontend && pnpm build`                          |
+| knowledge | Railpack   | `cd knowledge && pnpm build`                         |
+
+The knowledge service's setup, variables and first-deploy checklist are in
+`knowledge/README.md`, "Deploy".
 
 The backend uses a Dockerfile because the job scraper launches Chrome, which needs system
 libraries at runtime (see [Chrome for the job scraper](#chrome-for-the-job-scraper)). The frontend
@@ -317,15 +322,16 @@ six7swe/
 ## Watch Paths
 
 `.railway/railway.ts` sets watch paths per service, so a change in one service does not rebuild
-the other:
+the others:
 
 - backend: `/backend/**`, plus the root files the Dockerfile reads (`/.dockerignore`,
   `/package.json`, `/pnpm-lock.yaml`, `/pnpm-workspace.yaml`, `/tsconfig.base.json`)
 - frontend: `/frontend/**`, plus the root files its build reads (`/package.json`,
   `/pnpm-lock.yaml`, `/pnpm-workspace.yaml`, `/tsconfig.base.json`). Railpack installs from the
   workspace root, and `frontend/tsconfig.json` extends `tsconfig.base.json`.
+- knowledge: `/knowledge/**`, plus the same root files as the frontend, for the same reasons.
 
-A change to one of the shared root files rebuilds both services.
+A change to one of the shared root files rebuilds every service.
 
 ## Changing Railway config
 

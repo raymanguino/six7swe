@@ -15,6 +15,10 @@ backend/scripts/portfolio-data.json
 
 # Generated migration files
 backend/migrations/
+knowledge/migrations/
 
 # Binary assets
 backend/public/
+
+# Local knowledge-service file store
+knowledge/.data/

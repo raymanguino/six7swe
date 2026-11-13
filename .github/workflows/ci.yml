@@ -19,6 +19,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
+    # The knowledge service's repository tests need Postgres with pgvector
+    # 0.8+ (iterative HNSW scans), the version Supabase ships. They refuse to
+    # skip when CI is set, so this database is required.
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.0-pg17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      KNOWLEDGE_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -46,8 +65,50 @@ jobs:
       - name: Type-check Railway config
         run: pnpm exec tsc -p tsconfig.railway.json
 
+      # Type-checks the knowledge sources together with its tests and config
+      # files; the build only covers `src` without the tests.
+      - name: Typecheck the knowledge service
+        run: pnpm --filter @six7swe/knowledge typecheck
+
+      # The schema is the source of truth: generating from it must produce
+      # nothing new, or a schema change was committed without its migration.
+      - name: Check the knowledge migrations match the schema
+        run: |
+          pnpm --filter @six7swe/knowledge db:generate
+          git diff --exit-code -- knowledge/migrations
+          untracked="$(git status --porcelain --untracked-files=all -- knowledge/migrations)"
+          if [ -n "$untracked" ]; then
+            echo "Uncommitted migration files after db:generate:"
+            echo "$untracked"
+            exit 1
+          fi
+
+      - name: Prepare the knowledge test database
+        env:
+          PGPASSWORD: postgres
+          DATABASE_URL: ${{ env.KNOWLEDGE_TEST_DATABASE_URL }}
+        run: |
+          # Supabase keeps pgvector in the `extensions` schema, which is on its
+          # default search_path; the migrations rely on that, so mirror it.
+          psql -h localhost -U postgres -d postgres \
+            -c 'ALTER DATABASE postgres SET search_path TO "$user", public, extensions'
+          pnpm --filter @six7swe/knowledge db:migrate
+
       - name: Test
         run: pnpm test
 
       - name: Build
         run: pnpm build
+
+      # Railway's pre-deploy runs the compiled migrator with plain node. Run it
+      # here too, from scratch on an empty database, so a broken dist path or
+      # a missing runtime dependency fails CI rather than a deploy.
+      - name: Run the compiled knowledge migrator
+        env:
+          PGPASSWORD: postgres
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/knowledge_migrate_check
+        run: |
+          psql -h localhost -U postgres -d postgres -c 'CREATE DATABASE knowledge_migrate_check'
+          psql -h localhost -U postgres -d postgres \
+            -c 'ALTER DATABASE knowledge_migrate_check SET search_path TO "$user", public, extensions'
+          pnpm --filter @six7swe/knowledge db:migrate:prod

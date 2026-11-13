@@ -6,9 +6,9 @@
  * "Changing Railway config"). An apply is declarative: a service, variable or custom domain
  * missing from this file is deleted, so check the plan for destructive entries before applying.
  *
- * Both services build from the repository root (Root Directory `/`). The frontend builds with
- * Railpack, and its commands `cd` into the package. The backend builds from `backend/Dockerfile`,
- * whose build context is that same root.
+ * Every service builds from the repository root (Root Directory `/`). The frontend and the
+ * knowledge service build with Railpack, and their commands `cd` into the package. The backend
+ * builds from `backend/Dockerfile`, whose build context is that same root.
  * Secrets are never written here: `preserve()` keeps the value already set in Railway.
  */
 import { defineRailway, github, preserve, project, service } from 'railway/iac';
@@ -91,12 +91,67 @@ export default defineRailway(() => {
     },
   });
 
+  const knowledge = service('@six7swe/knowledge', {
+    source: repo,
+    // A plain Node service, so Railpack is enough. It runs `pnpm install` at the workspace root
+    // before the build command.
+    build: {
+      builder: 'RAILPACK',
+      buildCommand: 'cd knowledge && pnpm build',
+      // The service plus the root files its build reads: Railpack installs from the workspace
+      // root, and knowledge/tsconfig.json extends tsconfig.base.json.
+      watchPatterns: [
+        '/knowledge/**',
+        '/package.json',
+        '/pnpm-lock.yaml',
+        '/pnpm-workspace.yaml',
+        '/tsconfig.base.json',
+      ],
+    },
+    // Railpack runs the start command in a shell, so `cd … &&` works.
+    start: 'cd knowledge && pnpm start',
+    // Applies the migrations with the migrator `pnpm build` compiled to dist/db/migrate.js, so
+    // it needs only runtime dependencies. Railway documents shell execution for Railpack start
+    // commands but not for pre-deploy commands, so this one avoids `cd … &&`: `--filter` runs
+    // the package script from knowledge/, and pnpm runs scripts in a shell.
+    preDeploy: 'pnpm --filter @six7swe/knowledge db:migrate:prod',
+    healthcheck: '/health',
+    deploy: { ...restartPolicy },
+    // Same region as the backend, its main caller over the private network.
+    replicas: { 'us-west2': 1 },
+    // Private networking only (six7sweknowledge.railway.internal); the backends call it there.
+    // A public domain is added in step 2 (#83) or step 7 (#89) if browser or Claude-client
+    // access needs one.
+    networking: { privateNetworkEndpoint: 'six7sweknowledge' },
+    // Only the variables the service requires. Optional ones (EMBEDDER, EMBEDDING_MODEL,
+    // FILE_STORE, STORAGE_BUCKET, MAX_UPLOAD_BYTES, RESUME_INGESTION_ON_BOOT, ...) are left
+    // out: their defaults are right for production, and an apply deletes any variable missing
+    // here, so listing one would only invite setting it.
+    env: {
+      NODE_ENV: 'production',
+      // Pinned (the service's own default), like the backend's PORT: private-network callers
+      // need a known port, http://six7sweknowledge.railway.internal:3100.
+      PORT: '3100',
+      // Railway's private network is IPv6-only in environments created before 16 October
+      // 2025, so listen on `::`, which accepts IPv6 and IPv4. The code's default, 0.0.0.0, is
+      // IPv4-only.
+      HOST: '::',
+      DATABASE_URL: preserve(),
+      KNOWLEDGE_SERVICE_KEY: preserve(),
+      KNOWLEDGE_OWNER_KEY: preserve(),
+      OWNER_AUTH_ID: preserve(),
+      OPENAI_API_KEY: preserve(),
+      SUPABASE_URL: preserve(),
+      SUPABASE_SECRET_KEY: preserve(),
+    },
+  });
+
   const definition = {
     // This file owns every variable on these services. The CLI (5.74) reads this option but the
     // SDK's types (railway 3.17) do not declare it yet, so it is passed as a variable rather than
     // an object literal, which skips the excess-property check.
     variables: { managed: true },
-    resources: [frontend, backend],
+    resources: [frontend, backend, knowledge],
   };
   return project('six7swe', definition);
 });

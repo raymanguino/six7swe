@@ -26,6 +26,7 @@ FROM base AS build
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY backend/package.json backend/
 COPY frontend/package.json frontend/
+COPY knowledge/package.json knowledge/
 RUN pnpm install --frozen-lockfile --filter @six7swe/backend
 
 # Chrome, in its own layer: it depends only on the installed puppeteer version and
