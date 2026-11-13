@@ -147,6 +147,16 @@ Rules:
 
 ---
 
+## Pull Request Comments
+
+- Never write `@copilot`, or any other bot mention, in a PR comment, reply, or description.
+  A mention starts a Copilot coding agent session.
+- Do not end replies with a request for re-review. Reviews come from the QA Review workflow
+  (`.github/workflows/qa-review.yml`), which re-runs on every push and on title or description edits.
+- Reply to a finding on its own terms: whether it holds, and what changed.
+
+---
+
 ## What NOT to Do
 
 - Do not bypass layers
