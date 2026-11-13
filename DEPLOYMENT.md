@@ -354,11 +354,24 @@ not intend. In particular, every variable set on a service must appear in the fi
 
 After an apply, `railway config plan` should report no changes.
 
-> **Windows:** `railway/iac` 3.17 checks the CLI version by running `railway --version` without a
-> shell, which cannot run the `railway.cmd` shim that npm and pnpm install, so evaluation fails
-> with "requires Railway CLI 5.42.1 or newer" even on a newer CLI. The SDK uses `$_` when it is
-> set, so point it at the real binary first (PowerShell):
+> **Windows:** `railway/iac` 3.17 checks the CLI version by running `railway --version` through
+> `execFileSync`, without a shell. The npm and pnpm installs ship a `railway.cmd`, a `railway.ps1`
+> and a `railway` shell script, and Windows cannot spawn any of those without a shell, so the check
+> throws "This version of railway/iac requires Railway CLI 5.42.1 or newer" even on a current CLI
+> (5.74.0). The SDK resolves the CLI from the `_` environment variable, falling back to the bare
+> name `railway`, so it has to point at the real `.exe`.
+>
+> In PowerShell and cmd.exe, `_` is not set, so the SDK falls back to the bare name and the check
+> fails. Point it at the binary first:
 >
 > ```powershell
 > $env:_ = "$(npm root -g)\@railway\cli\bin\railway.exe"
+> railway config plan    # now works
+> ```
+>
+> In Git Bash, bash sets `_` to the path of the command it runs, so calling the binary directly
+> works with no setup:
+>
+> ```bash
+> "$(npm root -g)/@railway/cli/bin/railway.exe" config plan
 > ```
