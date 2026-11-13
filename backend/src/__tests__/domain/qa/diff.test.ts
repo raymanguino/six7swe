@@ -321,6 +321,13 @@ describe('hunkLineNumbers', () => {
     expect([...lines].sort((a, b) => a - b)).toEqual([10, 11, 12]);
   });
 
+  it('ignores a hunk header hidden behind a bare \\r, as the model sees it', () => {
+    const lines = hunkLineNumbers('@@ -1 +1 @@\n+x\r@@ -1 +900,2 @@');
+
+    expect(lines.has(900)).toBe(false);
+    expect([...lines]).toEqual([1]);
+  });
+
   it('treats a hunk without a count as a single line', () => {
     expect([...hunkLineNumbers('@@ -1 +7 @@\n-old\n+new')]).toEqual([7]);
   });
