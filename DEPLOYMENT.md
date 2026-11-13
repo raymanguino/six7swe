@@ -378,9 +378,10 @@ After an apply, `railway config plan` should report no changes.
 > railway config plan    # now works
 > ```
 >
-> Git Bash:
+> Git Bash (use `cygpath -u` on the result: `npm root -g` prints a Windows path, and its `C:` drive
+> letter would otherwise split the `PATH` entry):
 >
 > ```bash
-> export PATH="$(npm root -g)/@railway/cli/bin:$PATH"
+> export PATH="$(cygpath -u "$(npm root -g)")/@railway/cli/bin:$PATH"
 > railway config plan    # now works
 > ```
