@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../app.js';
 import {
   DocumentDtoSchema,
+  DocumentTextResponseSchema,
   ErrorResponseSchema,
   RetrieveResponseSchema,
   UploadResponseSchema,
@@ -272,6 +274,71 @@ describe('documents and retrieval', () => {
       payload: { query: 'x', k: 500 },
     });
     expect(tooMany.statusCode).toBe(400);
+  });
+
+  it('searches as the owner, with the owner key only', async () => {
+    await uploadFile('project.txt', PROJECT_NOTES_TXT);
+    await idle();
+
+    const search = (headers: Record<string, string>, payload: Record<string, unknown>) =>
+      app.inject({ method: 'POST', url: '/search', headers, payload });
+    const res = await search(ownerAuth, { query: 'pgvector retrieval assistant', k: 2 });
+    expect(res.statusCode).toBe(200);
+    const result = RetrieveResponseSchema.strict().parse(res.json());
+    expect(result.chunks[0]?.filename).toBe('project.txt');
+
+    expect((await search(auth, { query: 'pgvector' })).statusCode).toBe(401);
+    expect((await search(ownerAuth, { query: ' ' })).statusCode).toBe(400);
+  });
+
+  it('serves the extracted text of a document', async () => {
+    const { document } = (await uploadFile('notes.txt', PROJECT_NOTES_TXT)).json<{
+      document: { id: string };
+    }>();
+    await idle();
+    const url = `/documents/${document.id}/text`;
+    const res = await app.inject({ method: 'GET', url, headers: ownerAuth });
+    const body = DocumentTextResponseSchema.strict().parse(res.json());
+    expect(body.documentId).toBe(document.id);
+    expect(body.text).toContain('retrieval-augmented');
+    expect((await app.inject({ method: 'GET', url, headers: auth })).statusCode).toBe(401);
+    const missing = await app.inject({
+      method: 'GET',
+      url: `/documents/${randomUUID()}/text`,
+      headers: ownerAuth,
+    });
+    expect(missing.statusCode).toBe(404);
+  });
+
+  it('sets the primary resume, 409 for a document that is not a ready resume', async () => {
+    const old = (await uploadFile('old.md', RESUME_MD, 'resume')).json<{
+      document: { id: string };
+    }>();
+    await idle();
+    const newer = (await uploadFile('new.md', `${RESUME_MD}\nMore.`, 'resume')).json<{
+      document: { id: string };
+    }>();
+    const notes = (await uploadFile('notes.txt', PROJECT_NOTES_TXT)).json<{
+      document: { id: string };
+    }>();
+    await idle();
+
+    const setPrimary = (id: string) =>
+      app.inject({ method: 'PUT', url: `/documents/${id}/primary`, headers: ownerAuth });
+    const res = await setPrimary(old.document.id);
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ document: { id: old.document.id, isPrimaryResume: true } });
+
+    const list = await app.inject({ method: 'GET', url: '/documents', headers: ownerAuth });
+    const primaries = list
+      .json<{ documents: { id: string; isPrimaryResume: boolean }[] }>()
+      .documents.filter((d) => d.isPrimaryResume)
+      .map((d) => d.id);
+    expect(primaries).toEqual([old.document.id]);
+    expect(newer.document.id).not.toBe(old.document.id);
+
+    expect((await setPrimary(notes.document.id)).statusCode).toBe(409);
+    expect((await setPrimary(randomUUID())).statusCode).toBe(404);
   });
 
   it('gets and deletes a document, 404 afterwards and for bad ids', async () => {

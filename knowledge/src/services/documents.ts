@@ -135,6 +135,30 @@ export async function getDocument(
   return deps.repo.getDocument(ownerId, id);
 }
 
+/**
+ * The text extracted from one of the owner's documents, for previews. Null
+ * when the document does not exist or belongs to someone else.
+ */
+export async function getDocumentText(
+  deps: Pick<KnowledgeDeps, 'repo'>,
+  ownerId: string,
+  id: string,
+): Promise<{ text: string | null } | null> {
+  return deps.repo.getExtractedText(ownerId, id);
+}
+
+/**
+ * Makes one of the owner's ready resumes the primary one. Null when it does
+ * not exist; throws a 409 ConflictError when it is not a ready resume.
+ */
+export async function setPrimaryResume(
+  deps: Pick<KnowledgeDeps, 'repo'>,
+  ownerId: string,
+  id: string,
+): Promise<DocumentRecord | null> {
+  return deps.repo.setPrimaryResume(ownerId, id);
+}
+
 /** Deletes the document, its chunks and its file. Returns false when it did not exist. */
 export async function deleteDocument(
   deps: DocumentServiceDeps,

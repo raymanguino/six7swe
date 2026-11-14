@@ -207,6 +207,50 @@ export function createDrizzleRepository(db: KnowledgeDb): KnowledgeRepository {
         .orderBy(desc(documents.createdAt));
     },
 
+    async getExtractedText(ownerId, id) {
+      const [row] = await db
+        .select({ text: documents.extractedText })
+        .from(documents)
+        .where(and(eq(documents.ownerId, ownerId), eq(documents.id, id)))
+        .limit(1);
+      return row ?? null;
+    },
+
+    async setPrimaryResume(ownerId, id) {
+      return db.transaction(async (tx) => {
+        // Same lock as the paths that recompute the primary, so a concurrent
+        // ingest or delete cannot interleave with the demote and promote.
+        await lockOwner(tx, ownerId);
+        const [doc] = await tx
+          .select({ kind: documents.kind, status: documents.status })
+          .from(documents)
+          .where(and(eq(documents.ownerId, ownerId), eq(documents.id, id)))
+          .for('update');
+        if (!doc) return null;
+        if (doc.kind !== 'resume' || doc.status !== 'ready') {
+          throw new ConflictError('Only a ready resume can be the primary resume');
+        }
+
+        // Demote first, so the one-primary-per-owner index is never violated.
+        await tx
+          .update(documents)
+          .set({ isPrimaryResume: false })
+          .where(
+            and(
+              eq(documents.ownerId, ownerId),
+              eq(documents.isPrimaryResume, true),
+              ne(documents.id, id),
+            ),
+          );
+        const [updated] = await tx
+          .update(documents)
+          .set({ isPrimaryResume: true })
+          .where(eq(documents.id, id))
+          .returning(documentColumns);
+        return updated ?? null;
+      });
+    },
+
     async resetToPending(id) {
       await leaveReady(id, { status: 'pending', error: null });
     },

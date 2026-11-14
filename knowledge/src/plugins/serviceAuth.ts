@@ -8,15 +8,23 @@ import { isSafeKeySegment } from '../lib/storageKeys.js';
  * Who may call a route:
  * - `public`: anyone, no credentials.
  * - `service`: the portfolio and hunter backends, with the shared service key.
- * - `owner`: the knowledge base's owner, with the owner key until the owner
- *   JWT gate replaces it (step 2, #83).
+ * - `owner`: the knowledge base's owner, through the backend's owner proxy,
+ *   with the owner key.
  *
  * Each mode accepts only its own key: the service key gets a 401 on owner
  * routes and the owner key gets a 401 on service routes. Both keys travel in
  * the same `x-knowledge-key` header. The route, not the header, decides
- * which key is valid, so a second header would add no protection, and the
- * owner key is temporary anyway: step 2 moves owner routes to a Supabase JWT
- * in `Authorization`.
+ * which key is valid, so a second header would add no protection.
+ *
+ * The owner gate itself lives in the backend (#83). The service is reachable
+ * only on Railway's private network, so the browser never calls it: the
+ * backend verifies the Supabase JWT, requires `sub === OWNER_AUTH_ID` (403
+ * otherwise), and only then forwards the request with the owner key. The
+ * service does not verify the JWT again: the backend is the only holder of
+ * the owner key, and a second check would need the user's token forwarded
+ * and the JWKS configured here for no extra protection against a caller that
+ * already holds the key. A future caller with its own credential (the MCP
+ * adapter, #89) can replace the `owner` entry through `authenticators`.
  */
 export type RouteAccess = 'public' | 'service' | 'owner';
 
@@ -80,17 +88,11 @@ export function keyAuthenticator(key: string, ownerId: string): Authenticator {
 export interface ServiceAuthOptions {
   /** Opens `service` routes only. */
   serviceKey: string;
-  /** Opens `owner` routes only. Step 2 (#83) replaces it with the JWT check. */
+  /** Opens `owner` routes only. Held by the backend's owner proxy. */
   ownerKey: string;
-  /**
-   * The single owner every authenticated request acts for, until the owner
-   * JWT gate derives it per request from the token's `sub`.
-   */
+  /** The single owner (`OWNER_AUTH_ID`) every authenticated request acts for. */
   ownerId: string;
-  /**
-   * Overrides per access mode. Step 2 replaces `owner` with the JWT check;
-   * `service` keeps the key.
-   */
+  /** Overrides per access mode, e.g. a different `owner` check for another caller. */
   authenticators?: Partial<Authenticators>;
 }
 
@@ -102,7 +104,7 @@ export interface ServiceAuthOptions {
 const serviceAuth: FastifyPluginAsync<ServiceAuthOptions> = async (app, options) => {
   const authenticators: Authenticators = {
     service: keyAuthenticator(options.serviceKey, options.ownerId),
-    // Step 2 (#83) replaces this entry with the Supabase JWT check.
+    // The backend checks the owner's JWT, then forwards with this key.
     owner: keyAuthenticator(options.ownerKey, options.ownerId),
     ...options.authenticators,
   };
