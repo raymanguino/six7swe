@@ -80,7 +80,7 @@ export async function awaitKnowledgeReady(options: AwaitReadyOptions): Promise<A
   if (url === null) {
     return {
       ready: false,
-      reason: 'KNOWLEDGE_SERVICE_URL is not a valid URL; check KNOWLEDGE_SERVICE_URL',
+      reason: 'KNOWLEDGE_URL is not a valid URL; check KNOWLEDGE_URL',
       retryable: false,
     };
   }
@@ -107,7 +107,7 @@ export async function awaitKnowledgeReady(options: AwaitReadyOptions): Promise<A
       if (res.status >= 400 && res.status < 500) {
         return {
           ready: false,
-          reason: `HTTP ${res.status} from /version; check KNOWLEDGE_SERVICE_URL`,
+          reason: `HTTP ${res.status} from /version; check KNOWLEDGE_URL`,
           retryable: false,
         };
       }

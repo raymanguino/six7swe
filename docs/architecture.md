@@ -207,7 +207,7 @@ the never-wired `PORTFOLIO_DATA_SOURCE=mcp` path. Full details are in
   (`backend/src/services/knowledgeRetrieval.ts`); the version is re-read at most
   every 30 s. Chunks per question default to 6 (`KNOWLEDGE_RETRIEVE_K`); production sets 10
   (`.railway/railway.ts`). The backend refuses to start if the flag is set without
-  `KNOWLEDGE_SERVICE_URL` and `KNOWLEDGE_SERVICE_KEY`. If the service fails, chat
+  `KNOWLEDGE_URL` and `KNOWLEDGE_SERVICE_KEY`. If the service fails, chat
   answers from the profile summary alone, and for the next 15 s uncached
   questions skip the service instead of waiting on it again (cached questions
   are still served). The portfolio page, the resume and fitcheck still read
@@ -309,7 +309,7 @@ imports:
 | `AUTH_DEV_BYPASS` | backend | Dev-only user impersonation |
 | `JOB_REFRESH_STALE_MINUTES` | backend | Abandoned refresh threshold (default 30) |
 | `OWNER_AUTH_ID` | backend, knowledge | Supabase subject that owns the knowledge base |
-| `KNOWLEDGE_URL` | backend | Knowledge service base URL (private network on Railway) |
+| `KNOWLEDGE_URL` | backend | Knowledge service base URL, used by chat retrieval and the owner proxy (private network on Railway) |
 | `KNOWLEDGE_OWNER_KEY` | backend, knowledge | Owner credential the backend proxy sends to the service |
 | `VITE_API_URL` | frontend | Backend base URL |
 | `VITE_SUPABASE_URL` | frontend | Supabase project URL |

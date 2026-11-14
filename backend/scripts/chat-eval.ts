@@ -23,7 +23,7 @@
  * Environment (backend/.env, or backend/.env.remote with --remote):
  *   DATABASE_URL            the portfolio tables (profile and content sections)
  *   MINIMAX_API_KEY         answers and judging
- *   KNOWLEDGE_SERVICE_URL   the knowledge service, e.g. http://127.0.0.1:3100 (not
+ *   KNOWLEDGE_URL           the knowledge service, e.g. http://127.0.0.1:3100 (not
  *                           localhost, which Windows resolves to ::1 first)
  *   KNOWLEDGE_SERVICE_KEY   its service key
  *   KNOWLEDGE_OWNER_KEY     optional: its owner key, to read the documents for the
@@ -57,7 +57,7 @@ function requireEnv(name: string): void {
 async function main(): Promise<void> {
   resolveDatabaseTarget();
   requireEnv('MINIMAX_API_KEY');
-  requireEnv('KNOWLEDGE_SERVICE_URL');
+  requireEnv('KNOWLEDGE_URL');
   requireEnv('KNOWLEDGE_SERVICE_KEY');
 
   // Imported after the env is loaded: `src/db` reads DATABASE_URL on load.
@@ -84,7 +84,7 @@ async function main(): Promise<void> {
   const stuffedContext = await getChatContext();
 
   const ready = await awaitKnowledgeReady({
-    baseUrl: process.env.KNOWLEDGE_SERVICE_URL ?? '',
+    baseUrl: process.env.KNOWLEDGE_URL ?? '',
     serviceKey: process.env.KNOWLEDGE_SERVICE_KEY ?? '',
     onWaiting: () =>
       process.stderr.write(
@@ -104,7 +104,7 @@ async function main(): Promise<void> {
     stuffedContext,
     documents: ownerKey
       ? createKnowledgeDocumentClient({
-          baseUrl: process.env.KNOWLEDGE_SERVICE_URL ?? '',
+          baseUrl: process.env.KNOWLEDGE_URL ?? '',
           ownerKey,
           timeoutMs: REFERENCE_TIMEOUT_MS,
         })

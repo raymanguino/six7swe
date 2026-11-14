@@ -146,7 +146,7 @@ export async function getKnowledgeChatContext(
     unavailable = true;
     options.log?.warn(
       { source: 'knowledge' },
-      'PORTFOLIO_DATA_SOURCE=knowledge but KNOWLEDGE_SERVICE_URL or KNOWLEDGE_SERVICE_KEY is not set; answering from the profile only',
+      'PORTFOLIO_DATA_SOURCE=knowledge but KNOWLEDGE_URL or KNOWLEDGE_SERVICE_KEY is not set; answering from the profile only',
     );
   } else {
     try {

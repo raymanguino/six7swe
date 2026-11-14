@@ -1,11 +1,16 @@
 import {
   RetrieveResponseSchema,
-  SERVICE_KEY_HEADER,
   VersionResponseSchema,
   type RetrieveResponse,
   type RetrievedChunkDto,
 } from '@six7swe/knowledge-types';
 import type { z } from 'zod';
+import {
+  KnowledgeTransportError,
+  parseJsonBody,
+  sendKnowledgeRequest,
+  type FetchLike,
+} from './knowledge/transport';
 import {
   getKnowledgeRetrievalConfig,
   type KnowledgeRetrievalConfig,
@@ -47,61 +52,37 @@ export interface RetrievalClient {
   retrieve(query: string, k: number): Promise<RetrieveResponse>;
 }
 
-type FetchFn = typeof fetch;
-
-/**
- * Duck-typed: the abort reason is a DOMException, which is not an `Error`
- * instance in every realm (Jest's sandbox, for one).
- */
-function errorField(err: unknown, field: 'name' | 'message'): string | undefined {
-  if (typeof err !== 'object' || err === null || !(field in err)) return undefined;
-  const value: unknown = (err as Record<string, unknown>)[field];
-  return typeof value === 'string' ? value : undefined;
-}
-
-function isTimeout(err: unknown): boolean {
-  const name = errorField(err, 'name');
-  return name === 'TimeoutError' || name === 'AbortError';
-}
-
 export function createHttpRetrievalClient(
   config: Pick<KnowledgeRetrievalConfig, 'baseUrl' | 'serviceKey' | 'timeoutMs'>,
-  fetchFn: FetchFn = fetch,
+  fetchFn?: FetchLike,
 ): RetrievalClient {
-  async function call(path: string, init: RequestInit): Promise<unknown> {
-    let res: Response;
+  async function call(path: string, method: 'GET' | 'POST', body?: string): Promise<unknown> {
+    let reply;
     try {
-      res = await fetchFn(`${config.baseUrl}${path}`, {
-        ...init,
-        headers: {
-          ...(init.body ? { 'content-type': 'application/json' } : {}),
-          [SERVICE_KEY_HEADER]: config.serviceKey,
-        },
-        signal: AbortSignal.timeout(config.timeoutMs),
+      reply = await sendKnowledgeRequest({
+        baseUrl: config.baseUrl,
+        key: config.serviceKey,
+        method,
+        path,
+        body,
+        contentType: body === undefined ? undefined : 'application/json',
+        timeoutMs: config.timeoutMs,
+        fetch: fetchFn,
       });
     } catch (err) {
-      throw new KnowledgeRetrievalError(
-        isTimeout(err)
-          ? `Knowledge service ${path} timed out after ${config.timeoutMs} ms`
-          : `Knowledge service ${path} unreachable: ${errorField(err, 'message') ?? String(err)}`,
-      );
+      if (!(err instanceof KnowledgeTransportError)) throw err;
+      throw new KnowledgeRetrievalError(`Knowledge service ${path} ${err.message}`);
     }
-    if (!res.ok) {
-      // Release the connection; the error body is not needed.
-      await res.body?.cancel().catch(() => undefined);
-      throw new KnowledgeRetrievalError(`Knowledge service ${path} answered ${res.status}`, {
-        status: res.status,
+    if (reply.status < 200 || reply.status > 299) {
+      throw new KnowledgeRetrievalError(`Knowledge service ${path} answered ${reply.status}`, {
+        status: reply.status,
       });
     }
-    try {
-      return (await res.json()) as unknown;
-    } catch (err) {
-      throw new KnowledgeRetrievalError(
-        isTimeout(err)
-          ? `Knowledge service ${path} timed out after ${config.timeoutMs} ms`
-          : `Knowledge service ${path} sent invalid JSON`,
-      );
+    const json = parseJsonBody(reply.text);
+    if (json === undefined) {
+      throw new KnowledgeRetrievalError(`Knowledge service ${path} sent invalid JSON`);
     }
+    return json;
   }
 
   function parse<T>(path: string, schema: z.ZodType<T>, body: unknown): T {
@@ -116,11 +97,11 @@ export function createHttpRetrievalClient(
 
   return {
     async getVersion() {
-      const body = await call('/version', { method: 'GET' });
+      const body = await call('/version', 'GET');
       return parse('/version', VersionResponseSchema, body).version;
     },
     async retrieve(query, k) {
-      const body = await call('/retrieve', { method: 'POST', body: JSON.stringify({ query, k }) });
+      const body = await call('/retrieve', 'POST', JSON.stringify({ query, k }));
       return parse('/retrieve', RetrieveResponseSchema, body);
     },
   };
@@ -283,7 +264,7 @@ let defaultRetriever: CachedRetriever | null | undefined;
 
 /**
  * The process-wide retriever built from the environment, or null when
- * `KNOWLEDGE_SERVICE_URL` / `KNOWLEDGE_SERVICE_KEY` are not set.
+ * `KNOWLEDGE_URL` / `KNOWLEDGE_SERVICE_KEY` are not set.
  */
 export function getDefaultRetriever(): CachedRetriever | null {
   if (defaultRetriever === undefined) {

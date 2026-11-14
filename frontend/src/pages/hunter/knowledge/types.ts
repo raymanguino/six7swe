@@ -1,7 +1,14 @@
 /**
  * The knowledge service's wire types, as the backend's `/knowledge/*` proxy
- * relays them. They mirror `knowledge/src/contract.ts`; once that contract
- * moves to a shared package (#84), import from there instead.
+ * relays them. They mirror `@six7swe/knowledge-types` (`packages/knowledge-types`),
+ * the contract the backend and the service share.
+ *
+ * The frontend keeps its own copy on purpose: that package is Zod schemas
+ * compiled to CommonJS `dist/` by a separate build step, and importing it would
+ * make every frontend lint, dev and build depend on that step and pull Zod and
+ * its server-side types into the browser bundle's graph. The page does not
+ * trust these types anyway: the guards below check each response at runtime.
+ * The contract has one owner, so when it changes, update this file with it.
  */
 
 export type DocumentKind = 'resume' | 'supporting';

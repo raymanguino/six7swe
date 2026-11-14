@@ -7,10 +7,10 @@ import { isKnowledgeOwner } from '../../services/knowledge/ownerGate';
 import {
   DEFAULT_TIMEOUT_MS,
   forwardToKnowledge,
-  KNOWLEDGE_KEY_HEADER,
   UPLOAD_TIMEOUT_MS,
   type FetchLike,
 } from '../../services/knowledge/ownerProxy';
+import { SERVICE_KEY_HEADER } from '@six7swe/knowledge-types';
 import type { ContextUser } from '../../types';
 
 const OWNER_ID = '11111111-1111-4111-8111-111111111111';
@@ -206,7 +206,7 @@ describe('knowledge owner proxy routes', () => {
     const [call] = service.calls;
     expect(call?.url).toBe(`${SERVICE_URL}/documents`);
     const headers = call?.init.headers as Record<string, string>;
-    expect(headers[KNOWLEDGE_KEY_HEADER]).toBe(OWNER_KEY);
+    expect(headers[SERVICE_KEY_HEADER]).toBe(OWNER_KEY);
     expect(headers).not.toHaveProperty('authorization');
   });
 

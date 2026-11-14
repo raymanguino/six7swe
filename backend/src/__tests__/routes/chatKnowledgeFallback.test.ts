@@ -45,7 +45,7 @@ describe('POST /chat with the knowledge service down', () => {
 
   beforeEach(async () => {
     process.env.PORTFOLIO_DATA_SOURCE = 'knowledge';
-    process.env.KNOWLEDGE_SERVICE_URL = 'http://knowledge.invalid:3100';
+    process.env.KNOWLEDGE_URL = 'http://knowledge.invalid:3100';
     process.env.KNOWLEDGE_SERVICE_KEY = 'service-key';
     resetDefaultRetriever();
     fetchSpy = jest.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('fetch failed'));

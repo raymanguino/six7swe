@@ -92,9 +92,10 @@ export default defineRailway(() => {
       // Railway. preserve() keeps it, and lets the owner switch chat to `knowledge` in Railway
       // without this file doing it.
       PORTFOLIO_DATA_SOURCE: preserve(),
-      // Chat retrieval (PORTFOLIO_DATA_SOURCE=knowledge) over the private network. The key is
-      // the knowledge service's KNOWLEDGE_SERVICE_KEY, set to the same value on both services.
-      KNOWLEDGE_SERVICE_URL: 'http://six7sweknowledge.railway.internal:3100',
+      // The knowledge service's private address, one variable for both clients: chat retrieval
+      // (PORTFOLIO_DATA_SOURCE=knowledge) and the owner proxy below. The retrieval key is the
+      // knowledge service's KNOWLEDGE_SERVICE_KEY, set to the same value on both services.
+      KNOWLEDGE_URL: 'http://six7sweknowledge.railway.internal:3100',
       KNOWLEDGE_SERVICE_KEY: preserve(),
       // Chunks retrieved per chat question. Chosen from the #84 chat eval (10 seed questions:
       // stuffed mean 8.50 vs retrieved 9.20 at k=10; the default of 6 did not match stuffed).
@@ -103,7 +104,6 @@ export default defineRailway(() => {
       // The knowledge owner proxy (/knowledge/*): the backend checks the owner's JWT, then
       // calls the knowledge service over the private network with its owner key.
       OWNER_AUTH_ID: preserve(),
-      KNOWLEDGE_URL: 'http://six7sweknowledge.railway.internal:3100',
       KNOWLEDGE_OWNER_KEY: preserve(),
     },
   });

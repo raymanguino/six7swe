@@ -385,12 +385,12 @@ describe('createHttpRetrievalClient', () => {
 describe('getKnowledgeRetrievalConfig', () => {
   it('is null without a URL and key', () => {
     expect(getKnowledgeRetrievalConfig({})).toBeNull();
-    expect(getKnowledgeRetrievalConfig({ KNOWLEDGE_SERVICE_URL: 'http://x' })).toBeNull();
+    expect(getKnowledgeRetrievalConfig({ KNOWLEDGE_URL: 'http://x' })).toBeNull();
   });
 
   it('trims the trailing slash and clamps k to the contract maximum', () => {
     const config = getKnowledgeRetrievalConfig({
-      KNOWLEDGE_SERVICE_URL: 'http://x:3100/',
+      KNOWLEDGE_URL: 'http://x:3100/',
       KNOWLEDGE_SERVICE_KEY: 'key',
       KNOWLEDGE_RETRIEVE_K: '99',
     });

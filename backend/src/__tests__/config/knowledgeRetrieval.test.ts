@@ -5,7 +5,7 @@ describe('assertKnowledgeRetrievalConfigured', () => {
 
   beforeEach(() => {
     delete process.env.PORTFOLIO_DATA_SOURCE;
-    delete process.env.KNOWLEDGE_SERVICE_URL;
+    delete process.env.KNOWLEDGE_URL;
     delete process.env.KNOWLEDGE_SERVICE_KEY;
   });
 
@@ -15,15 +15,15 @@ describe('assertKnowledgeRetrievalConfigured', () => {
 
   it('throws when knowledge mode is on without the URL or key', () => {
     process.env.PORTFOLIO_DATA_SOURCE = 'knowledge';
-    process.env.KNOWLEDGE_SERVICE_URL = 'http://knowledge:3100';
+    process.env.KNOWLEDGE_URL = 'http://knowledge:3100';
     expect(() => assertKnowledgeRetrievalConfigured()).toThrow(
-      /requires KNOWLEDGE_SERVICE_URL and KNOWLEDGE_SERVICE_KEY/,
+      /requires KNOWLEDGE_URL and KNOWLEDGE_SERVICE_KEY/,
     );
   });
 
   it('passes when both are set', () => {
     process.env.PORTFOLIO_DATA_SOURCE = 'knowledge';
-    process.env.KNOWLEDGE_SERVICE_URL = 'http://knowledge:3100';
+    process.env.KNOWLEDGE_URL = 'http://knowledge:3100';
     process.env.KNOWLEDGE_SERVICE_KEY = 'key';
     expect(() => assertKnowledgeRetrievalConfigured()).not.toThrow();
   });

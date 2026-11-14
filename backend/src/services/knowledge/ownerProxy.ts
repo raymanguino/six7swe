@@ -1,4 +1,10 @@
 import type { KnowledgeProxyTarget } from '../../config/knowledge';
+import {
+  KnowledgeTransportError,
+  parseJsonBody,
+  sendKnowledgeRequest,
+  type FetchLike,
+} from './transport';
 
 /**
  * Forwards an owner request to the knowledge service.
@@ -9,12 +15,6 @@ import type { KnowledgeProxyTarget } from '../../config/knowledge';
  * the user's token.
  */
 
-/**
- * The knowledge service's key header (`SERVICE_KEY_HEADER` in its wire
- * contract). Duplicated until the contract moves to a shared package (#84).
- */
-export const KNOWLEDGE_KEY_HEADER = 'x-knowledge-key';
-
 /** For the JSON routes. */
 export const DEFAULT_TIMEOUT_MS = 30_000;
 /**
@@ -23,7 +23,7 @@ export const DEFAULT_TIMEOUT_MS = 30_000;
  */
 export const UPLOAD_TIMEOUT_MS = 120_000;
 
-export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
+export type { FetchLike };
 
 export interface ProxyRequest {
   method: 'GET' | 'POST' | 'PUT' | 'DELETE';
@@ -49,26 +49,6 @@ export interface ProxyOptions {
 
 const failure = (status: number, error: string): ProxyResponse => ({ status, body: { error } });
 
-/** The parsed JSON body; undefined when it is empty or not JSON. */
-function parseJson(text: string): unknown {
-  if (!text) return undefined;
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * AbortSignal.timeout rejects with a DOMException, which is not always an
- * `instanceof Error` across realms, so match on the name.
- */
-function isTimeout(error: unknown): boolean {
-  return (
-    typeof error === 'object' && error !== null && 'name' in error && error.name === 'TimeoutError'
-  );
-}
-
 /**
  * Sends the request and maps the outcome to what the browser should see:
  * - 2xx and 4xx pass through with their JSON body (validation errors, 404,
@@ -86,32 +66,26 @@ export async function forwardToKnowledge(
   request: ProxyRequest,
   options: ProxyOptions = {},
 ): Promise<ProxyResponse> {
-  const doFetch: FetchLike = options.fetch ?? ((url, init) => fetch(url, init));
-  const headers: Record<string, string> = { [KNOWLEDGE_KEY_HEADER]: target.ownerKey };
-  if (request.contentType) headers['content-type'] = request.contentType;
-
   let status: number;
   let text: string;
   try {
-    const response = await doFetch(`${target.url}${request.path}`, {
+    ({ status, text } = await sendKnowledgeRequest({
+      baseUrl: target.url,
+      key: target.ownerKey,
       method: request.method,
-      headers,
-      // fetch's body types take an ArrayBuffer-backed view, which a pooled
-      // Buffer is not typed as; the copy is at most one upload.
-      body:
-        typeof request.body === 'string'
-          ? request.body
-          : request.body && new Uint8Array(request.body),
-      signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
-      redirect: 'error',
-    });
-    status = response.status;
-    // Read inside the try: the timeout and a dropped connection can also
-    // strike while the body streams in.
-    text = await response.text();
+      path: request.path,
+      body: request.body,
+      contentType: request.contentType,
+      timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      fetch: options.fetch,
+    }));
   } catch (error) {
-    options.onFailure?.('Knowledge service request failed', { path: request.path, err: error });
-    return isTimeout(error)
+    if (!(error instanceof KnowledgeTransportError)) throw error;
+    options.onFailure?.('Knowledge service request failed', {
+      path: request.path,
+      err: error.original,
+    });
+    return error.kind === 'timeout'
       ? failure(504, 'The knowledge service did not respond in time.')
       : failure(502, 'The knowledge service is unavailable.');
   }
@@ -126,7 +100,7 @@ export async function forwardToKnowledge(
   }
   if (status === 204) return { status };
 
-  const body = parseJson(text);
+  const body = parseJsonBody(text);
   // `null` is valid JSON but no answer the service gives; treat it like an empty body.
   if (body === undefined || body === null) {
     if (status >= 400) return failure(status, `Request failed with status ${status}`);
