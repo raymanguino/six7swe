@@ -160,7 +160,9 @@ export function createCachedRetriever(
   const entries = new Map<string, RetrievedChunkDto[]>();
   let knownVersion: { value: number; fetchedAt: number } | null = null;
   let versionInFlight: Promise<number> | null = null;
-  let lastFailure: { at: number; error: unknown } | null = null;
+  // Orders requests against failures; millisecond timestamps can collide.
+  let seq = 0;
+  let lastFailure: { at: number; seq: number; error: unknown } | null = null;
 
   function coolingDown(): boolean {
     return lastFailure !== null && now() - lastFailure.at < options.failureCooldownMs;
@@ -175,12 +177,12 @@ export function createCachedRetriever(
   }
 
   function recordFailure(error: unknown): void {
-    lastFailure = { at: now(), error };
+    lastFailure = { at: now(), seq: ++seq, error };
   }
 
   /** A success ends the cooldown unless a failure was recorded after the request began. */
-  function clearFailureIfOlderThan(startedAt: number): void {
-    if (lastFailure !== null && lastFailure.at <= startedAt) lastFailure = null;
+  function clearFailureIfOlderThan(started: number): void {
+    if (lastFailure !== null && lastFailure.seq < started) lastFailure = null;
   }
 
   /**
@@ -204,12 +206,12 @@ export function createCachedRetriever(
   async function fetchVersion(): Promise<number> {
     // Concurrent turns share one /version call.
     if (!versionInFlight) {
-      const startedAt = now();
+      const started = ++seq;
       versionInFlight = client
         .getVersion()
         .then((value) => {
           learnVersion(value, { monotonic: false });
-          clearFailureIfOlderThan(startedAt);
+          clearFailureIfOlderThan(started);
           return value;
         })
         .finally(() => {
@@ -261,14 +263,14 @@ export function createCachedRetriever(
       if (coolingDown()) failFast();
 
       let result: RetrieveResponse;
-      const startedAt = now();
+      const started = ++seq;
       try {
         result = await client.retrieve(query, options.k);
       } catch (error) {
         recordFailure(error);
         throw error;
       }
-      clearFailureIfOlderThan(startedAt);
+      clearFailureIfOlderThan(started);
       learnVersion(result.version, { monotonic: true });
       // File the result under the version it was actually computed against.
       store(`${result.version}\u0000${normalized}`, result.chunks);

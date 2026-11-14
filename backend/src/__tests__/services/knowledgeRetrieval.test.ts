@@ -233,6 +233,26 @@ describe('createCachedRetriever', () => {
       expect(client.retrieve).toHaveBeenCalledTimes(2);
     });
 
+    it('keeps the cooldown when the clock does not advance between start, failure and success', async () => {
+      const { client } = fakeClient();
+      const retriever = createCachedRetriever(client, options);
+      let resolveOlder: (r: RetrieveResponse) => void = () => undefined;
+      client.retrieve.mockImplementationOnce(
+        () => new Promise<RetrieveResponse>((resolve) => (resolveOlder = resolve)),
+      );
+      const older = retriever.retrieve('a');
+      await flush();
+
+      client.retrieve.mockRejectedValueOnce(new KnowledgeRetrievalError('down'));
+      await expect(retriever.retrieve('b')).rejects.toThrow('down');
+
+      resolveOlder({ version: 1, chunks: [chunk('a')] });
+      await older;
+
+      await expect(retriever.retrieve('c')).rejects.toThrow(/cooling down/);
+      expect(client.retrieve).toHaveBeenCalledTimes(2);
+    });
+
     it('clears the cooldown when a success started after the failure', async () => {
       const { client } = fakeClient();
       client.retrieve.mockRejectedValueOnce(new KnowledgeRetrievalError('down'));
