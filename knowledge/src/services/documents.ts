@@ -9,6 +9,8 @@ import { detectMimeType, extensionOf } from './ingestion/parse.js';
 export interface DocumentServiceDeps extends Pick<KnowledgeDeps, 'repo' | 'files'> {
   queue: IngestionQueue;
   log: FastifyBaseLogger;
+  /** Called after a delete, which may have changed the corpus (#85). Must not throw. */
+  onCorpusChanged?: (ownerId: string) => void;
 }
 
 export interface UploadInput {
@@ -169,6 +171,7 @@ export async function deleteDocument(
   if (!deleted) return false;
   // Not ingested yet: drop it from the queue so the worker never touches it.
   deps.queue.cancel(id);
+  deps.onCorpusChanged?.(ownerId);
 
   // Keys are content-addressed, so the same bytes uploaded again after the
   // row was deleted get the same key. Keep the file if a row uses it again.

@@ -19,6 +19,7 @@ import {
   RESUME_MD,
   utf8,
 } from './support/fixtures.js';
+import { createMemoryEvalRepository } from './support/memoryEvalRepository.js';
 import { createMemoryProfileRepository } from './support/memoryProfileRepository.js';
 import { createMemoryRepository } from './support/memoryRepository.js';
 
@@ -39,6 +40,7 @@ beforeEach(async () => {
       embedder: createHashingEmbedder(256),
     },
     profile: { repo: createMemoryProfileRepository(), drafter: null },
+    evaluation: { repo: createMemoryEvalRepository(), answerer: null },
     serviceKey: KEY,
     ownerKey: OWNER_KEY,
     ownerId: 'owner',
@@ -49,6 +51,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await app.ingestionQueue.idle();
+  await app.evalRunner.idle();
+  await app.evalSet.idle();
   await app.close();
 });
 
@@ -126,6 +130,7 @@ describe('pluggable authenticators', () => {
         embedder: createHashingEmbedder(256),
       },
       profile: { repo: createMemoryProfileRepository(), drafter: null },
+      evaluation: { repo: createMemoryEvalRepository(), answerer: null },
       serviceKey: KEY,
       ownerKey: OWNER_KEY,
       ownerId: 'owner',
@@ -177,6 +182,7 @@ describe('errors', () => {
     const conflicted = await buildApp({
       deps: { repo, files: createMemoryFileStore(), embedder: createHashingEmbedder(256) },
       profile: { repo: createMemoryProfileRepository(), drafter: null },
+      evaluation: { repo: createMemoryEvalRepository(), answerer: null },
       serviceKey: KEY,
       ownerKey: OWNER_KEY,
       ownerId: 'owner',

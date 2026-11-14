@@ -1,11 +1,19 @@
 import { randomUUID } from 'node:crypto';
 import { like } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createDrizzleEvalRepository } from '../db/api/drizzleEvalRepository.js';
 import { createDrizzleProfileRepository } from '../db/api/drizzleProfileRepository.js';
 import { createDrizzleRepository } from '../db/api/drizzleRepository.js';
 import type { KnowledgeRepository, NewChunk, NewDocument } from '../db/api/repository.js';
 import { createDb, type DbHandle } from '../db/index.js';
-import { corpusState, documents, EMBEDDING_DIMENSIONS, profiles } from '../db/schema.js';
+import {
+  corpusState,
+  documents,
+  EMBEDDING_DIMENSIONS,
+  evalQuestions,
+  evalRuns,
+  profiles,
+} from '../db/schema.js';
 import { uploadDocument } from '../services/documents.js';
 import { createHashingEmbedder, hashEmbed } from '../services/embedding/hashing.js';
 import { createIngestionQueue } from '../services/ingestion/pipeline.js';
@@ -19,6 +27,7 @@ import {
   silentLogger,
   utf8,
 } from './support/fixtures.js';
+import { describeEvalRepositoryContract } from './support/evalRepositoryContract.js';
 import { describeProfileRepositoryContract } from './support/profileRepositoryContract.js';
 import { describeRepositoryContract } from './support/repositoryContract.js';
 
@@ -73,6 +82,9 @@ afterAll(async () => {
   await handle.db.delete(documents).where(like(documents.ownerId, `${RUN_PREFIX}%`));
   await handle.db.delete(corpusState).where(like(corpusState.ownerId, `${RUN_PREFIX}%`));
   await handle.db.delete(profiles).where(like(profiles.ownerId, `${RUN_PREFIX}%`));
+  // Sessions and results go with them (on delete cascade).
+  await handle.db.delete(evalRuns).where(like(evalRuns.ownerId, `${RUN_PREFIX}%`));
+  await handle.db.delete(evalQuestions).where(like(evalQuestions.ownerId, `${RUN_PREFIX}%`));
   await handle.close();
 });
 
@@ -87,6 +99,12 @@ describeRepositoryContract(
 describeProfileRepositoryContract(
   'drizzle (Postgres)',
   () => ({ profiles: createDrizzleProfileRepository(db().handle.db), newOwner: freshOwner }),
+  { skip: !url },
+);
+
+describeEvalRepositoryContract(
+  'drizzle (Postgres + pgvector)',
+  () => ({ evalRepo: createDrizzleEvalRepository(db().handle.db), newOwner: freshOwner }),
   { skip: !url },
 );
 

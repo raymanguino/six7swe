@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { OWNER_ROUTE, PUBLIC_ROUTE, SERVICE_ROUTE } from '../plugins/serviceAuth.js';
 import type { KnowledgeContext } from './context.js';
 import { documentHandlers } from './handlers/documentHandlers.js';
+import { evalHandlers } from './handlers/evalHandlers.js';
 import { profileHandlers } from './handlers/profileHandlers.js';
 import { retrievalHandlers } from './handlers/retrievalHandlers.js';
 
@@ -16,6 +17,7 @@ export function registerRoutes(app: FastifyInstance, ctx: KnowledgeContext): voi
   const documents = documentHandlers(ctx);
   const retrieval = retrievalHandlers(ctx);
   const profile = profileHandlers(ctx);
+  const evaluation = evalHandlers(ctx);
 
   app.get('/health', PUBLIC_ROUTE, async () => ({ status: 'ok' }));
 
@@ -32,7 +34,13 @@ export function registerRoutes(app: FastifyInstance, ctx: KnowledgeContext): voi
   app.put('/documents/:id/primary', OWNER_ROUTE, documents.setPrimary);
   app.delete('/documents/:id', OWNER_ROUTE, documents.remove);
   // The same retrieval as `/retrieve`, for the owner's "ask as a visitor" playground.
-  app.post('/search', OWNER_ROUTE, retrieval.retrieve);
+  app.post('/search', OWNER_ROUTE, retrieval.search);
+
+  // The evolving chat eval set (#85): its questions, the latest run and the
+  // owner's controls.
+  app.get('/eval', OWNER_ROUTE, evaluation.state);
+  app.post('/eval/runs', OWNER_ROUTE, evaluation.run);
+  app.post('/eval/questions/:id', OWNER_ROUTE, evaluation.act);
 
   // The structured profile (#86). The portfolio reads the published one and
   // the primary resume's PDF with the service key; the owner reviews,

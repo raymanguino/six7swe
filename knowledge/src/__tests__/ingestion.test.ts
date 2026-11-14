@@ -359,7 +359,7 @@ describe('upload → ingest → retrieve', () => {
     expect(repo.chunks).toEqual(before);
     expect(await repo.getVersion(OWNER)).toBe(2);
     const result = await retrieve({ repo, embedder: good }, OWNER, 'Kafka', 5);
-    expect(result).toEqual({ version: 2, chunks: [] });
+    expect(result).toMatchObject({ version: 2, chunks: [] });
   });
 
   it('logs and survives a failure that cannot be recorded', async () => {

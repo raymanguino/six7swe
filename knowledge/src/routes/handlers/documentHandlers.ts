@@ -22,6 +22,7 @@ export function documentHandlers(ctx: KnowledgeContext) {
     files: ctx.files,
     queue: ctx.queue,
     log: req.log,
+    onCorpusChanged: (ownerId: string) => ctx.evalRunner.corpusChanged(ownerId),
   });
 
   return {

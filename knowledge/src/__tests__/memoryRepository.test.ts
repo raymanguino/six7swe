@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { describeEvalRepositoryContract } from './support/evalRepositoryContract.js';
+import { createMemoryEvalRepository } from './support/memoryEvalRepository.js';
 import { createMemoryProfileRepository } from './support/memoryProfileRepository.js';
 import { createMemoryRepository } from './support/memoryRepository.js';
 import { describeProfileRepositoryContract } from './support/profileRepositoryContract.js';
@@ -8,6 +10,7 @@ import { describeRepositoryContract } from './support/repositoryContract.js';
 // independent through fresh owner ids, not through fresh repositories.
 const repo = createMemoryRepository();
 const profiles = createMemoryProfileRepository();
+const evalRepo = createMemoryEvalRepository();
 
 describeRepositoryContract('memory', () => ({
   repo,
@@ -16,5 +19,10 @@ describeRepositoryContract('memory', () => ({
 
 describeProfileRepositoryContract('memory', () => ({
   profiles,
+  newOwner: () => `owner-${randomUUID()}`,
+}));
+
+describeEvalRepositoryContract('memory', () => ({
+  evalRepo,
   newOwner: () => `owner-${randomUUID()}`,
 }));

@@ -19,6 +19,12 @@ export interface PipelineDeps extends KnowledgeDeps {
    * here). Its failure is logged and never fails the ingest.
    */
   onResumeIngested?: (doc: DocumentRecord) => void | Promise<void>;
+  /**
+   * Called after every ingest attempt, finished or failed: either may have
+   * changed the corpus (the eval runner hooks in here, #85, and skips a run
+   * when the version did not move). It must not throw.
+   */
+  onCorpusChanged?: (ownerId: string) => void;
 }
 
 export type IngestionQueue = SerialQueue<DocumentRecord>;
@@ -130,8 +136,10 @@ export async function ingestDocument(deps: PipelineDeps, doc: DocumentRecord): P
     );
   } catch (error) {
     await recordFailure(deps, doc, error);
+    deps.onCorpusChanged?.(doc.ownerId);
     return;
   }
+  deps.onCorpusChanged?.(doc.ownerId);
 
   // Outside the try above: the ingest has committed, so nothing here may mark it failed.
   if (doc.kind === 'resume' && deps.onResumeIngested) {
