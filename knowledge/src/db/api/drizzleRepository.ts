@@ -28,6 +28,9 @@ const documentColumns = {
   updatedAt: documents.updatedAt,
 };
 
+/** Rows per chunk insert; each row binds about seven parameters, well under the 65535 limit. */
+const CHUNK_INSERT_BATCH = 1000;
+
 /** Postgres error 23505, whether thrown by postgres.js directly or wrapped by Drizzle. */
 export function isUniqueViolation(error: unknown): boolean {
   for (let e: unknown = error; typeof e === 'object' && e !== null; ) {
@@ -108,7 +111,14 @@ async function refreshPrimaryResume(tx: KnowledgeTx, ownerId: string): Promise<v
     await tx
       .update(documents)
       .set({ isPrimaryResume: true })
-      .where(and(eq(documents.id, newest.id), eq(documents.isPrimaryResume, false)));
+      // Re-checked here: the row is not locked between the select and this update.
+      .where(
+        and(
+          eq(documents.id, newest.id),
+          eq(documents.status, 'ready'),
+          eq(documents.isPrimaryResume, false),
+        ),
+      );
   }
 }
 
@@ -144,6 +154,15 @@ export function createDrizzleRepository(db: KnowledgeDb): KnowledgeRepository {
    */
   async function leaveReady(id: string, change: StatusChange): Promise<void> {
     await db.transaction(async (tx) => {
+      // owner_id never changes, so it can be read before taking the owner
+      // lock, which comes before the row lock (see lockOwner).
+      const [owner] = await tx
+        .select({ ownerId: documents.ownerId })
+        .from(documents)
+        .where(eq(documents.id, id));
+      if (!owner) return;
+      await lockOwner(tx, owner.ownerId);
+
       const [before] = await tx
         .select({
           ownerId: documents.ownerId,
@@ -279,8 +298,10 @@ export function createDrizzleRepository(db: KnowledgeDb): KnowledgeRepository {
           if (!doc) throw new Error(`document ${id} no longer exists`);
 
           await tx.delete(chunks).where(eq(chunks.documentId, id));
-          if (newChunks.length > 0) {
-            await tx.insert(chunks).values(newChunks.map((c) => ({ ...c, documentId: id })));
+          // Batched: one statement may carry at most 65535 bind parameters.
+          for (let i = 0; i < newChunks.length; i += CHUNK_INSERT_BATCH) {
+            const batch = newChunks.slice(i, i + CHUNK_INSERT_BATCH);
+            await tx.insert(chunks).values(batch.map((c) => ({ ...c, documentId: id })));
           }
           await tx
             .update(documents)
