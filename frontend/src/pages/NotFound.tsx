@@ -4,6 +4,8 @@ import { Link } from 'react-router-dom';
 export default function NotFound() {
   return (
     <section className="mx-auto flex min-h-[60vh] max-w-xl flex-col items-center justify-center px-4 text-center">
+      <title>Page not found</title>
+      <meta name="robots" content="noindex" />
       <p className="text-sm font-semibold uppercase tracking-wide text-primary-600 dark:text-primary-300">
         404
       </p>
