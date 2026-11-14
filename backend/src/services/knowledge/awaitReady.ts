@@ -86,7 +86,7 @@ export async function awaitKnowledgeReady(options: AwaitReadyOptions): Promise<A
   }
   const deadline = now() + timeoutMs;
   let warned = false;
-  let lastReason = 'no answer';
+  let lastReason: string;
 
   for (;;) {
     try {

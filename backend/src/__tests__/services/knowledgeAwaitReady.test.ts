@@ -28,12 +28,15 @@ function setup(steps: Step[], baseUrl = 'http://127.0.0.1:3100/') {
   return { fetchFn, sleep, onWaiting, run };
 }
 
-function refused(): Error {
-  const error = new TypeError('fetch failed');
-  error.cause = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:3100'), {
-    code: 'ECONNREFUSED',
+/** Node's undici shape: `TypeError: fetch failed` whose cause carries the errno code. */
+function fetchFailed(message: string, code: string): Error {
+  return Object.assign(new TypeError('fetch failed'), {
+    cause: Object.assign(new Error(message), { code }),
   });
-  return error;
+}
+
+function refused(): Error {
+  return fetchFailed('connect ECONNREFUSED 127.0.0.1:3100', 'ECONNREFUSED');
 }
 
 describe('awaitKnowledgeReady', () => {
@@ -56,9 +59,8 @@ describe('awaitKnowledgeReady', () => {
   });
 
   it('retries resets and per-attempt timeouts', async () => {
-    const reset = new TypeError('fetch failed');
-    reset.cause = Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
-    const timeout = new DOMException('The operation timed out.', 'TimeoutError');
+    const reset = fetchFailed('read ECONNRESET', 'ECONNRESET');
+    const timeout = Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' });
     const s = setup([reset, timeout, 200]);
     await expect(s.run()).resolves.toEqual({ ready: true });
     expect(s.fetchFn).toHaveBeenCalledTimes(3);
