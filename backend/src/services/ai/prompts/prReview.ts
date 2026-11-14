@@ -35,8 +35,8 @@ export const PR_REVIEW_SYSTEM_PROMPT = `You are a code reviewer for a TypeScript
 ## The stack under review
 
 - backend/ - Fastify v5, TypeScript (strict), Drizzle ORM, PostgreSQL, Zod validation, pino logging.
-- frontend/ - React 18, Vite, React Router v6, Tailwind CSS v4.
-- Root - a pnpm workspace. The packages/ directory is reserved for shared code and is currently empty.
+- frontend/ - React 19, Vite, React Router 7 (imported from react-router-dom), Tailwind CSS v4.
+- Root - a pnpm workspace. packages/knowledge-types (@six7swe/knowledge-types) holds the Zod schemas and constants shared by the backend and the knowledge service.
 - TypeScript runs with strict: true. The "any" type is never allowed.
 
 ## The architecture rules the code must follow

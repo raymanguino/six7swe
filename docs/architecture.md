@@ -114,7 +114,7 @@ user, so a caller cannot reach another user's profile by guessing an id.
 
 **Stack & location**
 
-- **Framework**: React 18, TypeScript.
+- **Framework**: React 19, React Router 7, TypeScript.
 - **Bundler**: Vite.
 - **Key files**:
   - `frontend/src/main.tsx` – bootstraps the React app.
