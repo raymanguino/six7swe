@@ -8,14 +8,19 @@ import { z } from 'zod';
  * side's database or service layers along. The service's database enums are
  * derived from the arrays below, not the other way around.
  *
- * After editing, rebuild with `pnpm --filter @six7swe/knowledge-types build`
- * (`pnpm install` also builds it): both callers read the compiled `dist/`.
+ * Both callers read the compiled `dist/`, which `pnpm install` does not
+ * build. Every script that needs it builds it first: the backend's and the
+ * service's `build`, `test` and `typecheck`/`chat:eval` scripts, and the root
+ * `lint` and `dev` scripts. Anything else (an editor's type checking, a
+ * one-off `tsx` run) needs `pnpm build:types` after a change here.
  */
 
 /** Header that carries the shared service key. Never accepted in a query string. */
 export const SERVICE_KEY_HEADER = 'x-knowledge-key';
 
 export const MAX_RETRIEVE_K = 20;
+/** The longest `/retrieve` query, after trimming. */
+export const MAX_RETRIEVE_QUERY_CHARS = 2000;
 export const DEFAULT_RETRIEVE_K = 6;
 
 export const DOCUMENT_KINDS = ['resume', 'supporting'] as const;
@@ -27,7 +32,7 @@ export const DocumentStatusSchema = z.enum(DOCUMENT_STATUSES);
 export type DocumentStatus = z.infer<typeof DocumentStatusSchema>;
 
 export const RetrieveRequestSchema = z.object({
-  query: z.string().trim().min(1).max(2000),
+  query: z.string().trim().min(1).max(MAX_RETRIEVE_QUERY_CHARS),
   k: z.number().int().min(1).max(MAX_RETRIEVE_K).default(DEFAULT_RETRIEVE_K),
 });
 export type RetrieveRequest = z.infer<typeof RetrieveRequestSchema>;

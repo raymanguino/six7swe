@@ -8,7 +8,8 @@
   "workspaces": [
     "backend",
     "frontend",
-    "knowledge"
+    "knowledge",
+    "packages/*"
   ],
   "scripts": {
     "lint": "pnpm build:types && eslint . --ext .ts,.tsx",
@@ -26,10 +27,10 @@
     "dev:knowledge": "pnpm build:types && pnpm --filter @six7swe/knowledge dev",
     "dev:frontend": "pnpm --filter @six7swe/frontend dev",
     "debug": "pnpm build:types && pnpm --filter @six7swe/backend debug",
-    "test": "pnpm build:types && pnpm --filter @six7swe/backend test && pnpm --filter @six7swe/knowledge test",
-    "test:knowledge": "pnpm build:types && pnpm --filter @six7swe/knowledge test",
-    "test:watch": "pnpm build:types && pnpm --filter @six7swe/backend test:watch",
-    "test:coverage": "pnpm build:types && pnpm --filter @six7swe/backend test:coverage"
+    "test": "pnpm --filter @six7swe/backend test && pnpm --filter @six7swe/knowledge test",
+    "test:knowledge": "pnpm --filter @six7swe/knowledge test",
+    "test:watch": "pnpm --filter @six7swe/backend test:watch",
+    "test:coverage": "pnpm --filter @six7swe/backend test:coverage"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
