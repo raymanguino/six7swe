@@ -7,10 +7,10 @@ import { isKnowledgeOwner } from '../../services/knowledge/ownerGate';
 import {
   DEFAULT_TIMEOUT_MS,
   forwardToKnowledge,
-  KNOWLEDGE_KEY_HEADER,
   UPLOAD_TIMEOUT_MS,
-  type FetchLike,
 } from '../../services/knowledge/ownerProxy';
+import type { FetchLike } from '../../services/knowledge/transport';
+import { SERVICE_KEY_HEADER } from '@six7swe/knowledge-types';
 import type { ContextUser } from '../../types';
 
 const OWNER_ID = '11111111-1111-4111-8111-111111111111';
@@ -112,12 +112,15 @@ describe('loadKnowledgeConfig', () => {
     ).toEqual({ ownerAuthId: null, target: null });
   });
 
-  it('needs the URL and the key together, and trims a trailing slash', () => {
-    expect(() =>
+  it('leaves the proxy off when only the URL is set (chat retrieval shares it)', () => {
+    expect(
       loadKnowledgeConfig({ OWNER_AUTH_ID: OWNER_ID, KNOWLEDGE_URL: `${SERVICE_URL}/` }),
-    ).toThrow(/KNOWLEDGE_OWNER_KEY: KNOWLEDGE_URL and KNOWLEDGE_OWNER_KEY must be set together/);
+    ).toEqual({ ownerAuthId: OWNER_ID, target: null });
+  });
+
+  it('needs the URL when the key is set, and trims a trailing slash', () => {
     expect(() => loadKnowledgeConfig({ KNOWLEDGE_OWNER_KEY: OWNER_KEY })).toThrow(
-      /KNOWLEDGE_URL: .*set together/,
+      /KNOWLEDGE_URL: KNOWLEDGE_URL is required when KNOWLEDGE_OWNER_KEY is set/,
     );
     expect(loadKnowledgeConfig({ OWNER_AUTH_ID: OWNER_ID })).toEqual({
       ownerAuthId: OWNER_ID,
@@ -127,6 +130,29 @@ describe('loadKnowledgeConfig', () => {
       loadKnowledgeConfig({ KNOWLEDGE_URL: `${SERVICE_URL}/`, KNOWLEDGE_OWNER_KEY: OWNER_KEY })
         .target,
     ).toEqual({ url: SERVICE_URL, ownerKey: OWNER_KEY });
+  });
+
+  it('rejects a URL with credentials without echoing it', () => {
+    const load = () =>
+      loadKnowledgeConfig({
+        KNOWLEDGE_URL: 'http://user:secret-pw@knowledge:3100',
+        KNOWLEDGE_OWNER_KEY: OWNER_KEY,
+      });
+    expect(load).toThrow(/KNOWLEDGE_URL must be an http\(s\) URL without credentials/);
+    expect(load).not.toThrow(/secret-pw/);
+  });
+
+  it('rejects a URL with a query or fragment', () => {
+    for (const KNOWLEDGE_URL of [
+      'http://knowledge:3100/base?x=1',
+      'http://knowledge:3100/base#f',
+      'http://knowledge:3100/base?',
+    ]) {
+      const load = () => loadKnowledgeConfig({ KNOWLEDGE_URL, KNOWLEDGE_OWNER_KEY: OWNER_KEY });
+      expect(load).toThrow(
+        /KNOWLEDGE_URL must be an http\(s\) URL without credentials, query or fragment/,
+      );
+    }
   });
 
   it('rejects malformed values without echoing them', () => {
@@ -206,7 +232,7 @@ describe('knowledge owner proxy routes', () => {
     const [call] = service.calls;
     expect(call?.url).toBe(`${SERVICE_URL}/documents`);
     const headers = call?.init.headers as Record<string, string>;
-    expect(headers[KNOWLEDGE_KEY_HEADER]).toBe(OWNER_KEY);
+    expect(headers[SERVICE_KEY_HEADER]).toBe(OWNER_KEY);
     expect(headers).not.toHaveProperty('authorization');
   });
 

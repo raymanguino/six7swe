@@ -1,12 +1,13 @@
 import { DEFAULT_RETRIEVE_K, MAX_RETRIEVE_K } from '@six7swe/knowledge-types';
+import { normalizeKnowledgeUrl } from './knowledgeUrl';
 import { getPortfolioDataSource } from './portfolioMcp';
 
 /**
  * How the portfolio chat reaches the knowledge service when
  * `PORTFOLIO_DATA_SOURCE=knowledge`.
  *
- * `KNOWLEDGE_SERVICE_URL` is the service's base URL (on Railway, the private
- * address `http://six7sweknowledge.railway.internal:3100`).
+ * `KNOWLEDGE_URL` is the service's base URL, the same variable the owner proxy
+ * uses (on Railway, the private address `http://six7sweknowledge.railway.internal:3100`).
  * `KNOWLEDGE_SERVICE_KEY` is the service key, the same value the knowledge
  * service has; it opens `/retrieve` and `/version` only.
  */
@@ -48,11 +49,12 @@ function positiveInt(
 export function getKnowledgeRetrievalConfig(
   env: Record<string, string | undefined> = process.env,
 ): KnowledgeRetrievalConfig | null {
-  const baseUrl = env.KNOWLEDGE_SERVICE_URL?.trim();
+  // An unset or malformed URL (not http or https) counts as not configured.
+  const baseUrl = env.KNOWLEDGE_URL ? normalizeKnowledgeUrl(env.KNOWLEDGE_URL) : null;
   const serviceKey = env.KNOWLEDGE_SERVICE_KEY?.trim();
   if (!baseUrl || !serviceKey) return null;
   return {
-    baseUrl: baseUrl.replace(/\/+$/, ''),
+    baseUrl,
     serviceKey,
     k: positiveInt(env.KNOWLEDGE_RETRIEVE_K, DEFAULT_RETRIEVE_K, MAX_RETRIEVE_K),
     timeoutMs: positiveInt(env.KNOWLEDGE_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
@@ -70,9 +72,14 @@ export function getKnowledgeRetrievalConfig(
  */
 export function assertKnowledgeRetrievalConfigured(): void {
   if (getPortfolioDataSource() !== 'knowledge') return;
-  if (!getKnowledgeRetrievalConfig()) {
+  // Name what is wrong, never the value: the URL may carry credentials.
+  const url = process.env.KNOWLEDGE_URL;
+  if (!url || normalizeKnowledgeUrl(url) === null) {
     throw new Error(
-      'PORTFOLIO_DATA_SOURCE=knowledge requires KNOWLEDGE_SERVICE_URL and KNOWLEDGE_SERVICE_KEY',
+      'PORTFOLIO_DATA_SOURCE=knowledge requires KNOWLEDGE_URL to be set to a valid http(s) URL without credentials, query or fragment',
     );
+  }
+  if (!process.env.KNOWLEDGE_SERVICE_KEY?.trim()) {
+    throw new Error('PORTFOLIO_DATA_SOURCE=knowledge requires KNOWLEDGE_SERVICE_KEY');
   }
 }

@@ -3,7 +3,7 @@ import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { loadKnowledgeConfig, type KnowledgeConfig } from '../config/knowledge';
 import { UnauthenticatedUser } from '../constants';
 import { isKnowledgeOwner } from '../services/knowledge/ownerGate';
-import type { FetchLike } from '../services/knowledge/ownerProxy';
+import type { FetchLike } from '../services/knowledge/transport';
 import { PRIVATE_ROUTE } from './access';
 import { knowledgeHandlers } from './handlers/knowledgeHandlers';
 

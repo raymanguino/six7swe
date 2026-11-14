@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { normalizeKnowledgeUrl } from './knowledgeUrl';
 
 /**
  * Configuration for the knowledge owner proxy (`/knowledge/*`).
@@ -10,27 +11,33 @@ import { z } from 'zod';
  *
  * Every variable is optional, so a backend without the knowledge service
  * still boots: without `OWNER_AUTH_ID` nobody is the owner (403), and without
- * the URL and the key the owner gets 503. A malformed value, or only one of
- * the URL and the key, is a deploy mistake and fails the boot.
+ * the key the owner gets 503. `KNOWLEDGE_URL` alone leaves the proxy off, since
+ * chat retrieval shares it. A malformed value, or the key without the URL, is
+ * a deploy mistake and fails the boot.
  */
 
 const knowledgeEnvSchema = z
   .object({
     OWNER_AUTH_ID: z.string().trim().min(1).optional(),
-    KNOWLEDGE_URL: z.url({ protocol: /^https?$/ }).optional(),
+    KNOWLEDGE_URL: z
+      .string()
+      .refine((value) => normalizeKnowledgeUrl(value) !== null, {
+        message: 'KNOWLEDGE_URL must be an http(s) URL without credentials, query or fragment',
+      })
+      .optional(),
     KNOWLEDGE_OWNER_KEY: z
       .string()
       .min(32, 'KNOWLEDGE_OWNER_KEY must be at least 32 characters')
       .optional(),
   })
   .superRefine((env, ctx) => {
-    // One without the other is a half-finished setup, not "feature off".
-    if (Boolean(env.KNOWLEDGE_URL) !== Boolean(env.KNOWLEDGE_OWNER_KEY)) {
-      const missing = env.KNOWLEDGE_URL ? 'KNOWLEDGE_OWNER_KEY' : 'KNOWLEDGE_URL';
+    // A key with no address is a half-finished setup. The reverse is fine:
+    // KNOWLEDGE_URL is shared with chat retrieval, which has its own key.
+    if (env.KNOWLEDGE_OWNER_KEY && !env.KNOWLEDGE_URL) {
       ctx.addIssue({
         code: 'custom',
-        path: [missing],
-        message: 'KNOWLEDGE_URL and KNOWLEDGE_OWNER_KEY must be set together',
+        path: ['KNOWLEDGE_URL'],
+        message: 'KNOWLEDGE_URL is required when KNOWLEDGE_OWNER_KEY is set',
       });
     }
   });
@@ -78,7 +85,10 @@ export function loadKnowledgeConfig(source: EnvSource = process.env): KnowledgeC
     ownerAuthId: env.OWNER_AUTH_ID ?? null,
     target:
       env.KNOWLEDGE_URL && env.KNOWLEDGE_OWNER_KEY
-        ? { url: env.KNOWLEDGE_URL.replace(/\/+$/, ''), ownerKey: env.KNOWLEDGE_OWNER_KEY }
+        ? {
+            url: normalizeKnowledgeUrl(env.KNOWLEDGE_URL) ?? env.KNOWLEDGE_URL,
+            ownerKey: env.KNOWLEDGE_OWNER_KEY,
+          }
         : null,
   };
 }

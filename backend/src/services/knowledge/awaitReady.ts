@@ -1,5 +1,10 @@
-import { SERVICE_KEY_HEADER } from '@six7swe/knowledge-types';
-import type { FetchLike } from './ownerProxy';
+import { normalizeKnowledgeUrl } from '../../config/knowledgeUrl';
+import {
+  isTimeoutError,
+  KnowledgeTransportError,
+  sendKnowledgeRequest,
+  type FetchLike,
+} from './transport';
 
 export interface AwaitReadyOptions {
   baseUrl: string;
@@ -44,21 +49,11 @@ function describeError(error: unknown): string {
 
 /** A network error or timeout of the kind a restarting service produces. */
 function isRetryableError(error: unknown): boolean {
-  if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
-    return true;
-  }
+  if (isTimeoutError(error)) return true;
   const code = errorCode(error);
   if (code !== undefined) return RETRYABLE_NETWORK_CODES.has(code);
   // A fetch failure with no cause code is still a transport failure.
   return error instanceof TypeError && error.message === 'fetch failed';
-}
-
-function versionUrl(baseUrl: string): string | null {
-  try {
-    return new URL(`${baseUrl.replace(/\/+$/, '')}/version`).toString();
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -73,14 +68,13 @@ export async function awaitKnowledgeReady(options: AwaitReadyOptions): Promise<A
   const timeoutMs = options.timeoutMs ?? 30_000;
   const intervalMs = options.intervalMs ?? 500;
   const requestTimeoutMs = options.requestTimeoutMs ?? 2_000;
-  const fetchFn: FetchLike = options.fetchFn ?? ((url, init) => fetch(url, init));
   const now = options.now ?? Date.now;
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  const url = versionUrl(options.baseUrl);
-  if (url === null) {
+  const baseUrl = normalizeKnowledgeUrl(options.baseUrl);
+  if (baseUrl === null) {
     return {
       ready: false,
-      reason: 'KNOWLEDGE_SERVICE_URL is not a valid URL; check KNOWLEDGE_SERVICE_URL',
+      reason: 'KNOWLEDGE_URL is not a valid URL; check KNOWLEDGE_URL',
       retryable: false,
     };
   }
@@ -90,12 +84,14 @@ export async function awaitKnowledgeReady(options: AwaitReadyOptions): Promise<A
 
   for (;;) {
     try {
-      const res = await fetchFn(url, {
+      const res = await sendKnowledgeRequest({
+        baseUrl,
+        key: options.serviceKey,
         method: 'GET',
-        headers: { [SERVICE_KEY_HEADER]: options.serviceKey },
-        signal: AbortSignal.timeout(requestTimeoutMs),
+        path: '/version',
+        timeoutMs: requestTimeoutMs,
+        fetch: options.fetchFn,
       });
-      await res.body?.cancel().catch(() => undefined);
       if (res.status === 200) return { ready: true };
       if (res.status === 401 || res.status === 403) {
         return {
@@ -107,13 +103,16 @@ export async function awaitKnowledgeReady(options: AwaitReadyOptions): Promise<A
       if (res.status >= 400 && res.status < 500) {
         return {
           ready: false,
-          reason: `HTTP ${res.status} from /version; check KNOWLEDGE_SERVICE_URL`,
+          reason: `HTTP ${res.status} from /version; check KNOWLEDGE_URL`,
           retryable: false,
         };
       }
       lastReason = `HTTP ${res.status} from /version`;
-    } catch (error) {
-      if (!isRetryableError(error)) {
+    } catch (thrown) {
+      // Classify on what fetch threw, which carries the errno code.
+      const error = thrown instanceof KnowledgeTransportError ? thrown.original : thrown;
+      const retryable = thrown instanceof KnowledgeTransportError && thrown.kind === 'timeout';
+      if (!retryable && !isRetryableError(error)) {
         return { ready: false, reason: describeError(error), retryable: false };
       }
       lastReason = describeError(error);

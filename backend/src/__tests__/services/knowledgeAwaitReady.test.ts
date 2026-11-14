@@ -94,7 +94,7 @@ describe('awaitKnowledgeReady', () => {
     const s = setup([404]);
     const result = await s.run();
     expect(result).toMatchObject({ ready: false, retryable: false });
-    expect(result.ready === false && result.reason).toMatch(/KNOWLEDGE_SERVICE_URL/);
+    expect(result.ready === false && result.reason).toMatch(/KNOWLEDGE_URL/);
     expect(s.fetchFn).toHaveBeenCalledTimes(1);
   });
 
@@ -108,7 +108,7 @@ describe('awaitKnowledgeReady', () => {
     const s = setup([200], 'not a url');
     const result = await s.run();
     expect(result).toMatchObject({ ready: false, retryable: false });
-    expect(result.ready === false && result.reason).toMatch(/KNOWLEDGE_SERVICE_URL/);
+    expect(result.ready === false && result.reason).toMatch(/KNOWLEDGE_URL/);
     expect(s.fetchFn).not.toHaveBeenCalled();
   });
 });
