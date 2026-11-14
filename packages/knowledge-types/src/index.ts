@@ -60,6 +60,12 @@ export const DocumentDtoSchema = z.object({
 });
 export type DocumentDto = z.infer<typeof DocumentDtoSchema>;
 
+/** `GET /documents`: the owner's documents, newest first. */
+export const DocumentListResponseSchema = z.object({
+  documents: z.array(DocumentDtoSchema),
+});
+export type DocumentListResponse = z.infer<typeof DocumentListResponseSchema>;
+
 export const UploadResponseSchema = z.object({
   document: DocumentDtoSchema,
   deduplicated: z.boolean(),

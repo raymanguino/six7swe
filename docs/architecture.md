@@ -211,7 +211,10 @@ the never-wired `PORTFOLIO_DATA_SOURCE=mcp` path. Full details are in
   questions skip the service instead of waiting on it again (cached questions
   are still served). The portfolio page, the resume and fitcheck still read
   the portfolio tables. `pnpm --filter @six7swe/backend chat:eval` compares the
-  two contexts on the seed eval questions (`backend/src/domain/chatEval/`).
+  two contexts on the seed eval questions (`backend/src/domain/chatEval/`). Its
+  judge's reference is the stuffed context plus the extracted text of every
+  knowledge document (read with `KNOWLEDGE_OWNER_KEY`); without that key it is
+  the stuffed context only, and the report says so.
 - **Shared contract.** The wire contract is the `@six7swe/knowledge-types`
   package (`packages/knowledge-types`), compiled to CommonJS so both the ESM
   service and the CommonJS backend load it. The backend and service builds
