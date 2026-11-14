@@ -59,9 +59,10 @@ export default defineRailway(() => {
     build: {
       builder: 'DOCKERFILE',
       dockerfilePath: 'backend/Dockerfile',
-      // The backend plus the root files the Dockerfile copies.
+      // The backend, the shared package it builds, and the root files the Dockerfile copies.
       watchPatterns: [
         '/backend/**',
+        '/packages/knowledge-types/**',
         '/.dockerignore',
         '/package.json',
         '/pnpm-lock.yaml',
@@ -87,6 +88,18 @@ export default defineRailway(() => {
       RESEND_FROM_NAME: preserve(),
       SUPABASE_URL: preserve(),
       PORTFOLIO_CACHE_TTL_MS: preserve(),
+      // #120 took this out of the file, so an apply would delete the value set by hand in
+      // Railway. preserve() keeps it, and lets the owner switch chat to `knowledge` in Railway
+      // without this file doing it.
+      PORTFOLIO_DATA_SOURCE: preserve(),
+      // Chat retrieval (PORTFOLIO_DATA_SOURCE=knowledge) over the private network. The key is
+      // the knowledge service's KNOWLEDGE_SERVICE_KEY, set to the same value on both services.
+      KNOWLEDGE_SERVICE_URL: 'http://six7sweknowledge.railway.internal:3100',
+      KNOWLEDGE_SERVICE_KEY: preserve(),
+      // Chunks retrieved per chat question. Chosen from the #84 chat eval (10 seed questions:
+      // stuffed mean 8.50 vs retrieved 9.20 at k=10; the default of 6 did not match stuffed).
+      // The service caps it at MAX_RETRIEVE_K (20).
+      KNOWLEDGE_RETRIEVE_K: '10',
       // The knowledge owner proxy (/knowledge/*): the backend checks the owner's JWT, then
       // calls the knowledge service over the private network with its owner key.
       OWNER_AUTH_ID: preserve(),
@@ -102,10 +115,12 @@ export default defineRailway(() => {
     build: {
       builder: 'RAILPACK',
       buildCommand: 'cd knowledge && pnpm build',
-      // The service plus the root files its build reads: Railpack installs from the workspace
-      // root, and knowledge/tsconfig.json extends tsconfig.base.json.
+      // The service, the shared contract package its build compiles first, and the root files
+      // its build reads: Railpack installs from the workspace root, and knowledge/tsconfig.json
+      // extends tsconfig.base.json.
       watchPatterns: [
         '/knowledge/**',
+        '/packages/knowledge-types/**',
         '/package.json',
         '/pnpm-lock.yaml',
         '/pnpm-workspace.yaml',
@@ -137,8 +152,8 @@ export default defineRailway(() => {
       // need a known port, http://six7sweknowledge.railway.internal:3100.
       PORT: '3100',
       // Railway's private network is IPv6-only in environments created before 16 October
-      // 2025, so listen on `::`, which accepts IPv6 and IPv4. The code's default, 0.0.0.0, is
-      // IPv4-only.
+      // 2025, so listen on `::`, which accepts IPv6 and IPv4. It is also the code's default;
+      // it is pinned here so a change to that default cannot break the private network.
       HOST: '::',
       DATABASE_URL: preserve(),
       KNOWLEDGE_SERVICE_KEY: preserve(),

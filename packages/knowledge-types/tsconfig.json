@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // CommonJS output, so both callers can load it: the backend is CommonJS (and Jest cannot
+    // require an ES module), and the knowledge service is ESM, which imports the named exports
+    // through Node's CommonJS interop.
+    "module": "commonjs",
+    "target": "ES2022",
+    "declaration": true,
+    "noUncheckedIndexedAccess": true,
+    "sourceMap": false,
+    "outDir": "dist",
+    "rootDir": "./src"
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

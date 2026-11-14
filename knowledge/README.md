@@ -57,7 +57,7 @@ The service does not verify the JWT again. The owner key is the only thing that 
 
 **Replacing a document** is done by the Knowledge page. It uploads the new file, waits until the new document is `ready`, and only then deletes the old one, so retrieval never loses the content in between. If the new document fails, or is still processing after 5 minutes, the old one is kept. If the new bytes are identical, the upload returns the existing document and nothing is deleted.
 
-The wire contract lives in `src/contract.ts` as zod schemas with inferred types (request bodies, the document and chunk DTOs, the retrieve and upload responses, and the error body). It depends on nothing but zod, so it can move to a shared package. The database enums are derived from its `DOCUMENT_KINDS` and `DOCUMENT_STATUSES`.
+The wire contract lives in the shared package [`packages/knowledge-types`](../packages/knowledge-types) (`@six7swe/knowledge-types`) as zod schemas with inferred types (request bodies, the document and chunk DTOs, the retrieve, version, upload and document-text responses, and the error body). The backend imports the same package, so both sides share one definition. Inside the service, `src/contract.ts` re-exports it. The package depends on nothing but zod and is compiled to CommonJS in its `dist/`. `pnpm install` does not build it (a `prepare` hook would run before Railpack and the backend Dockerfile copy the source); instead the service's `build`, `typecheck` and `test` scripts build it first. Anything else that reads it, such as an editor, needs `pnpm build:types` after a change. The database enums are derived from its `DOCUMENT_KINDS` and `DOCUMENT_STATUSES`.
 
 ## Database
 
@@ -90,15 +90,15 @@ Requirements on the database:
 1. Start the local Supabase stack: `supabase start`.
 2. Copy `.env.example` to `.env`, then set `KNOWLEDGE_SERVICE_KEY`, `KNOWLEDGE_OWNER_KEY` (a different value) and `OWNER_AUTH_ID`. The example file uses the offline `hashing` embedder and the local file store, so no API key is needed.
 3. Apply the migrations: `pnpm --filter @six7swe/knowledge db:migrate`.
-4. Start the service on port 3100: `pnpm dev:knowledge`.
-5. For the Knowledge page, set `OWNER_AUTH_ID`, `KNOWLEDGE_URL=http://localhost:3100` and `KNOWLEDGE_OWNER_KEY` (the same value) in `backend/.env`, then sign in to `/hunter` as that user. With `AUTH_DEV_BYPASS=true` the subject is `auth-dev-bypass`, so use that as `OWNER_AUTH_ID` on both sides.
+4. Start the service on port 3100: `pnpm dev:knowledge`. It listens on `HOST=::` by default, which accepts IPv6 and IPv4. Callers should still use `127.0.0.1` rather than `localhost`: Windows resolves `localhost` to `::1` first, which is refused if `HOST` is set to the IPv4-only `0.0.0.0`.
+5. For the Knowledge page, set `OWNER_AUTH_ID`, `KNOWLEDGE_URL=http://127.0.0.1:3100` and `KNOWLEDGE_OWNER_KEY` (the same value) in `backend/.env`, then sign in to `/hunter` as that user. With `AUTH_DEV_BYPASS=true` the subject is `auth-dev-bypass`, so use that as `OWNER_AUTH_ID` on both sides.
 
 To upload a file and query it:
 
 ```sh
-curl -X POST "localhost:3100/documents?kind=resume" -H "x-knowledge-key: $KNOWLEDGE_OWNER_KEY" \
+curl -X POST "127.0.0.1:3100/documents?kind=resume" -H "x-knowledge-key: $KNOWLEDGE_OWNER_KEY" \
   -F file=@resume.pdf
-curl -X POST localhost:3100/retrieve -H "x-knowledge-key: $KNOWLEDGE_SERVICE_KEY" \
+curl -X POST 127.0.0.1:3100/retrieve -H "x-knowledge-key: $KNOWLEDGE_SERVICE_KEY" \
   -H 'content-type: application/json' -d '{"query":"distributed systems experience"}'
 ```
 

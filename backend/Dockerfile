@@ -24,12 +24,14 @@ FROM base AS build
 
 # Manifests first, so the install layer is reused until a dependency changes. Every workspace
 # manifest is needed for the frozen lockfile check, but only the backend's dependencies are
-# installed. NODE_ENV is unset here, so devDependencies are installed.
+# installed: `@six7swe/backend...` selects the backend and the workspace packages it depends on
+# (`@six7swe/knowledge-types`). NODE_ENV is unset here, so devDependencies are installed.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY backend/package.json backend/
 COPY frontend/package.json frontend/
 COPY knowledge/package.json knowledge/
-RUN pnpm install --frozen-lockfile --filter @six7swe/backend
+COPY packages/knowledge-types/package.json packages/knowledge-types/
+RUN pnpm install --frozen-lockfile --filter "@six7swe/backend..."
 
 # Chrome, in its own layer: it depends only on the installed puppeteer version and
 # `.puppeteerrc.cjs`, so a source change does not download it again. `.puppeteerrc.cjs` puts it
@@ -43,8 +45,10 @@ RUN cd backend \
   && cp .cache/puppeteer/chrome/*/chrome-linux64/deb.deps /tmp/chrome-deb.deps
 
 # backend/tsconfig.json extends the root base config; tsx reads it too. `backend/.cache` is in
-# .dockerignore, so this copy leaves the Chrome download in place.
+# .dockerignore, so this copy leaves the Chrome download in place. The backend's build compiles
+# the shared `packages/knowledge-types` first; the runtime loads its `dist/`.
 COPY tsconfig.base.json ./
+COPY packages/knowledge-types/ packages/knowledge-types/
 COPY backend/ backend/
 RUN cd backend && pnpm build
 

@@ -13,6 +13,7 @@ describe('loadEnv', () => {
     const env = loadEnv({ ...base, EMBEDDER: 'hashing', FILE_STORE: 'local' });
     expect(env).toMatchObject({
       PORT: 3100,
+      HOST: '::',
       STORAGE_BUCKET: 'portfolio-files',
       MAX_UPLOAD_BYTES: 10 * 1024 * 1024,
       RESUME_INGESTION_ON_BOOT: true,
