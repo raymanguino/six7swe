@@ -59,9 +59,10 @@ export default defineRailway(() => {
     build: {
       builder: 'DOCKERFILE',
       dockerfilePath: 'backend/Dockerfile',
-      // The backend plus the root files the Dockerfile copies.
+      // The backend, the shared package it builds, and the root files the Dockerfile copies.
       watchPatterns: [
         '/backend/**',
+        '/packages/knowledge-types/**',
         '/.dockerignore',
         '/package.json',
         '/pnpm-lock.yaml',
@@ -88,6 +89,10 @@ export default defineRailway(() => {
       SUPABASE_URL: preserve(),
       PORTFOLIO_CACHE_TTL_MS: preserve(),
       PORTFOLIO_DATA_SOURCE: preserve(),
+      // Chat retrieval (PORTFOLIO_DATA_SOURCE=knowledge) over the private network. The key is
+      // the knowledge service's KNOWLEDGE_SERVICE_KEY, set to the same value on both services.
+      KNOWLEDGE_SERVICE_URL: 'http://six7sweknowledge.railway.internal:3100',
+      KNOWLEDGE_SERVICE_KEY: preserve(),
     },
   });
 
@@ -98,10 +103,12 @@ export default defineRailway(() => {
     build: {
       builder: 'RAILPACK',
       buildCommand: 'cd knowledge && pnpm build',
-      // The service plus the root files its build reads: Railpack installs from the workspace
-      // root, and knowledge/tsconfig.json extends tsconfig.base.json.
+      // The service, the shared contract package its build compiles first, and the root files
+      // its build reads: Railpack installs from the workspace root, and knowledge/tsconfig.json
+      // extends tsconfig.base.json.
       watchPatterns: [
         '/knowledge/**',
+        '/packages/knowledge-types/**',
         '/package.json',
         '/pnpm-lock.yaml',
         '/pnpm-workspace.yaml',

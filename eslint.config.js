@@ -147,6 +147,28 @@ export default [
     },
   },
   {
+    // The knowledge service's wire contract, shared by the service and the backend.
+    files: ['packages/knowledge-types/**/*.ts'],
+    languageOptions: {
+      parser: tsparser,
+      parserOptions: {
+        ecmaVersion: 2022,
+        sourceType: 'module',
+        project: path.join(rootDir, 'packages/knowledge-types/tsconfig.json'),
+      },
+    },
+    plugins: {
+      '@typescript-eslint': tseslint,
+    },
+    rules: {
+      ...js.configs.recommended.rules,
+      ...tseslint.configs.recommended.rules,
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-explicit-any': 'error',
+      '@typescript-eslint/no-floating-promises': 'error',
+    },
+  },
+  {
     files: ['frontend/**/*.ts', 'frontend/**/*.tsx'],
     languageOptions: {
       parser: tsparser,

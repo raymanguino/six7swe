@@ -46,7 +46,7 @@ Every route declares who may call it: `public`, `service` or `owner` (`src/plugi
 
 The `/documents` endpoints are `owner` routes, temporarily behind the owner key. Step 2 (#83) replaces it with an owner gate: a Supabase JWT whose `sub` equals `OWNER_AUTH_ID`. The auth plugin keeps one authenticator per access mode (`service`, `owner`); that step swaps only the `owner` entry (`buildApp({ authenticators: { owner } })`). Whatever an authenticator returns must be a safe storage-key segment, or the request gets 401. Handlers read the owner per request (`requireOwner(req)`).
 
-The wire contract lives in `src/contract.ts` as zod schemas with inferred types (request bodies, the document and chunk DTOs, the retrieve and upload responses, and the error body). It depends on nothing but zod, so it can move to a shared package. The database enums are derived from its `DOCUMENT_KINDS` and `DOCUMENT_STATUSES`.
+The wire contract lives in the shared package [`packages/knowledge-types`](../packages/knowledge-types) (`@six7swe/knowledge-types`) as zod schemas with inferred types (request bodies, the document and chunk DTOs, the retrieve, version and upload responses, and the error body). The backend imports the same package, so both sides share one definition. Inside the service, `src/contract.ts` re-exports it. The package depends on nothing but zod and is compiled to CommonJS in its `dist/`, which `pnpm install` builds; after changing it, run `pnpm --filter @six7swe/knowledge-types build`. The database enums are derived from its `DOCUMENT_KINDS` and `DOCUMENT_STATUSES`.
 
 ## Database
 
