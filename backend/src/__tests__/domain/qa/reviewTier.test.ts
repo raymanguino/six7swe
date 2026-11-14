@@ -53,7 +53,6 @@ describe('reviewTier', () => {
     ['Dockerfile-production', 0],
     ['backend/Dockerfile-dev', 0],
     ['mydockerfile-x', 1],
-    ['backend/nixpacks.toml', 0],
     ['backend/Dockerfile', 0],
     ['.dockerignore', 1],
     ['backend/.dockerignore', 1],
@@ -67,7 +66,6 @@ describe('reviewTier', () => {
     ['backend/src/__tests__/services/auth/jwks.test.ts', 2],
     ['e2e/package.json', 0],
     ['tests/Dockerfile', 0],
-    ['test/nixpacks.toml', 0],
     ['backend/src/routes/access.ts', 0],
     ['backend/src/plugins/auth.ts', 0],
     ['backend/src/domain/jobHunt/identity.ts', 0],
@@ -115,7 +113,6 @@ describe('isPinnedPath', () => {
     ['.railway/README.md', true],
     // Only the top-level Railway directory is the deploy definition.
     ['backend/.railway/railway.ts', false],
-    ['nixpacks.toml', true],
     ['backend/Dockerfile', true],
     ['.dockerignore', false],
     ['backend/src/services/auth/index.ts', true],
@@ -128,7 +125,6 @@ describe('isPinnedPath', () => {
     // Only data fixture directories exempt build and auth files.
     ['e2e/package.json', true],
     ['tests/Dockerfile', true],
-    ['test/nixpacks.toml', true],
     ['backend/src/__tests__/services/auth/helper.ts', true],
     ['backend/src/__tests__/services/auth/jwks.test.ts', false],
     ['e2e/auth/login.spec.ts', false],

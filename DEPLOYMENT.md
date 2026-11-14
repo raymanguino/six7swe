@@ -15,7 +15,7 @@ The knowledge service's setup, variables and first-deploy checklist are in
 
 The backend uses a Dockerfile because the job scraper launches Chrome, which needs system
 libraries at runtime (see [Chrome for the job scraper](#chrome-for-the-job-scraper)). The frontend
-is a plain Vite build that Railpack handles with no extra files.
+is a static SPA: Railpack builds it and serves `frontend/dist` with Caddy.
 
 Before deploying, complete the local setup steps in `SETUP.md` (install dependencies, configure environment variables, and seed your portfolio/resume data).
 
@@ -105,12 +105,37 @@ policy and the watch paths.
 ### 2. Frontend Service
 
 The `frontend` service in `.railway/railway.ts` builds with Railpack. Railpack runs
-`pnpm install` at the workspace root, then the build command `cd frontend && pnpm build`. The
-start command is `cd frontend && pnpm preview --host`, which serves the build on port 4173.
+`pnpm install` at the workspace root, then the build command `cd frontend && pnpm build`.
+
+The service has **no start command**. `RAILPACK_SPA_OUTPUT_DIR=frontend/dist` tells Railpack to
+serve that directory as a static site with Caddy, in a runtime image that holds only the built
+files (no Node, no `vite`). Caddy falls back to `index.html` for unknown paths, so React Router
+deep links such as `/hunter/knowledge` load. Caddy listens on `$PORT`, which is pinned to `8080`
+in `.railway/railway.ts`, and the `ray-manguino.dev` domain targets that port. Do not add a start
+command: it switches Railpack back to a Node image. `vite preview` is for local checks only
+(`pnpm --filter @six7swe/frontend preview`).
+
+Railpack adds Chrome's system packages to Node images that depend on `puppeteer`. Only the
+backend does, and the backend builds from its Dockerfile. The frontend's runtime image is Caddy
+plus the built files, so those packages should not be in it; check the first deploy's build log.
+
+First-deploy checks for the static setup:
+
+- The build log shows Railpack in SPA mode (a Caddy runtime stage), not a Node start command. The
+  root `package.json` has a `start` script for the backend; Railpack checks
+  `RAILPACK_SPA_OUTPUT_DIR` before looking at start scripts, but confirm the deployed image is
+  Caddy and not a Node process booting the backend.
+- Caddy serves from `frontend/dist`: the site loads, and `/hunter/knowledge` opened directly
+  returns the app, not a 404.
+- `VITE_API_URL`, `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` are available at **build**
+  time (Vite inlines them): the network tab shows requests to the backend, and sign-in works.
+- Both `ray-manguino.dev` and `six7swe.up.railway.app` answer, on port 8080.
 
 1. Leave the **Root Directory** at the default (`/`), the repository root, so Railpack sees the
    pnpm workspace and the lockfile.
 2. Set environment variables (also listed in `.railway/railway.ts`):
+   - `PORT` - `8080`, the port Caddy listens on and the custom domain targets
+   - `RAILPACK_SPA_OUTPUT_DIR` - `frontend/dist`
    - `VITE_API_URL` - URL of your backend service (e.g., `https://your-backend.railway.app`)
    - `VITE_SUPABASE_URL` - Supabase project URL, for job-hunter sign-in
    - `VITE_SUPABASE_ANON_KEY` - Supabase anon key, for job-hunter sign-in
@@ -299,14 +324,18 @@ docker run --rm -p 3000:3000 --env-file backend/.env -e PORT=3000 six7-backend
 The image runs with `NODE_ENV=production`, so the server refuses to start if `backend/.env` sets
 `AUTH_DEV_BYPASS=true`.
 
-### Rolling Back the Builders
+### Rolling Back the Static Frontend
 
-To go back to Nixpacks, set the service's `builder` to `NIXPACKS` in `.railway/railway.ts`,
-restore its `buildCommand` and its old start and pre-deploy commands, and apply the config. The
-backend's build command was
-`apt-get update && cd backend && pnpm install && pnpm run browsers:install --install-deps && pnpm build`
-and the frontend's `cd frontend && pnpm install && pnpm build`. Nixpacks is deprecated, so treat
-this as a short-term fallback.
+To go back to `vite preview` for the frontend (still on Railpack), in `.railway/railway.ts`:
+
+1. Restore the start command `cd frontend && pnpm preview --host`.
+2. Point the `ray-manguino.dev` domain, and the generated `six7swe.up.railway.app` domain under
+   `networking.serviceDomains`, back at port `4173`.
+3. Remove the `PORT` and `RAILPACK_SPA_OUTPUT_DIR` variables.
+4. Restore `preview.allowedHosts` in `frontend/vite.config.ts` from git history: the last commit
+   that has it is `7494644`, where the block was `preview: { port: 4173, host: true,
+   allowedHosts: ['ray-manguino.dev', 'six7swe.up.railway.app'] }`
+   (`git show 7494644:frontend/vite.config.ts`).
 
 ## Monorepo Structure
 
