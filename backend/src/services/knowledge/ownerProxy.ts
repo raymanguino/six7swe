@@ -127,7 +127,8 @@ export async function forwardToKnowledge(
   if (status === 204) return { status };
 
   const body = parseJson(text);
-  if (body === undefined) {
+  // `null` is valid JSON but no answer the service gives; treat it like an empty body.
+  if (body === undefined || body === null) {
     if (status >= 400) return failure(status, `Request failed with status ${status}`);
     options.onFailure?.('Knowledge service sent no JSON body', { path: request.path, status });
     return failure(502, 'The knowledge service sent an invalid response.');

@@ -318,6 +318,8 @@ describe('knowledge owner proxy routes', () => {
     expect((await get()).statusCode).toBe(502);
     next = () => new Response('<html>', { status: 200 });
     expect((await get()).statusCode).toBe(502);
+    next = () => new Response('null', { status: 200 });
+    expect((await get()).statusCode).toBe(502);
   });
 
   it('validates the search body before calling the service', async () => {
