@@ -288,8 +288,16 @@ refresh runs, not at boot.
   the runtime looks in the same place.
 - The browser version follows the installed puppeteer release. A puppeteer upgrade picks up the
   new Chrome, and its library list, on the next deploy.
-- The container runs as root, and `services/jobFetchers/browser.ts` launches Chrome with
-  `--no-sandbox`.
+- The runtime stage runs as the unprivileged `node` user (`USER node`). `/app` is chowned to
+  `node` and the app is copied with `COPY --chown=node:node`. `COREPACK_HOME` points at
+  `/home/node/.cache/corepack`, where `corepack install` prefetches pnpm, so nothing is fetched
+  at container start. The pre-deploy command and the cron run in this image as `node` too, so
+  they may write under `/app`, `node`'s home, or the temp directory, and nowhere else.
+- Chrome's sandbox cannot start on Railway, which gives containers no user namespaces (or
+  `SYS_ADMIN`), so `services/jobFetchers/browser.ts` launches Chrome with `--no-sandbox`.
+  Non-root limits what a compromised page can change in the container, but it does not keep
+  backend secrets away from a compromised Chrome: the same user can read the Node process's
+  environment. Scraper and secret isolation is tracked in #127.
 
 If a refresh fails with `Could not find Chrome`, check the build log for the `browsers:install`
 step. A failure that names a missing `.so` file is a library missing from the runtime stage; add
@@ -306,6 +314,13 @@ docker build -f backend/Dockerfile -t six7-backend .
 `.dockerignore` keeps `node_modules`, `.env` files, build output, the Chrome cache and the
 private portfolio data out of the build context. Railway builds from git, so gitignored files
 never reach its build either.
+
+Check that the image runs as `node`, owns `/app`, and that pnpm and tsx (used by the pre-deploy
+command and the cron) resolve without a download:
+
+```bash
+docker run --rm --network none six7-backend   sh -c 'id -un && stat -c "%U" /app /app/backend && pnpm --version && pnpm exec tsx --version'
+```
 
 Check that Chrome launches in the image. Do this before deploying a change to the Dockerfile or a
 puppeteer upgrade:

@@ -64,14 +64,24 @@ RUN apt-get update \
   && apt-get satisfy -y --no-install-recommends "$(tr '\n' ',' < /tmp/chrome-deb.deps | sed 's/,*$//')" \
   && rm -rf /var/lib/apt/lists/* /tmp/chrome-deb.deps
 
-COPY --from=build /app /app
+# The app is owned by `node` (the base image's unprivileged user, uid 1000), so the server, the
+# pre-deploy command and the cron run without root. `WORKDIR /app` in the base stage created /app
+# root-owned and --chown on the COPY only covers the copied contents, so /app itself is chowned
+# here, non-recursively (an empty directory at this point). --chown on the COPY avoids a
+# recursive chown layer that would duplicate the whole app.
+RUN chown node:node /app
+COPY --from=build --chown=node:node /app /app
 
 # Production mode for everything that runs in the image: the server, the pre-deploy command and
 # the cron. Among other things it arms the guard that refuses to start with AUTH_DEV_BYPASS set.
 ENV NODE_ENV=production
 
 # Commands run from the backend package, so pnpm is the version backend/package.json pins.
-# Corepack fetches it now rather than on first use at runtime.
+# Run as `node` from here on, then let corepack fetch pnpm now rather than on first use at
+# runtime. COREPACK_HOME pins the cache to node's home, so the prefetched pnpm is found at
+# runtime whatever HOME is set to and nothing is downloaded when the container starts.
+ENV COREPACK_HOME=/home/node/.cache/corepack
+USER node
 WORKDIR /app/backend
 RUN corepack install
 
