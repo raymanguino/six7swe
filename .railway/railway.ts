@@ -87,7 +87,6 @@ export default defineRailway(() => {
       RESEND_FROM_NAME: preserve(),
       SUPABASE_URL: preserve(),
       PORTFOLIO_CACHE_TTL_MS: preserve(),
-      PORTFOLIO_DATA_SOURCE: preserve(),
     },
   });
 
