@@ -62,11 +62,19 @@ export async function registerJobHuntRoutes(app: FastifyInstance): Promise<void>
     PRIVATE_ROUTE,
     profileJobHandlers.runRefreshJobsForProfile,
   );
+  app.post<{ Params: ProfileParams }>(
+    '/job-hunt/profiles/:profileId/jobs/rescore',
+    PRIVATE_ROUTE,
+    profileJobHandlers.runRescoreForProfile,
+  );
   app.get<{ Params: RefreshParams }>(
     '/job-hunt/profiles/:profileId/jobs/refresh/:refreshId',
     PRIVATE_ROUTE,
     profileJobHandlers.getRefreshStatus,
   );
+
+  // The knowledge base matches are scored against
+  app.get('/job-hunt/knowledge', PRIVATE_ROUTE, profileJobHandlers.getKnowledgeStatus);
 
   // Users
   app.get('/job-hunt/users', PRIVATE_ROUTE, userHandlers.getCurrentUser);

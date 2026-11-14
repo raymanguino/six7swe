@@ -1,6 +1,12 @@
 import { eq, asc, sql } from 'drizzle-orm';
 import { db } from '../index';
-import { profileJobs, jobs, type ProfileJob, type MatchBand } from '../schema/jobHunt';
+import {
+  profileJobs,
+  jobs,
+  type ProfileJob,
+  type MatchBand,
+  type MatchEvidence,
+} from '../schema/jobHunt';
 
 export interface ProfileJobService {
   getProfileJobs(profileId: number): Promise<ProfileJob[]>;
@@ -22,6 +28,10 @@ export interface InsertProfileJobInput {
   second_skill_match?: string | null;
   third_skill_match?: string | null;
   summary?: string | null;
+  /** The knowledge corpus version the match was scored against; null when none was used. */
+  knowledge_version?: number | null;
+  /** The documents retrieved as background for the match. */
+  evidence?: MatchEvidence[];
 }
 
 export async function getProfileJobs(profileId: number): Promise<ProfileJob[]> {
@@ -60,6 +70,8 @@ export async function bulkInsertProfileJobs(
     secondSkillMatch: item.second_skill_match ?? null,
     thirdSkillMatch: item.third_skill_match ?? null,
     summary: item.summary ?? null,
+    knowledgeVersion: item.knowledge_version ?? null,
+    evidence: item.evidence ?? [],
   }));
 
   return await db
@@ -76,6 +88,8 @@ export async function bulkInsertProfileJobs(
         secondSkillMatch: sql`excluded.second_skill_match`,
         thirdSkillMatch: sql`excluded.third_skill_match`,
         summary: sql`excluded.summary`,
+        knowledgeVersion: sql`excluded.knowledge_version`,
+        evidence: sql`excluded.evidence`,
         updatedAt: new Date(),
       },
     })
@@ -118,6 +132,8 @@ export async function getJobsForProfile(
       secondSkillMatch: profileJobs.secondSkillMatch,
       thirdSkillMatch: profileJobs.thirdSkillMatch,
       summary: profileJobs.summary,
+      knowledgeVersion: profileJobs.knowledgeVersion,
+      evidence: profileJobs.evidence,
       createdAt: profileJobs.createdAt,
       updatedAt: profileJobs.updatedAt,
       job: {

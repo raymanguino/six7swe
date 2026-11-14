@@ -19,7 +19,6 @@ export interface CreateProfileInput {
   keywords?: string[];
   location?: string | null;
   additionalContext?: string | null;
-  resume?: string | null;
 }
 
 export interface UpdateProfileInput {
@@ -27,7 +26,6 @@ export interface UpdateProfileInput {
   keywords?: string[];
   location?: string | null;
   additionalContext?: string | null;
-  resume?: string | null;
 }
 
 export async function getAllProfiles(): Promise<Profile[]> {
@@ -79,7 +77,6 @@ export async function createProfile(input: CreateProfileInput): Promise<Profile>
       keywords: input.keywords ?? [],
       location: input.location ?? null,
       additionalContext: input.additionalContext ?? null,
-      resume: input.resume ?? null,
     })
     .returning();
 
@@ -102,7 +99,6 @@ export async function updateProfile(
   if (input.additionalContext !== undefined) {
     updates.additionalContext = input.additionalContext;
   }
-  if (input.resume !== undefined) updates.resume = input.resume;
 
   const [profile] = await db
     .update(profiles)

@@ -33,7 +33,6 @@ function makeProfile(overrides: Partial<Profile> = {}): Profile {
     keywords: ['Software', 'Engineer'],
     location: '105149290',
     additionalContext: null,
-    resume: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -59,6 +58,7 @@ function buildService(stubs: Stubs) {
       newProfileRefreshStatus: stubs.newProfileRefreshStatus,
       updateRefreshStatus: async () => true,
     } as never,
+    knowledge: null,
     logger,
   });
 }

@@ -5,6 +5,7 @@ import * as profileJobService from '../../db/api/profileJob';
 import * as profileService from '../../db/api/profile';
 import * as refreshStatusService from '../../db/api/refreshStatus';
 import { createJobRefreshService, type JobRefreshService } from './jobRefreshService';
+import { getDefaultJobKnowledgeSource } from './knowledgeSource';
 
 /**
  * Builds a refresh service that runs outside a Fastify request lifecycle.
@@ -34,6 +35,7 @@ export function createStandaloneJobRefreshService(): JobRefreshService {
     profileJobService,
     profileService,
     refreshStatusService,
+    knowledge: getDefaultJobKnowledgeSource(),
     logger,
   });
 }

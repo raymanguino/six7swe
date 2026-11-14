@@ -253,9 +253,11 @@ sequenceDiagram
   participant S as jobRefreshService
   participant F as jobFetchers (Puppeteer)
   participant M as canonical matcher
+  participant K as knowledge service
   participant D as PostgreSQL
 
   C->>S: start(profileId)
+  S->>K: /version, /profile/published
   S->>D: create refresh_status row (PENDING)
   S->>D: check for an existing active refresh
   S-->>C: refreshStatusId (202)
@@ -264,8 +266,9 @@ sequenceDiagram
   F->>S: onJobsFetched(batch)  (awaited)
   S->>D: bulkInsertJobs(batch)
   S->>D: getProfileJobs(profileId)
-  S->>S: selectJobsToScore (new or changed hash)
-  S->>M: matchJob(job, profileContext) per job
+  S->>S: selectJobsToScore (new, changed hash, or stale knowledge version)
+  S->>K: retrieve(job description) per job
+  S->>M: matchJob(job, profile + summary + chunks) per job
   M-->>S: { score, band, analysis, skills, gaps }
   S->>D: bulkInsertProfileJobs(rows)
   F-->>S: done
@@ -279,6 +282,17 @@ last batch has actually been scored and stored. Any failure marks the refresh
 
 Jobs are re-scored when their content hash changed, so an edited posting is not
 left with a stale score forever.
+
+Each job is scored against the owner's knowledge base: the published profile
+summary plus the top-k chunks retrieved with the job description as the query
+(`services/jobHunt/profileContext.ts`). The match row records the corpus
+version the chunks came from (`profile_jobs.knowledge_version`) and the
+documents they belong to (`evidence`). When the current `corpus_version`
+differs, the match is stale (`isScoreStale` in `domain/jobHunt/filtering.ts`):
+the next refresh rescores it, and `POST /job-hunt/profiles/:id/jobs/rescore`
+rescores every stale match without fetching postings. Without
+`KNOWLEDGE_URL` / `KNOWLEDGE_SERVICE_KEY` jobs are scored on the profile's
+fields alone and nothing is stale.
 
 ## Domain layer
 

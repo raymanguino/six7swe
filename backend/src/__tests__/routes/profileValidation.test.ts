@@ -23,7 +23,6 @@ describe('profile geo id validation', () => {
     keywords: ['Engineer'],
     location: '105149290',
     additionalContext: null,
-    resume: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
