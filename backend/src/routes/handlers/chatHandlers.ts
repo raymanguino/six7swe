@@ -16,18 +16,19 @@ export const MAX_CHAT_HISTORY_CONTENT_CHARS = INPUT_LIMITS.chatMessage;
  * The frontend sends the whole conversation, and assistant answers can run
  * past the message limit. So history is bounded by keeping the most recent
  * turns and truncating long ones, rather than rejecting a long conversation.
- * Anything that is not a list of `{ role: 'user' | 'assistant', content }`
- * is rejected.
+ * Every entry is validated before the older ones are dropped, so anything
+ * that is not a list of `{ role: 'user' | 'assistant', content }` is
+ * rejected, however far back the bad entry sits. The request body limit
+ * bounds the list itself.
  */
-const HistorySchema = z.preprocess(
-  (value) => (Array.isArray(value) ? value.slice(-MAX_CHAT_HISTORY_ITEMS) : value),
-  z.array(
+const HistorySchema = z
+  .array(
     z.object({
       role: z.enum(['user', 'assistant']),
       content: z.string().transform((s) => s.slice(0, MAX_CHAT_HISTORY_CONTENT_CHARS)),
     }),
-  ),
-);
+  )
+  .transform((items) => items.slice(-MAX_CHAT_HISTORY_ITEMS));
 
 export const ChatRequestSchema = z.object({
   message: z

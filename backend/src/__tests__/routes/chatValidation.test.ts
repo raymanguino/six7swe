@@ -49,6 +49,16 @@ describe('POST /chat validation', () => {
     ['a non-array history', { message: 'hi', history: 'nope' }],
     ['an unknown role', { message: 'hi', history: [{ role: 'system', content: 'x' }] }],
     ['a non-string content', { message: 'hi', history: [{ role: 'user', content: 1 }] }],
+    [
+      'an invalid entry older than the retained turns',
+      {
+        message: 'hi',
+        history: [
+          { role: 'system', content: 'x' },
+          ...Array.from({ length: MAX_CHAT_HISTORY_ITEMS }, () => ({ role: 'user', content: 'y' })),
+        ],
+      },
+    ],
   ])('rejects %s', async (_label, payload) => {
     const res = await post(payload);
     expect(res.statusCode).toBe(400);
