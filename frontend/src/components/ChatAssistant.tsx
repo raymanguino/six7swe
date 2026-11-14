@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { apiRequest } from '../utils/api';
+import { getChatSessionId } from '../utils/chatSession';
 import { INPUT_LIMITS } from '../constants';
 
 interface Message {
@@ -67,7 +68,7 @@ export default function ChatAssistant() {
       const history = messages.map((m) => ({ role: m.role, content: m.content }));
       const data = await apiRequest('/chat', {
         method: 'POST',
-        body: JSON.stringify({ message: userMessage, history }),
+        body: JSON.stringify({ message: userMessage, history, sessionId: getChatSessionId() }),
       });
       setMessages((prev) => [...prev, { role: 'assistant', content: data.response, timestamp: new Date() }]);
     } catch (error) {
