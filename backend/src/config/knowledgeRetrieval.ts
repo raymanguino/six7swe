@@ -76,7 +76,7 @@ export function assertKnowledgeRetrievalConfigured(): void {
   const url = process.env.KNOWLEDGE_URL;
   if (!url || normalizeKnowledgeUrl(url) === null) {
     throw new Error(
-      'PORTFOLIO_DATA_SOURCE=knowledge requires KNOWLEDGE_URL to be set to a valid http(s) URL without credentials',
+      'PORTFOLIO_DATA_SOURCE=knowledge requires KNOWLEDGE_URL to be set to a valid http(s) URL without credentials, query or fragment',
     );
   }
   if (!process.env.KNOWLEDGE_SERVICE_KEY?.trim()) {

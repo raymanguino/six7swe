@@ -22,7 +22,7 @@ const knowledgeEnvSchema = z
     KNOWLEDGE_URL: z
       .string()
       .refine((value) => normalizeKnowledgeUrl(value) !== null, {
-        message: 'KNOWLEDGE_URL must be an http(s) URL without credentials',
+        message: 'KNOWLEDGE_URL must be an http(s) URL without credentials, query or fragment',
       })
       .optional(),
     KNOWLEDGE_OWNER_KEY: z

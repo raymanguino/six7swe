@@ -142,6 +142,19 @@ describe('loadKnowledgeConfig', () => {
     expect(load).not.toThrow(/secret-pw/);
   });
 
+  it('rejects a URL with a query or fragment', () => {
+    for (const KNOWLEDGE_URL of [
+      'http://knowledge:3100/base?x=1',
+      'http://knowledge:3100/base#f',
+      'http://knowledge:3100/base?',
+    ]) {
+      const load = () => loadKnowledgeConfig({ KNOWLEDGE_URL, KNOWLEDGE_OWNER_KEY: OWNER_KEY });
+      expect(load).toThrow(
+        /KNOWLEDGE_URL must be an http\(s\) URL without credentials, query or fragment/,
+      );
+    }
+  });
+
   it('rejects malformed values without echoing them', () => {
     const load = () =>
       loadKnowledgeConfig({ KNOWLEDGE_URL: 'ftp://x', KNOWLEDGE_OWNER_KEY: 'short-secret' });
