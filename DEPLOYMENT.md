@@ -324,18 +324,9 @@ docker run --rm -p 3000:3000 --env-file backend/.env -e PORT=3000 six7-backend
 The image runs with `NODE_ENV=production`, so the server refuses to start if `backend/.env` sets
 `AUTH_DEV_BYPASS=true`.
 
-### Rolling Back the Builders
+### Rolling Back the Static Frontend
 
-To go back to Nixpacks, set each service's `builder` to `NIXPACKS` in `.railway/railway.ts`,
-restore its old build, start and pre-deploy commands, and apply the config. The old build
-commands were:
-
-- backend: `apt-get update && cd backend && pnpm install && pnpm run browsers:install --install-deps && pnpm build`
-- frontend: `cd frontend && pnpm install && pnpm build`
-
-Nixpacks is deprecated, so treat this as a short-term fallback.
-
-To go back to `vite preview` for the frontend alone (still on Railpack), in `.railway/railway.ts`:
+To go back to `vite preview` for the frontend (still on Railpack), in `.railway/railway.ts`:
 
 1. Restore the start command `cd frontend && pnpm preview --host`.
 2. Point the `ray-manguino.dev` domain, and the generated `six7swe.up.railway.app` domain under
