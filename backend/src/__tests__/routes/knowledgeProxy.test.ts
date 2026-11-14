@@ -5,8 +5,10 @@ import { UnauthenticatedUser } from '../../constants';
 import { registerKnowledgeRoutes } from '../../routes/knowledge';
 import { isKnowledgeOwner } from '../../services/knowledge/ownerGate';
 import {
+  DEFAULT_TIMEOUT_MS,
   forwardToKnowledge,
   KNOWLEDGE_KEY_HEADER,
+  UPLOAD_TIMEOUT_MS,
   type FetchLike,
 } from '../../services/knowledge/ownerProxy';
 import type { ContextUser } from '../../types';
@@ -110,10 +112,17 @@ describe('loadKnowledgeConfig', () => {
     ).toEqual({ ownerAuthId: null, target: null });
   });
 
-  it('needs both the URL and the key for a target, and trims a trailing slash', () => {
-    expect(
+  it('needs the URL and the key together, and trims a trailing slash', () => {
+    expect(() =>
       loadKnowledgeConfig({ OWNER_AUTH_ID: OWNER_ID, KNOWLEDGE_URL: `${SERVICE_URL}/` }),
-    ).toEqual({ ownerAuthId: OWNER_ID, target: null });
+    ).toThrow(/KNOWLEDGE_OWNER_KEY: KNOWLEDGE_URL and KNOWLEDGE_OWNER_KEY must be set together/);
+    expect(() => loadKnowledgeConfig({ KNOWLEDGE_OWNER_KEY: OWNER_KEY })).toThrow(
+      /KNOWLEDGE_URL: .*set together/,
+    );
+    expect(loadKnowledgeConfig({ OWNER_AUTH_ID: OWNER_ID })).toEqual({
+      ownerAuthId: OWNER_ID,
+      target: null,
+    });
     expect(
       loadKnowledgeConfig({ KNOWLEDGE_URL: `${SERVICE_URL}/`, KNOWLEDGE_OWNER_KEY: OWNER_KEY })
         .target,
@@ -303,6 +312,27 @@ describe('knowledge owner proxy routes', () => {
       throw new TypeError('fetch failed');
     };
     expect((await get()).statusCode).toBe(502);
+
+    // A 200 without a JSON body is a broken answer, not an empty success.
+    next = () => new Response('', { status: 200 });
+    expect((await get()).statusCode).toBe(502);
+    next = () => new Response('<html>', { status: 200 });
+    expect((await get()).statusCode).toBe(502);
+  });
+
+  it('validates the search body before calling the service', async () => {
+    const service = fakeService(() => jsonResponse(200, { version: 1, chunks: [] }));
+    app = await buildServer({ user: owner, fetch: service.fetch });
+    const search = (payload: Record<string, unknown>) =>
+      app!.inject({ method: 'POST', url: '/knowledge/search', payload });
+
+    expect((await search({ query: '  ' })).statusCode).toBe(400);
+    expect((await search({ query: 'x', k: 50 })).statusCode).toBe(400);
+    expect((await search({ query: 'x', extra: true })).statusCode).toBe(400);
+    expect(service.calls).toHaveLength(0);
+
+    expect((await search({ query: ' kafka ' })).statusCode).toBe(200);
+    expect(JSON.parse(String(service.calls[0]?.init.body))).toEqual({ query: 'kafka' });
   });
 
   it('answers 503 to the owner when the service is not configured', async () => {
@@ -329,5 +359,29 @@ describe('forwardToKnowledge', () => {
       { fetch, timeoutMs: 10 },
     );
     expect(result.status).toBe(504);
+  });
+
+  it('maps a connection dropped while reading the body to 502 and reports it', async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"documents":'));
+        controller.error(new TypeError('terminated'));
+      },
+    });
+    const failures: string[] = [];
+    const result = await forwardToKnowledge(
+      { url: SERVICE_URL, ownerKey: OWNER_KEY },
+      { method: 'GET', path: '/documents' },
+      {
+        fetch: async () => new Response(body, { status: 200 }),
+        onFailure: (message) => failures.push(message),
+      },
+    );
+    expect(result.status).toBe(502);
+    expect(failures).toEqual(['Knowledge service request failed']);
+  });
+
+  it('gives uploads a longer timeout than the JSON routes', () => {
+    expect(UPLOAD_TIMEOUT_MS).toBeGreaterThan(DEFAULT_TIMEOUT_MS);
   });
 });

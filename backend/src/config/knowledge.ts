@@ -10,18 +10,30 @@ import { z } from 'zod';
  *
  * Every variable is optional, so a backend without the knowledge service
  * still boots: without `OWNER_AUTH_ID` nobody is the owner (403), and without
- * the URL or the key the owner gets 503. A value that is set but malformed is
- * a deploy mistake and fails the boot.
+ * the URL and the key the owner gets 503. A malformed value, or only one of
+ * the URL and the key, is a deploy mistake and fails the boot.
  */
 
-const knowledgeEnvSchema = z.object({
-  OWNER_AUTH_ID: z.string().trim().min(1).optional(),
-  KNOWLEDGE_URL: z.url({ protocol: /^https?$/ }).optional(),
-  KNOWLEDGE_OWNER_KEY: z
-    .string()
-    .min(32, 'KNOWLEDGE_OWNER_KEY must be at least 32 characters')
-    .optional(),
-});
+const knowledgeEnvSchema = z
+  .object({
+    OWNER_AUTH_ID: z.string().trim().min(1).optional(),
+    KNOWLEDGE_URL: z.url({ protocol: /^https?$/ }).optional(),
+    KNOWLEDGE_OWNER_KEY: z
+      .string()
+      .min(32, 'KNOWLEDGE_OWNER_KEY must be at least 32 characters')
+      .optional(),
+  })
+  .superRefine((env, ctx) => {
+    // One without the other is a half-finished setup, not "feature off".
+    if (Boolean(env.KNOWLEDGE_URL) !== Boolean(env.KNOWLEDGE_OWNER_KEY)) {
+      const missing = env.KNOWLEDGE_URL ? 'KNOWLEDGE_OWNER_KEY' : 'KNOWLEDGE_URL';
+      ctx.addIssue({
+        code: 'custom',
+        path: [missing],
+        message: 'KNOWLEDGE_URL and KNOWLEDGE_OWNER_KEY must be set together',
+      });
+    }
+  });
 
 export interface KnowledgeProxyTarget {
   /** Base URL of the knowledge service, without a trailing slash. */

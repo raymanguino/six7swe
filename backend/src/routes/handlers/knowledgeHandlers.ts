@@ -5,6 +5,7 @@ import type { KnowledgeConfig } from '../../config/knowledge';
 import { isKnowledgeOwner } from '../../services/knowledge/ownerGate';
 import {
   forwardToKnowledge,
+  UPLOAD_TIMEOUT_MS,
   type FetchLike,
   type ProxyRequest,
 } from '../../services/knowledge/ownerProxy';
@@ -19,33 +20,52 @@ import {
 const DocumentParamsSchema = z.object({ id: z.uuid() });
 /** Mirrors the service's document kinds; the service validates again. */
 const UploadQuerySchema = z.object({ kind: z.enum(['resume', 'supporting']).optional() });
+/** Mirrors the service's retrieve request (query up to 2000 characters, k from 1 to 20). */
+const SearchBodySchema = z
+  .object({
+    query: z.string().trim().min(1).max(2000),
+    k: z.number().int().min(1).max(20).optional(),
+  })
+  .strict();
 
 export interface KnowledgeHandlerDeps {
   config: KnowledgeConfig;
   fetch?: FetchLike;
 }
 
+type Handler = (req: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;
+
 function badRequest(reply: FastifyReply, error: z.ZodError) {
   return reply.code(400).send({ error: 'Invalid request', issues: error.issues });
 }
 
 export function knowledgeHandlers(deps: KnowledgeHandlerDeps) {
-  async function forward(req: FastifyRequest, reply: FastifyReply, proxied: ProxyRequest) {
+  async function forward(
+    req: FastifyRequest,
+    reply: FastifyReply,
+    proxied: ProxyRequest,
+    timeoutMs?: number,
+  ) {
     const { target } = deps.config;
     if (!target) {
       return reply.code(503).send({ error: 'The knowledge service is not configured.' });
     }
     const result = await forwardToKnowledge(target, proxied, {
       fetch: deps.fetch,
+      timeoutMs,
       onFailure: (message, details) => req.log.error(details, message),
     });
     reply.code(result.status);
     return result.body === undefined ? reply.send() : reply.send(result.body);
   }
 
-  function documentId(req: FastifyRequest): string | z.ZodError {
-    const parsed = DocumentParamsSchema.safeParse(req.params);
-    return parsed.success ? encodeURIComponent(parsed.data.id) : parsed.error;
+  /** Validates `:id` as a UUID (400 otherwise) and builds the request from it. */
+  function withDocumentId(build: (id: string) => ProxyRequest): Handler {
+    return async (req, reply) => {
+      const parsed = DocumentParamsSchema.safeParse(req.params);
+      if (!parsed.success) return badRequest(reply, parsed.error);
+      return forward(req, reply, build(encodeURIComponent(parsed.data.id)));
+    };
   }
 
   return {
@@ -68,44 +88,33 @@ export function knowledgeHandlers(deps: KnowledgeHandlerDeps) {
         return reply.code(415).send({ error: 'Expected a multipart/form-data upload' });
       }
       const search = query.data.kind ? `?kind=${query.data.kind}` : '';
-      return forward(req, reply, {
-        method: 'POST',
-        path: `/documents${search}`,
-        body: req.body,
-        contentType,
-      });
+      return forward(
+        req,
+        reply,
+        { method: 'POST', path: `/documents${search}`, body: req.body, contentType },
+        UPLOAD_TIMEOUT_MS,
+      );
     },
 
-    async getDocument(req: FastifyRequest, reply: FastifyReply) {
-      const id = documentId(req);
-      if (id instanceof z.ZodError) return badRequest(reply, id);
-      return forward(req, reply, { method: 'GET', path: `/documents/${id}` });
-    },
+    getDocument: withDocumentId((id) => ({ method: 'GET', path: `/documents/${id}` })),
 
-    async getDocumentText(req: FastifyRequest, reply: FastifyReply) {
-      const id = documentId(req);
-      if (id instanceof z.ZodError) return badRequest(reply, id);
-      return forward(req, reply, { method: 'GET', path: `/documents/${id}/text` });
-    },
+    getDocumentText: withDocumentId((id) => ({ method: 'GET', path: `/documents/${id}/text` })),
 
-    async setPrimaryResume(req: FastifyRequest, reply: FastifyReply) {
-      const id = documentId(req);
-      if (id instanceof z.ZodError) return badRequest(reply, id);
-      return forward(req, reply, { method: 'PUT', path: `/documents/${id}/primary` });
-    },
+    setPrimaryResume: withDocumentId((id) => ({
+      method: 'PUT',
+      path: `/documents/${id}/primary`,
+    })),
 
-    async deleteDocument(req: FastifyRequest, reply: FastifyReply) {
-      const id = documentId(req);
-      if (id instanceof z.ZodError) return badRequest(reply, id);
-      return forward(req, reply, { method: 'DELETE', path: `/documents/${id}` });
-    },
+    deleteDocument: withDocumentId((id) => ({ method: 'DELETE', path: `/documents/${id}` })),
 
     /** The "ask as a visitor" playground: the same retrieval the chat will use. */
     async search(req: FastifyRequest, reply: FastifyReply) {
+      const body = SearchBodySchema.safeParse(req.body);
+      if (!body.success) return badRequest(reply, body.error);
       return forward(req, reply, {
         method: 'POST',
         path: '/search',
-        body: JSON.stringify(req.body ?? {}),
+        body: JSON.stringify(body.data),
         contentType: 'application/json',
       });
     },
