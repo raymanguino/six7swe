@@ -174,9 +174,22 @@ export function createCachedRetriever(
     lastFailure = { at: now(), error };
   }
 
-  function learnVersion(value: number): void {
-    // Never move backwards: a slow response can carry an older version.
-    knownVersion = { value: Math.max(value, knownVersion?.value ?? value), fetchedAt: now() };
+  /**
+   * `/version` is authoritative: if it reports a lower version, the corpus was
+   * reset or restored, so the known version follows it down and every cached
+   * entry is dropped (old keys could otherwise be reached again). A version
+   * learned from a `/retrieve` response is `monotonic`: a slow response can
+   * carry an older version, so it only ever moves the known version up.
+   */
+  function learnVersion(value: number, { monotonic }: { monotonic: boolean }): void {
+    if (knownVersion && value < knownVersion.value) {
+      if (monotonic) {
+        knownVersion = { value: knownVersion.value, fetchedAt: now() };
+        return;
+      }
+      entries.clear();
+    }
+    knownVersion = { value, fetchedAt: now() };
   }
 
   async function fetchVersion(): Promise<number> {
@@ -184,9 +197,9 @@ export function createCachedRetriever(
     versionInFlight ??= client
       .getVersion()
       .then((value) => {
-        learnVersion(value);
+        learnVersion(value, { monotonic: false });
         lastFailure = null;
-        return knownVersion?.value ?? value;
+        return value;
       })
       .finally(() => {
         versionInFlight = null;
@@ -243,7 +256,7 @@ export function createCachedRetriever(
         throw error;
       }
       lastFailure = null;
-      learnVersion(result.version);
+      learnVersion(result.version, { monotonic: true });
       // File the result under the version it was actually computed against.
       store(`${result.version}\u0000${normalized}`, result.chunks);
       return result.chunks;

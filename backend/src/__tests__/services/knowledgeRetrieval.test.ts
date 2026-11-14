@@ -178,7 +178,40 @@ describe('createCachedRetriever', () => {
     expect(client.getVersion).toHaveBeenCalledTimes(1);
   });
 
-  it('never moves the known version backwards', async () => {
+  it('follows /version down after a corpus reset and drops the old cache', async () => {
+    const { client, setVersion } = fakeClient(40);
+    const retriever = createCachedRetriever(client, options);
+    const old = await retriever.retrieve('kafka');
+    expect(old[0]?.content).toBe('v40: kafka');
+
+    // The knowledge database is restored: the counter drops to 3.
+    setVersion(3);
+    clock = 1_000; // the version TTL has expired, so /version is polled
+    const fresh = await retriever.retrieve('kafka');
+    expect(fresh[0]?.content).toBe('v3: kafka');
+    expect(client.retrieve).toHaveBeenCalledTimes(2);
+
+    // New results are cached under 3.
+    await expect(retriever.retrieve('Kafka?')).resolves.toBe(fresh);
+    expect(client.retrieve).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops entries cached under the lower version before a reset', async () => {
+    const { client, setVersion } = fakeClient(3);
+    const retriever = createCachedRetriever(client, options);
+    await retriever.retrieve('kafka'); // cached under 3 from the old corpus
+    setVersion(40);
+    clock = 1_000;
+    await retriever.retrieve('postgres');
+    // Reset back to 3: the entry cached under 3 before must not be served.
+    setVersion(3);
+    clock = 2_000;
+    const fresh = await retriever.retrieve('kafka');
+    expect(client.retrieve).toHaveBeenCalledTimes(3);
+    expect(fresh[0]?.content).toBe('v3: kafka');
+  });
+
+  it('never moves the known version backwards on a /retrieve response', async () => {
     const { client } = fakeClient(5);
     const retriever = createCachedRetriever(client, options);
     await retriever.retrieve('a');
