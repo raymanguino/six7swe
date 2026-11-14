@@ -20,7 +20,7 @@ import { DraftError, type ProfileDrafter } from './drafter.js';
 const PDF_MIME = 'application/pdf';
 
 export interface ProfileDraftingDeps {
-  repo: Pick<KnowledgeRepository, 'getPrimaryResume' | 'getExtractedText'>;
+  repo: Pick<KnowledgeRepository, 'getDocument' | 'getPrimaryResume' | 'getExtractedText'>;
   profiles: ProfileRepository;
   /** Null when no drafting model is configured; drafting is then off. */
   drafter: ProfileDrafter | null;
@@ -50,6 +50,13 @@ export interface ProfileDrafting {
    * waiting. Throws `DraftingDisabledError` when drafting is off.
    */
   request(ownerId: string): DraftingStatus;
+  /**
+   * Called after a resume's ingest commits. A resume that is primary now gets
+   * a fresh draft. One that is not (an older resume re-ingested) would only
+   * redraft from the unchanged primary, overwriting the owner's edits for
+   * nothing, so it is ignored. A no-op when drafting is off.
+   */
+  resumeIngested(doc: Pick<DocumentRecord, 'ownerId' | 'id'>): Promise<void>;
   /** Resolves once nothing is queued or running. */
   idle(): Promise<void>;
   /** Drops queued drafts and waits for the running one. */
@@ -132,6 +139,12 @@ export function createProfileDrafting(deps: ProfileDraftingDeps): ProfileDraftin
       if (queue.enqueue({ id: ownerId })) statuses.set(ownerId, DRAFTING);
       return status(ownerId);
     },
+    async resumeIngested(doc) {
+      if (!drafter) return;
+      const current = await deps.repo.getDocument(doc.ownerId, doc.id);
+      if (!current?.isPrimaryResume) return;
+      if (queue.enqueue({ id: doc.ownerId })) statuses.set(doc.ownerId, DRAFTING);
+    },
     idle: () => queue.idle(),
     stop: () => queue.stop(),
   };
@@ -159,7 +172,7 @@ export interface PublishedView {
 /** What the public portfolio shows: the published profile and the primary resume. */
 export async function getPublishedView(
   deps: {
-    repo: Pick<KnowledgeRepository, 'getPrimaryResume' | 'getExtractedText'>;
+    repo: Pick<KnowledgeRepository, 'getDocument' | 'getPrimaryResume' | 'getExtractedText'>;
     profiles: ProfileRepository;
   },
   ownerId: string,

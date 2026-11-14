@@ -79,15 +79,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     {
       ...deps,
       chunkOptions: options.chunkOptions,
-      // A resume that has just become primary gets a fresh draft profile. A
-      // resume that finished but is not primary (an older one re-ingested)
-      // would only redraft from the unchanged primary, overwriting the
-      // owner's edits for nothing.
-      onResumeIngested: async (doc) => {
-        if (!options.profile.drafter) return;
-        const current = await deps.repo.getDocument(doc.ownerId, doc.id);
-        if (current?.isPrimaryResume) drafting.request(doc.ownerId);
-      },
+      onResumeIngested: (doc) => drafting.resumeIngested(doc),
     },
     app.log,
   );

@@ -482,7 +482,7 @@ describe('drafting races', () => {
     return { drafter, gates };
   }
 
-  async function setupDrafting(drafter: ProfileDrafter) {
+  async function setupDrafting(drafter: ProfileDrafter | null) {
     const repo = createMemoryRepository();
     const profiles = createMemoryProfileRepository();
     const { document } = await repo.createDocument({
@@ -496,7 +496,7 @@ describe('drafting races', () => {
     });
     await repo.completeIngestion(document.id, RESUME_MD, []);
     const drafting = createProfileDrafting({ repo, profiles, drafter, log: silentLogger });
-    return { profiles, drafting };
+    return { repo, profiles, drafting, document };
   }
 
   const until = async (check: () => boolean) => {
@@ -535,6 +535,39 @@ describe('drafting races', () => {
     await drafting.idle();
     expect((await profiles.getProfiles('owner')).draft?.data.title).toBe('Owner edit');
     expect(drafting.status('owner')).toMatchObject({ state: 'failed', error: DRAFT_KEPT_EDITS });
+  });
+
+  it('drafts after an ingest only when the resume is primary', async () => {
+    const drafter = fakeDrafter();
+    const { repo, drafting, document: first } = await setupDrafting(drafter);
+    const { document: second } = await repo.createDocument({
+      ownerId: 'owner',
+      filename: 'older.md',
+      mimeType: 'text/markdown',
+      sizeBytes: 10,
+      sha256: 'c'.repeat(64),
+      storagePath: 'owner/c.md',
+      kind: 'resume',
+    });
+    await repo.completeIngestion(second.id, RESUME_MD, []);
+    await repo.setPrimaryResume('owner', first.id);
+
+    await drafting.resumeIngested(second);
+    await drafting.idle();
+    expect(drafter.calls).toHaveLength(0);
+    expect(drafting.status('owner').state).toBe('idle');
+
+    await drafting.resumeIngested(first);
+    await drafting.idle();
+    expect(drafter.calls).toHaveLength(1);
+  });
+
+  it('ignores an ingest when drafting is off', async () => {
+    const { repo, drafting, document } = await setupDrafting(null);
+    const spy = vi.spyOn(repo, 'getDocument');
+    await drafting.resumeIngested(document);
+    expect(spy).not.toHaveBeenCalled();
+    expect(drafting.status('owner')).toMatchObject({ enabled: false, state: 'idle' });
   });
 });
 
