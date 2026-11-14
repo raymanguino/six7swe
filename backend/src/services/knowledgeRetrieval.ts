@@ -25,6 +25,10 @@ import {
  * the retriever fails fast for `failureCooldownMs`. During that window a
  * question already in the cache is still answered from it, under the last
  * known version.
+ *
+ * A success clears the cooldown only if its request started no earlier than
+ * the failure: a failure recorded while the request was in flight is newer
+ * news than the success, so its cooldown survives.
  */
 
 export class KnowledgeRetrievalError extends Error {
@@ -174,6 +178,11 @@ export function createCachedRetriever(
     lastFailure = { at: now(), error };
   }
 
+  /** A success ends the cooldown unless a failure was recorded after the request began. */
+  function clearFailureIfOlderThan(startedAt: number): void {
+    if (lastFailure !== null && lastFailure.at <= startedAt) lastFailure = null;
+  }
+
   /**
    * `/version` is authoritative: if it reports a lower version, the corpus was
    * reset or restored, so the known version follows it down and every cached
@@ -194,16 +203,19 @@ export function createCachedRetriever(
 
   async function fetchVersion(): Promise<number> {
     // Concurrent turns share one /version call.
-    versionInFlight ??= client
-      .getVersion()
-      .then((value) => {
-        learnVersion(value, { monotonic: false });
-        lastFailure = null;
-        return value;
-      })
-      .finally(() => {
-        versionInFlight = null;
-      });
+    if (!versionInFlight) {
+      const startedAt = now();
+      versionInFlight = client
+        .getVersion()
+        .then((value) => {
+          learnVersion(value, { monotonic: false });
+          clearFailureIfOlderThan(startedAt);
+          return value;
+        })
+        .finally(() => {
+          versionInFlight = null;
+        });
+    }
     return versionInFlight;
   }
 
@@ -249,13 +261,14 @@ export function createCachedRetriever(
       if (coolingDown()) failFast();
 
       let result: RetrieveResponse;
+      const startedAt = now();
       try {
         result = await client.retrieve(query, options.k);
       } catch (error) {
         recordFailure(error);
         throw error;
       }
-      lastFailure = null;
+      clearFailureIfOlderThan(startedAt);
       learnVersion(result.version, { monotonic: true });
       // File the result under the version it was actually computed against.
       store(`${result.version}\u0000${normalized}`, result.chunks);

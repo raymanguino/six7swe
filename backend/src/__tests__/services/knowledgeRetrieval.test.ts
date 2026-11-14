@@ -43,6 +43,9 @@ describe('normalizeQuestion', () => {
   });
 });
 
+/** Lets pending promise chains run up to the next real await. */
+const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
 describe('createCachedRetriever', () => {
   let clock: number;
   const now = () => clock;
@@ -167,6 +170,79 @@ describe('createCachedRetriever', () => {
       await expect(retriever.retrieve('Kafka?')).resolves.toBe(cached);
       await expect(retriever.retrieve('postgres')).rejects.toThrow(/cooling down/);
       expect(client.retrieve).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps a newer failure cooldown when an older /version request succeeds', async () => {
+      const { client } = fakeClient();
+      const retriever = createCachedRetriever(client, options);
+      await retriever.retrieve('seed');
+
+      // A /retrieve starts while the version is still fresh, and stays pending.
+      clock = 900;
+      let rejectRetrieve: (e: Error) => void = () => undefined;
+      client.retrieve.mockImplementationOnce(
+        () => new Promise<RetrieveResponse>((_, reject) => (rejectRetrieve = reject)),
+      );
+      const failing = retriever.retrieve('other');
+      const failed = expect(failing).rejects.toThrow('down');
+      await flush();
+
+      // The version has gone stale: this turn polls /version, which stays pending.
+      clock = 1_000;
+      let resolveVersion: (v: number) => void = () => undefined;
+      client.getVersion.mockImplementationOnce(
+        () => new Promise<number>((resolve) => (resolveVersion = resolve)),
+      );
+      const poll = retriever.retrieve('seed');
+      await flush();
+
+      // The /retrieve fails while the poll is in flight.
+      clock = 1_100;
+      rejectRetrieve(new KnowledgeRetrievalError('down'));
+      await failed;
+
+      clock = 1_200;
+      resolveVersion(1);
+      await poll;
+
+      clock = 1_300;
+      await expect(retriever.retrieve('third')).rejects.toThrow(/cooling down/);
+      expect(client.retrieve).toHaveBeenCalledTimes(2); // 'seed' and the failed 'other'
+    });
+
+    it('keeps a newer failure cooldown when an older /retrieve succeeds', async () => {
+      const { client } = fakeClient();
+      const retriever = createCachedRetriever(client, options);
+      let resolveOlder: (r: RetrieveResponse) => void = () => undefined;
+      client.retrieve.mockImplementationOnce(
+        () => new Promise<RetrieveResponse>((resolve) => (resolveOlder = resolve)),
+      );
+      const older = retriever.retrieve('a');
+      await flush();
+
+      clock = 100;
+      client.retrieve.mockRejectedValueOnce(new KnowledgeRetrievalError('down'));
+      await expect(retriever.retrieve('b')).rejects.toThrow('down');
+
+      clock = 200;
+      resolveOlder({ version: 1, chunks: [chunk('a')] });
+      await older;
+
+      clock = 300;
+      await expect(retriever.retrieve('c')).rejects.toThrow(/cooling down/);
+      expect(client.retrieve).toHaveBeenCalledTimes(2);
+    });
+
+    it('clears the cooldown when a success started after the failure', async () => {
+      const { client } = fakeClient();
+      client.retrieve.mockRejectedValueOnce(new KnowledgeRetrievalError('down'));
+      const retriever = createCachedRetriever(client, options);
+      await expect(retriever.retrieve('a')).rejects.toThrow('down');
+
+      clock = 5_000;
+      await expect(retriever.retrieve('b')).resolves.toHaveLength(1);
+      await expect(retriever.retrieve('c')).resolves.toHaveLength(1);
+      expect(client.retrieve).toHaveBeenCalledTimes(3);
     });
   });
 
