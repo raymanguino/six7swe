@@ -36,7 +36,7 @@ export function createSwrCache<T>(load: () => Promise<T>, options: SwrCacheOptio
   let entry: { value: T; expiresAt: number } | null = null;
   let invalidated = false;
   /**
-   * Bumped by `invalidate()`. A load started before an invalidation may carry
+   * Bumped by `invalidate()` and `clear()`. A load started before an invalidation may carry
    * data from before it (a publish), so it is never joined by a later caller,
    * and its result neither replaces the value nor ends the invalidation.
    */
@@ -109,6 +109,8 @@ export function createSwrCache<T>(load: () => Promise<T>, options: SwrCacheOptio
       failure = null;
     },
     clear() {
+      // A load already running must not fill the cache back in afterwards.
+      generation += 1;
       entry = null;
       invalidated = false;
       failure = null;

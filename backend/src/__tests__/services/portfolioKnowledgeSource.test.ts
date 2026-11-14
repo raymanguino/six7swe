@@ -75,7 +75,6 @@ function load(getPublished: KnowledgeProfileClient['getPublished']) {
   jest.doMock('../../services/knowledge/profileClient', () => ({
     getDefaultProfileClient: () => ({ getPublished, getResumePdf: jest.fn() }),
   }));
-  jest.spyOn(console, 'warn').mockImplementation(() => {});
   let service: typeof import('../../services/portfolioService') | undefined;
   jest.isolateModules(() => {
     service = jest.requireActual<typeof import('../../services/portfolioService')>(
@@ -83,7 +82,9 @@ function load(getPublished: KnowledgeProfileClient['getPublished']) {
     );
   });
   if (!service) throw new Error('portfolioService did not load');
-  return service;
+  const warn = jest.fn();
+  service.setPortfolioLogger({ warn });
+  return Object.assign(service, { warn });
 }
 
 const names = (data: PortfolioData) => data.profile?.name;
@@ -124,6 +125,10 @@ describe('portfolio data from the knowledge service', () => {
     // A publish busts the cache; the refresh fails, so the last good profile stays.
     service.clearPortfolioCache();
     expect(names(await service.getPortfolioData())).toBe('Jordan Example');
+    expect(service.warn).toHaveBeenCalledWith(
+      { err: expect.any(Error) },
+      'Portfolio refresh failed; serving the last good profile',
+    );
   });
 
   it('shows a newly published profile on the next request after the cache is busted', async () => {
@@ -145,5 +150,9 @@ describe('portfolio data from the knowledge service', () => {
     expect(names(await service.getPortfolioData())).toBe('Seeded Name');
     expect(names(await service.getPortfolioData())).toBe('Seeded Name');
     expect(getPublished).toHaveBeenCalledTimes(1);
+    expect(service.warn).toHaveBeenCalledWith(
+      { err: expect.any(Error) },
+      'Knowledge service unavailable and no profile cached; serving the seeded profile',
+    );
   });
 });

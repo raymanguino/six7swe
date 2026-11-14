@@ -157,6 +157,22 @@ describe('createSwrCache', () => {
     expect(await cache.get()).toBe('published');
   });
 
+  it('never lets a load started before clear() fill the cache back in', async () => {
+    const { cache, load, willLoad } = setup();
+    let finishOld: (value: string) => void = () => {};
+    willLoad(() => new Promise<string>((resolve) => (finishOld = resolve)));
+    const first = cache.get();
+    await flush();
+
+    cache.clear();
+    finishOld('before-clear');
+    expect(await first).toBe('before-clear');
+
+    willLoad(() => Promise.resolve('after-clear'));
+    expect(await cache.get()).toBe('after-clear');
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps the invalidation when a load from before it fails', async () => {
     const { cache, load, advance, willLoad } = setup();
     await cache.get();

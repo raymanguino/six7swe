@@ -47,8 +47,9 @@ export async function contactHandler(request: FastifyRequest, reply: FastifyRepl
     const { profile } = await getPortfolioData();
     const recipientEmail = profile?.email;
     if (!recipientEmail) {
-      request.log.error('Portfolio profile not found - no recipient email configured');
-      return reply.code(500).send({ error: 'Failed to process contact form' });
+      // A published profile may leave out the email: the form is then off, not broken.
+      request.log.warn('Contact form unavailable: the profile has no email address');
+      return reply.code(503).send({ error: 'The contact form is not available right now' });
     }
 
     const subject = `Contact form: ${name}`;

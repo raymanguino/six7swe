@@ -7,6 +7,8 @@ import { fetchPortfolioFromMcp } from './mcpPortfolioClient';
 import { getDefaultProfileClient } from './knowledge/profileClient';
 import { mapPublishedProfile } from './knowledge/profileMapping';
 import { createSwrCache } from './staleWhileRevalidate';
+import pino from 'pino';
+import type { FastifyBaseLogger } from 'fastify';
 
 export type { PortfolioProfileData, ContentSectionData, PortfolioData } from '../types/portfolio';
 
@@ -14,6 +16,17 @@ const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const CACHE_TTL_MS = Number(process.env.PORTFOLIO_CACHE_TTL_MS) || DEFAULT_CACHE_TTL_MS;
 /** After a failed refresh, how long the last good data is served before trying again. */
 const RETRY_AFTER_FAILURE_MS = 30_000;
+
+/**
+ * Where refresh and outage failures are logged. They happen outside any request,
+ * so the server hands over its logger at startup (`setPortfolioLogger`); until
+ * then a plain pino logger keeps them structured.
+ */
+let log: Pick<FastifyBaseLogger, 'warn'> = pino({ name: 'portfolio' });
+
+export function setPortfolioLogger(logger: Pick<FastifyBaseLogger, 'warn'>): void {
+  log = logger;
+}
 
 async function fetchFromDb(): Promise<PortfolioData> {
   const [profileRow] = await db
@@ -110,10 +123,7 @@ const cache = createSwrCache(fetchPortfolioData, {
   ttlMs: CACHE_TTL_MS,
   retryAfterFailureMs: RETRY_AFTER_FAILURE_MS,
   onBackgroundError: (error) => {
-    console.warn(
-      'Portfolio refresh failed; serving the last good profile:',
-      error instanceof Error ? error.message : error,
-    );
+    log.warn({ err: error }, 'Portfolio refresh failed; serving the last good profile');
   },
 });
 
@@ -126,9 +136,9 @@ export async function getPortfolioData(): Promise<PortfolioData> {
     // start, so there is no last good one. Until #88 retires the portfolio
     // tables, the profile seeded there keeps the site up; it is not cached, so
     // the published profile returns as soon as the service does.
-    console.warn(
-      'Knowledge service unavailable and no profile cached; serving the seeded profile:',
-      error instanceof Error ? error.message : error,
+    log.warn(
+      { err: error },
+      'Knowledge service unavailable and no profile cached; serving the seeded profile',
     );
     return fetchFromDb();
   }
