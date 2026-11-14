@@ -68,6 +68,8 @@ pnpm build
 pnpm preview
 ```
 
+Production does not use `vite preview`: Railway builds `dist` and serves it with Railpack's Caddy (see `DEPLOYMENT.md`).
+
 ## Railway Deployment
 
 This frontend is configured to deploy on Railway as part of a monorepo setup.

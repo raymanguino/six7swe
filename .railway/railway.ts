@@ -37,12 +37,19 @@ export default defineRailway(() => {
         '/tsconfig.base.json',
       ],
     },
-    start: 'cd frontend && pnpm preview --host',
+    // No start command: with `RAILPACK_SPA_OUTPUT_DIR` set, Railpack serves that directory
+    // with Caddy (SPA fallback to index.html, listening on $PORT) in a runtime image that holds
+    // only the built files. A start command would switch Railpack back to a Node image.
     deploy: { ...restartPolicy },
     replicas: { 'us-east4-eqdc4a': 1 },
-    // `vite preview` listens on 4173; `six7swe.up.railway.app` is Railway-generated and kept.
-    domains: [{ domain: 'ray-manguino.dev', port: 4173 }],
+    // Caddy listens on $PORT. It is pinned so the domains can name the port. The Railway-generated
+    // domain is declared too: an apply is declarative, and an undeclared one could be dropped or
+    // left pointing at the old port 4173. Check `railway config plan` for its exact key.
+    domains: [{ domain: 'ray-manguino.dev', port: 8080 }],
+    networking: { serviceDomains: { 'six7swe.up.railway.app': { port: 8080 } } },
     env: {
+      PORT: '8080',
+      RAILPACK_SPA_OUTPUT_DIR: 'frontend/dist',
       VITE_API_URL: preserve(),
       VITE_SUPABASE_URL: preserve(),
       VITE_SUPABASE_ANON_KEY: preserve(),
