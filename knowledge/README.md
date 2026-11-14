@@ -55,7 +55,7 @@ The service does not verify the JWT again. The owner key is the only thing that 
 
 **Choosing the primary resume.** By default the newest ready resume is primary. `PUT /documents/:id/primary` picks another ready resume. That choice holds until another resume finishes ingesting (the newest-ready rule applies again) or the primary is deleted.
 
-**Replacing a document** is an upload of the new file followed by a delete of the old one; the Knowledge page does both. If the new bytes are identical, the upload returns the existing document and nothing is deleted.
+**Replacing a document** is done by the Knowledge page. It uploads the new file, waits until the new document is `ready`, and only then deletes the old one, so retrieval never loses the content in between. If the new document fails, or is still processing after 5 minutes, the old one is kept. If the new bytes are identical, the upload returns the existing document and nothing is deleted.
 
 The wire contract lives in `src/contract.ts` as zod schemas with inferred types (request bodies, the document and chunk DTOs, the retrieve and upload responses, and the error body). It depends on nothing but zod, so it can move to a shared package. The database enums are derived from its `DOCUMENT_KINDS` and `DOCUMENT_STATUSES`.
 
