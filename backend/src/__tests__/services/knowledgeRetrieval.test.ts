@@ -399,7 +399,7 @@ describe('getKnowledgeRetrievalConfig', () => {
   });
 
   it('treats a URL that is not http or https as not configured', () => {
-    for (const KNOWLEDGE_URL of ['ftp://x', 'not a url']) {
+    for (const KNOWLEDGE_URL of ['ftp://x', 'not a url', 'http://user:pw@x:3100']) {
       expect(
         getKnowledgeRetrievalConfig({ KNOWLEDGE_URL, KNOWLEDGE_SERVICE_KEY: 'key' }),
       ).toBeNull();

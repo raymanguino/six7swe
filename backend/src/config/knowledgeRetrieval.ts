@@ -72,9 +72,14 @@ export function getKnowledgeRetrievalConfig(
  */
 export function assertKnowledgeRetrievalConfigured(): void {
   if (getPortfolioDataSource() !== 'knowledge') return;
-  if (!getKnowledgeRetrievalConfig()) {
+  // Name what is wrong, never the value: the URL may carry credentials.
+  const url = process.env.KNOWLEDGE_URL;
+  if (!url || normalizeKnowledgeUrl(url) === null) {
     throw new Error(
-      'PORTFOLIO_DATA_SOURCE=knowledge requires KNOWLEDGE_URL and KNOWLEDGE_SERVICE_KEY',
+      'PORTFOLIO_DATA_SOURCE=knowledge requires KNOWLEDGE_URL to be set to a valid http(s) URL without credentials',
     );
+  }
+  if (!process.env.KNOWLEDGE_SERVICE_KEY?.trim()) {
+    throw new Error('PORTFOLIO_DATA_SOURCE=knowledge requires KNOWLEDGE_SERVICE_KEY');
   }
 }

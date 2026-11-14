@@ -19,7 +19,12 @@ import { normalizeKnowledgeUrl } from './knowledgeUrl';
 const knowledgeEnvSchema = z
   .object({
     OWNER_AUTH_ID: z.string().trim().min(1).optional(),
-    KNOWLEDGE_URL: z.url({ protocol: /^https?$/ }).optional(),
+    KNOWLEDGE_URL: z
+      .string()
+      .refine((value) => normalizeKnowledgeUrl(value) !== null, {
+        message: 'KNOWLEDGE_URL must be an http(s) URL without credentials',
+      })
+      .optional(),
     KNOWLEDGE_OWNER_KEY: z
       .string()
       .min(32, 'KNOWLEDGE_OWNER_KEY must be at least 32 characters')

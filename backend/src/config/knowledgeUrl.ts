@@ -1,7 +1,8 @@
 /**
  * The knowledge service's base URL, read one way for every caller (owner
  * proxy, chat retrieval, the readiness probe, the eval's document client).
- * Only http and https are accepted; trailing slashes are stripped so paths
+ * Only http and https are accepted, without a username or password (fetch rejects
+ * those and its error text can repeat the URL into the logs); trailing slashes are stripped so paths
  * join with a single `/`.
  */
 export function normalizeKnowledgeUrl(raw: string): string | null {
@@ -13,5 +14,6 @@ export function normalizeKnowledgeUrl(raw: string): string | null {
     return null;
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+  if (parsed.username || parsed.password) return null;
   return trimmed.replace(/\/+$/, '');
 }

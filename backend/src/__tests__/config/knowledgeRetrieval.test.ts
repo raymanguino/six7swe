@@ -13,12 +13,20 @@ describe('assertKnowledgeRetrievalConfigured', () => {
     process.env = { ...savedEnv };
   });
 
-  it('throws when knowledge mode is on without the URL or key', () => {
+  it('throws when knowledge mode is on without the key', () => {
     process.env.PORTFOLIO_DATA_SOURCE = 'knowledge';
     process.env.KNOWLEDGE_URL = 'http://knowledge:3100';
-    expect(() => assertKnowledgeRetrievalConfigured()).toThrow(
-      /requires KNOWLEDGE_URL and KNOWLEDGE_SERVICE_KEY/,
-    );
+    expect(() => assertKnowledgeRetrievalConfigured()).toThrow(/requires KNOWLEDGE_SERVICE_KEY/);
+  });
+
+  it('throws on a missing or invalid URL without printing it', () => {
+    process.env.PORTFOLIO_DATA_SOURCE = 'knowledge';
+    process.env.KNOWLEDGE_SERVICE_KEY = 'key';
+    expect(() => assertKnowledgeRetrievalConfigured()).toThrow(/requires KNOWLEDGE_URL/);
+    process.env.KNOWLEDGE_URL = 'http://user:secret-pw@knowledge:3100';
+    const run = () => assertKnowledgeRetrievalConfigured();
+    expect(run).toThrow(/requires KNOWLEDGE_URL/);
+    expect(run).not.toThrow(/secret-pw/);
   });
 
   it('passes when both are set', () => {

@@ -132,6 +132,16 @@ describe('loadKnowledgeConfig', () => {
     ).toEqual({ url: SERVICE_URL, ownerKey: OWNER_KEY });
   });
 
+  it('rejects a URL with credentials without echoing it', () => {
+    const load = () =>
+      loadKnowledgeConfig({
+        KNOWLEDGE_URL: 'http://user:secret-pw@knowledge:3100',
+        KNOWLEDGE_OWNER_KEY: OWNER_KEY,
+      });
+    expect(load).toThrow(/KNOWLEDGE_URL must be an http\(s\) URL without credentials/);
+    expect(load).not.toThrow(/secret-pw/);
+  });
+
   it('rejects malformed values without echoing them', () => {
     const load = () =>
       loadKnowledgeConfig({ KNOWLEDGE_URL: 'ftp://x', KNOWLEDGE_OWNER_KEY: 'short-secret' });
