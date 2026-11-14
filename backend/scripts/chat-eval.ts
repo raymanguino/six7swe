@@ -10,6 +10,10 @@
  * fails, the reference is the stuffed context only, and the report header and
  * stderr say so.
  *
+ * Before anything else it waits for the knowledge service to answer /version (up to 30 s):
+ * the chat:eval script rebuilds the knowledge-types package, which restarts a local
+ * `tsx watch` service for a few seconds during which every connection is refused.
+ *
  * Before the questions, one warm-up retrieval wakes the service, so a cold
  * first call does not knock out question 1. It is not part of the report.
  *
@@ -76,7 +80,23 @@ async function main(): Promise<void> {
 
   const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+  const { awaitKnowledgeReady } = await import('../src/services/knowledge/awaitReady');
   const stuffedContext = await getChatContext();
+
+  const ready = await awaitKnowledgeReady({
+    baseUrl: process.env.KNOWLEDGE_SERVICE_URL ?? '',
+    serviceKey: process.env.KNOWLEDGE_SERVICE_KEY ?? '',
+    onWaiting: () =>
+      process.stderr.write(
+        'waiting for the knowledge service (it may be restarting after the types rebuild)...\n',
+      ),
+  });
+  if (!ready) {
+    process.stderr.write(
+      '\nWARNING: the knowledge service did not answer /version within 30 s; continuing, ' +
+        'so the reference fetch, warm-up and retrieval may fail.\n\n',
+    );
+  }
 
   // The judge's reference: the stuffed context plus every knowledge document.
   const ownerKey = process.env.KNOWLEDGE_OWNER_KEY?.trim();
