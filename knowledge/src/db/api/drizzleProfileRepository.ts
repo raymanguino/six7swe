@@ -93,6 +93,37 @@ export function createDrizzleProfileRepository(db: KnowledgeDb): ProfileReposito
       return toRecord(row);
     },
 
+    async saveDraftIfUnchanged(ownerId, data, sourceDocumentId, expectedUpdatedAt) {
+      const values = { ...columnsOf(data), sourceDocumentId };
+      return db.transaction(async (tx) => {
+        const [current] = await tx
+          .select({ updatedAt: profiles.updatedAt })
+          .from(profiles)
+          .where(and(eq(profiles.ownerId, ownerId), eq(profiles.stage, 'draft')))
+          .for('update');
+        if (current) {
+          // Locked, so the owner's save cannot land between this check and the write.
+          if (!expectedUpdatedAt || !sameInstant(current.updatedAt, expectedUpdatedAt)) {
+            return null;
+          }
+          const [row] = await tx
+            .update(profiles)
+            .set({ ...values, updatedAt: sql`now()` })
+            .where(and(eq(profiles.ownerId, ownerId), eq(profiles.stage, 'draft')))
+            .returning();
+          return row ? toRecord(row) : null;
+        }
+        // No draft (never was, or discarded). An owner's draft inserted
+        // concurrently wins: the insert then does nothing.
+        const [row] = await tx
+          .insert(profiles)
+          .values({ ownerId, stage: 'draft', ...values })
+          .onConflictDoNothing()
+          .returning();
+        return row ? toRecord(row) : null;
+      });
+    },
+
     async deleteDraft(ownerId) {
       const deleted = await db
         .delete(profiles)

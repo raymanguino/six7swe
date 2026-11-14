@@ -43,6 +43,19 @@ export interface ProfileRepository {
     sourceDocumentId: string | null,
   ): Promise<ProfileRecord>;
 
+  /**
+   * `saveDraft` for the drafter, which must not overwrite the owner's edits
+   * made while it ran: writes only if the draft's `updatedAt` is still
+   * `expectedUpdatedAt` (null: there was no draft), or the draft has since
+   * been discarded. Returns null, writing nothing, when the draft changed.
+   */
+  saveDraftIfUnchanged(
+    ownerId: string,
+    data: ProfileData,
+    sourceDocumentId: string | null,
+    expectedUpdatedAt: Date | null,
+  ): Promise<ProfileRecord | null>;
+
   /** Deletes the draft. False when there was none. */
   deleteDraft(ownerId: string): Promise<boolean>;
 

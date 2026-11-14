@@ -1,14 +1,15 @@
 import type { FastifyBaseLogger } from 'fastify';
-import type { DraftingStatus } from '../../contract.js';
+import type { DraftingStatus, ProfileData } from '../../contract.js';
 import type { DocumentRecord, KnowledgeRepository } from '../../db/api/repository.js';
-import type { ProfileRepository } from '../../db/api/profileRepository.js';
+import type { ProfileRecord, ProfileRepository } from '../../db/api/profileRepository.js';
 import { SerialQueue } from '../ingestion/queue.js';
+import type { FileStore } from '../storage/index.js';
 import { DraftError, type ProfileDrafter } from './drafter.js';
 
 /**
- * Profile drafting (#86): when a resume becomes primary, the drafter writes a
- * new draft profile from its extracted text. The owner reviews it against the
- * published profile, edits it, and publishes it.
+ * The structured profile (#86): when a resume becomes primary, the drafter
+ * writes a new draft profile from its extracted text. The owner reviews it
+ * against the published profile, edits it, and publishes it.
  *
  * Drafting runs on its own serial queue, apart from ingestion, so a slow model
  * never holds up the next upload. It is not durable: a draft cut off by a
@@ -16,8 +17,10 @@ import { DraftError, type ProfileDrafter } from './drafter.js';
  * status is kept in memory for the same reason.
  */
 
+const PDF_MIME = 'application/pdf';
+
 export interface ProfileDraftingDeps {
-  repo: Pick<KnowledgeRepository, 'listDocuments' | 'getExtractedText'>;
+  repo: Pick<KnowledgeRepository, 'getPrimaryResume' | 'getExtractedText'>;
   profiles: ProfileRepository;
   /** Null when no drafting model is configured; drafting is then off. */
   drafter: ProfileDrafter | null;
@@ -25,6 +28,10 @@ export interface ProfileDraftingDeps {
 }
 
 const GENERIC_FAILURE = 'Drafting failed unexpectedly. Try again.';
+/** The drafter found the draft edited by the owner while it ran, and kept the edits. */
+export const DRAFT_KEPT_EDITS =
+  'The draft was edited while a new one was being written, so your edits were kept. ' +
+  'Redraft to replace them with a fresh draft from the resume.';
 
 /** Thrown by `request` when no drafting model is configured. Maps to 409. */
 export class DraftingDisabledError extends Error {
@@ -33,18 +40,6 @@ export class DraftingDisabledError extends Error {
     super('Profile drafting is not configured on the knowledge service (PROFILE_DRAFTER).');
     this.name = 'DraftingDisabledError';
   }
-}
-
-/**
- * The owner's primary resume, whatever its status: a primary whose re-ingest
- * failed stays primary, and its file and last extracted text are still good.
- */
-export async function findPrimaryResume(
-  repo: Pick<KnowledgeRepository, 'listDocuments'>,
-  ownerId: string,
-): Promise<DocumentRecord | null> {
-  const documents = await repo.listDocuments(ownerId);
-  return documents.find((d) => d.kind === 'resume' && d.isPrimaryResume) ?? null;
 }
 
 export interface ProfileDrafting {
@@ -65,17 +60,41 @@ export function createProfileDrafting(deps: ProfileDraftingDeps): ProfileDraftin
   const { drafter, log } = deps;
   const statuses = new Map<string, Omit<DraftingStatus, 'enabled'>>();
   const IDLE = { state: 'idle', documentId: null, error: null } as const;
+  const DRAFTING = { state: 'drafting', documentId: null, error: null } as const;
+
+  // One job per owner: asking again while one waits is a no-op.
+  const queue = new SerialQueue<{ id: string }>(
+    ({ id }) => draft(id),
+    // draft() handles its own failures; this only fires on a bug.
+    ({ id }, error) => {
+      log.error({ ownerId: id, err: error }, 'Profile drafting crashed');
+      settle(id, { state: 'failed', documentId: null, error: GENERIC_FAILURE });
+    },
+  );
 
   const status = (ownerId: string): DraftingStatus => ({
     enabled: drafter !== null,
     ...(statuses.get(ownerId) ?? IDLE),
   });
 
+  /**
+   * Records how a job ended, unless another job for the owner is already
+   * waiting: then the status stays `drafting`, so the review screen keeps
+   * following it instead of showing a draft about to be replaced.
+   */
+  function settle(ownerId: string, outcome: Omit<DraftingStatus, 'enabled'>): void {
+    statuses.set(ownerId, queue.isWaiting(ownerId) ? DRAFTING : outcome);
+  }
+
   async function draft(ownerId: string): Promise<void> {
     if (!drafter) return;
     let documentId: string | null = null;
     try {
-      const resume = await findPrimaryResume(deps.repo, ownerId);
+      // What the draft was when this job started: the owner's edits saved
+      // while the model runs must not be overwritten.
+      const before = (await deps.profiles.getProfiles(ownerId)).draft?.updatedAt ?? null;
+
+      const resume = await deps.repo.getPrimaryResume(ownerId);
       if (!resume) throw new DraftError('There is no primary resume to draft from.');
       documentId = resume.id;
       statuses.set(ownerId, { state: 'drafting', documentId, error: null });
@@ -87,13 +106,18 @@ export function createProfileDrafting(deps: ProfileDraftingDeps): ProfileDraftin
 
       const started = Date.now();
       const data = await drafter.draft(found.text);
-      await deps.profiles.saveDraft(ownerId, data, resume.id);
-      statuses.set(ownerId, { state: 'idle', documentId, error: null });
+      const saved = await deps.profiles.saveDraftIfUnchanged(ownerId, data, resume.id, before);
+      if (!saved) {
+        log.info({ documentId }, 'Draft edited while drafting; kept the edits');
+        settle(ownerId, { state: 'failed', documentId, error: DRAFT_KEPT_EDITS });
+        return;
+      }
+      settle(ownerId, { state: 'idle', documentId, error: null });
       log.info({ documentId, drafter: drafter.name, ms: Date.now() - started }, 'Profile drafted');
     } catch (error) {
       const detail = error instanceof DraftError ? error.detail : undefined;
       log.warn({ documentId, err: error, detail }, 'Profile drafting failed');
-      statuses.set(ownerId, {
+      settle(ownerId, {
         state: 'failed',
         documentId,
         error: error instanceof DraftError ? error.message : GENERIC_FAILURE,
@@ -101,23 +125,62 @@ export function createProfileDrafting(deps: ProfileDraftingDeps): ProfileDraftin
     }
   }
 
-  // One job per owner: asking again while one waits is a no-op.
-  const queue = new SerialQueue<{ id: string }>(
-    ({ id }) => draft(id),
-    // draft() handles its own failures; this only fires on a bug.
-    ({ id }, error) => log.error({ ownerId: id, err: error }, 'Profile drafting crashed'),
-  );
-
   return {
     status,
     request(ownerId) {
       if (!drafter) throw new DraftingDisabledError();
-      if (queue.enqueue({ id: ownerId })) {
-        statuses.set(ownerId, { state: 'drafting', documentId: null, error: null });
-      }
+      if (queue.enqueue({ id: ownerId })) statuses.set(ownerId, DRAFTING);
       return status(ownerId);
     },
     idle: () => queue.idle(),
     stop: () => queue.stop(),
   };
+}
+
+/**
+ * Saves the owner's edits as the draft. The draft keeps the resume it came
+ * from; a draft started from the published profile keeps that one's.
+ */
+export async function saveOwnerDraft(
+  deps: { profiles: ProfileRepository },
+  ownerId: string,
+  data: ProfileData,
+): Promise<ProfileRecord> {
+  const { draft, published } = await deps.profiles.getProfiles(ownerId);
+  const source = (draft ?? published)?.sourceDocumentId ?? null;
+  return deps.profiles.saveDraft(ownerId, data, source);
+}
+
+export interface PublishedView {
+  profile: ProfileRecord | null;
+  resume: { document: DocumentRecord; text: string | null } | null;
+}
+
+/** What the public portfolio shows: the published profile and the primary resume. */
+export async function getPublishedView(
+  deps: {
+    repo: Pick<KnowledgeRepository, 'getPrimaryResume' | 'getExtractedText'>;
+    profiles: ProfileRepository;
+  },
+  ownerId: string,
+): Promise<PublishedView> {
+  const [profile, document] = await Promise.all([
+    deps.profiles.getPublished(ownerId),
+    deps.repo.getPrimaryResume(ownerId),
+  ]);
+  if (!document) return { profile, resume: null };
+  const found = await deps.repo.getExtractedText(ownerId, document.id);
+  return { profile, resume: { document, text: found?.text ?? null } };
+}
+
+export const isPdf = (document: DocumentRecord): boolean => document.mimeType === PDF_MIME;
+
+/** The primary resume's file, when it is a PDF; null otherwise. */
+export async function getPrimaryResumePdf(
+  deps: { repo: Pick<KnowledgeRepository, 'getPrimaryResume'>; files: FileStore },
+  ownerId: string,
+): Promise<Uint8Array | null> {
+  const resume = await deps.repo.getPrimaryResume(ownerId);
+  if (!resume || !isPdf(resume)) return null;
+  return deps.files.get(resume.storagePath);
 }

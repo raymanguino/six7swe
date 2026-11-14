@@ -8,11 +8,13 @@ import {
   type PublishedProfileResponse,
 } from '../../contract.js';
 import { requireOwner } from '../../plugins/serviceAuth.js';
-import { findPrimaryResume } from '../../services/profile/profiles.js';
+import {
+  getPrimaryResumePdf,
+  getPublishedView,
+  saveOwnerDraft,
+} from '../../services/profile/profiles.js';
 import type { KnowledgeContext } from '../context.js';
 import { toPrimaryResumeDto, toProfileDto } from '../mappers.js';
-
-const PDF_MIME = 'application/pdf';
 
 export function profileHandlers(ctx: KnowledgeContext) {
   return {
@@ -27,18 +29,11 @@ export function profileHandlers(ctx: KnowledgeContext) {
       };
     },
 
-    /**
-     * Owner: replaces the draft with the owner's edits. The draft keeps the
-     * resume it came from; a draft started from the published profile keeps
-     * that one's.
-     */
+    /** Owner: replaces the draft with the owner's edits. */
     async saveDraft(req: FastifyRequest): Promise<ProfileResponse> {
       const ownerId = requireOwner(req);
       const { data } = SaveDraftRequestSchema.parse(req.body);
-      const { draft, published } = await ctx.profiles.getProfiles(ownerId);
-      const source = (draft ?? published)?.sourceDocumentId ?? null;
-      const saved = await ctx.profiles.saveDraft(ownerId, data, source);
-      return { profile: toProfileDto(saved) };
+      return { profile: toProfileDto(await saveOwnerDraft(ctx, ownerId, data)) };
     },
 
     /** Owner: drafts again from the primary resume, in the background (202). */
@@ -77,28 +72,19 @@ export function profileHandlers(ctx: KnowledgeContext) {
 
     /** Service: what the public portfolio shows. */
     async published(req: FastifyRequest): Promise<PublishedProfileResponse> {
-      const ownerId = requireOwner(req);
-      const [profile, resume] = await Promise.all([
-        ctx.profiles.getPublished(ownerId),
-        findPrimaryResume(ctx.repo, ownerId),
-      ]);
-      const text = resume ? await ctx.repo.getExtractedText(ownerId, resume.id) : null;
+      const { profile, resume } = await getPublishedView(ctx, requireOwner(req));
       return {
         profile: profile && toProfileDto(profile),
-        resume: resume && toPrimaryResumeDto(resume, text?.text ?? null),
+        resume: resume && toPrimaryResumeDto(resume.document, resume.text),
       };
     },
 
     /** Service: the primary resume's file, when it is a PDF. */
     async resumePdf(req: FastifyRequest, reply: FastifyReply) {
-      const ownerId = requireOwner(req);
-      const resume = await findPrimaryResume(ctx.repo, ownerId);
-      if (!resume || resume.mimeType !== PDF_MIME) {
-        return reply.code(404).send({ error: 'No PDF resume' });
-      }
-      const bytes = await ctx.files.get(resume.storagePath);
+      const bytes = await getPrimaryResumePdf(ctx, requireOwner(req));
+      if (!bytes) return reply.code(404).send({ error: 'No PDF resume' });
       return reply
-        .header('content-type', PDF_MIME)
+        .header('content-type', 'application/pdf')
         .header('content-length', bytes.byteLength)
         .send(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
     },

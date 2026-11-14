@@ -1,5 +1,6 @@
 import type { DocumentDto, PrimaryResumeDto, ProfileDto, RetrievedChunkDto } from '../contract.js';
 import type { ProfileRecord } from '../db/api/profileRepository.js';
+import { isPdf } from '../services/profile/profiles.js';
 import type { DocumentRecord, RetrievedChunk } from '../db/api/repository.js';
 
 export function toProfileDto(profile: ProfileRecord): ProfileDto {
@@ -17,7 +18,7 @@ export function toPrimaryResumeDto(doc: DocumentRecord, text: string | null): Pr
     documentId: doc.id,
     filename: doc.filename,
     mimeType: doc.mimeType,
-    isPdf: doc.mimeType === 'application/pdf',
+    isPdf: isPdf(doc),
     text,
     updatedAt: doc.updatedAt.toISOString(),
   };

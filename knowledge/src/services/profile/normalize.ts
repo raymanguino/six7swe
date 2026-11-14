@@ -9,6 +9,8 @@ import { PROFILE_LIMITS, ProfileDataSchema, type ProfileData } from '../../contr
  * - a link without a scheme (`github.com/x`), which gets `https://`;
  * - a link or email that is still invalid, which is dropped to null rather
  *   than failing the whole draft (the owner reviews every field anyway);
+ * - text longer than its limit, which is cut to it (a phone number that long
+ *   is dropped instead);
  * - missing lists, which become empty; blank list items, roles without both
  *   a title and a company, and projects without a name, which are dropped;
  *   lists longer than the limits, which are cut.
@@ -17,51 +19,67 @@ import { PROFILE_LIMITS, ProfileDataSchema, type ProfileData } from '../../contr
  * unchanged and fails there.
  */
 
-const looseText = z
-  .unknown()
-  .transform((v) => (typeof v === 'string' ? v.trim() : typeof v === 'number' ? String(v) : ''));
+/** Cuts to `max` code points (never splitting a surrogate pair) and trims the cut end. */
+function truncate(text: string, max: number): string {
+  const chars = Array.from(text);
+  return chars.length <= max ? text : chars.slice(0, max).join('').trimEnd();
+}
 
-const nullableText = looseText.transform((v) => (v === '' ? null : v));
+/** Any string or number as trimmed text, cut to `max`; anything else is ''. */
+const looseText = (max: number) =>
+  z
+    .unknown()
+    .transform((v) =>
+      truncate(typeof v === 'string' ? v.trim() : typeof v === 'number' ? String(v) : '', max),
+    );
 
-const textList = z
-  .array(looseText)
-  .catch([])
-  .transform((items) => [...new Set(items.filter((s) => s !== ''))]);
+const shortText = looseText(PROFILE_LIMITS.shortText);
+const longText = looseText(PROFILE_LIMITS.longText);
+/** Links and emails are not cut (a cut URL is a wrong URL); the checks below drop them instead. */
+const rawText = looseText(Number.MAX_SAFE_INTEGER);
+
+const orNull = (v: string) => (v === '' ? null : v);
+
+const textList = (maxItems: number) =>
+  z
+    .array(shortText)
+    .catch([])
+    .transform((items) => [...new Set(items.filter((s) => s !== ''))].slice(0, maxItems));
 
 const LooseExperience = z.object({
-  title: looseText,
-  company: looseText,
-  period: looseText,
-  description: looseText,
+  title: shortText,
+  company: shortText,
+  period: shortText,
+  description: longText,
 });
 
 const LooseProject = z.object({
-  name: looseText,
-  description: looseText,
-  technologies: textList.transform((t) => t.slice(0, PROFILE_LIMITS.technologies)),
+  name: shortText,
+  description: longText,
+  technologies: textList(PROFILE_LIMITS.technologies),
 });
 
 const LooseProfile = z.object({
-  name: looseText,
-  title: looseText,
-  location: nullableText,
-  summary: looseText,
-  skills: textList.transform((s) => s.slice(0, PROFILE_LIMITS.skills)),
+  name: shortText,
+  title: shortText,
+  location: shortText.transform(orNull),
+  summary: longText,
+  skills: textList(PROFILE_LIMITS.skills),
   experience: z.array(LooseExperience).catch([]),
   projects: z.array(LooseProject).catch([]),
   links: z
     .object({
-      email: nullableText,
-      phone: nullableText,
-      linkedin: nullableText,
-      github: nullableText,
-      website: nullableText,
+      email: rawText.transform(orNull),
+      phone: rawText.transform(orNull),
+      linkedin: rawText.transform(orNull),
+      github: rawText.transform(orNull),
+      website: rawText.transform(orNull),
     })
     .catch({ email: null, phone: null, linkedin: null, github: null, website: null }),
 });
 
-const HttpLink = z.httpUrl().max(500);
-const Email = z.email().max(254);
+const HttpLink = z.httpUrl().max(PROFILE_LIMITS.link);
+const Email = z.email().max(PROFILE_LIMITS.email);
 
 /** An http(s) URL, `https://` added when the scheme is missing; null when still invalid. */
 export function normalizeLink(value: string | null): string | null {
@@ -88,7 +106,11 @@ export function normalizeProfileDraft(raw: unknown): ProfileData {
     projects: loose.projects.filter((p) => p.name !== '').slice(0, PROFILE_LIMITS.entries),
     links: {
       email: normalizeEmail(loose.links.email),
-      phone: loose.links.phone,
+      // A phone number too long to be one is dropped, like an invalid link.
+      phone:
+        loose.links.phone && loose.links.phone.length <= PROFILE_LIMITS.phone
+          ? loose.links.phone
+          : null,
       linkedin: normalizeLink(loose.links.linkedin),
       github: normalizeLink(loose.links.github),
       website: normalizeLink(loose.links.website),

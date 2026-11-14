@@ -4,6 +4,7 @@ import { buildApp } from '../app.js';
 import { loadEnv } from '../config/env.js';
 import {
   DraftAcceptedResponseSchema,
+  PROFILE_LIMITS,
   ProfileResponseSchema,
   ProfileStateResponseSchema,
   PublishedProfileResponseSchema,
@@ -19,6 +20,7 @@ import {
   type ProfileDrafter,
 } from '../services/profile/drafter.js';
 import { normalizeProfileDraft } from '../services/profile/normalize.js';
+import { createProfileDrafting, DRAFT_KEPT_EDITS } from '../services/profile/profiles.js';
 import {
   createMemoryFileStore,
   makePdf,
@@ -406,6 +408,103 @@ describe('normalizeProfileDraft', () => {
   it('rejects a profile without a name', () => {
     expect(() => normalizeProfileDraft({ title: 'Engineer' })).toThrow();
   });
+
+  it('cuts over-long text to its limit instead of rejecting the draft', () => {
+    const long = (n: number) => 'x'.repeat(n);
+    const profile = normalizeProfileDraft({
+      name: long(250),
+      title: long(300),
+      location: long(201),
+      summary: long(5000),
+      skills: [long(201)],
+      experience: [
+        { title: long(201), company: 'Acme', period: long(201), description: long(4001) },
+      ],
+      projects: [{ name: long(201), description: long(4001), technologies: [long(201)] }],
+      links: { phone: '1'.repeat(51) },
+    });
+    const { shortText, longText } = PROFILE_LIMITS;
+    expect(profile.name).toHaveLength(shortText);
+    expect(profile.title).toHaveLength(shortText);
+    expect(profile.location).toHaveLength(shortText);
+    expect(profile.summary).toHaveLength(longText);
+    expect(profile.skills[0]).toHaveLength(shortText);
+    expect(profile.experience[0]?.title).toHaveLength(shortText);
+    expect(profile.experience[0]?.period).toHaveLength(shortText);
+    expect(profile.experience[0]?.description).toHaveLength(longText);
+    expect(profile.projects[0]?.name).toHaveLength(shortText);
+    expect(profile.projects[0]?.description).toHaveLength(longText);
+    expect(profile.projects[0]?.technologies[0]).toHaveLength(shortText);
+    // A phone number that long is not one: dropped.
+    expect(profile.links.phone).toBeNull();
+  });
+});
+
+describe('drafting races', () => {
+  /** A drafter whose calls finish only when the test says so. */
+  function gatedDrafter() {
+    const gates: Array<(data: ProfileData) => void> = [];
+    const drafter: ProfileDrafter = {
+      name: 'gated',
+      draft: () => new Promise<ProfileData>((resolve) => gates.push(resolve)),
+    };
+    return { drafter, gates };
+  }
+
+  async function setupDrafting(drafter: ProfileDrafter) {
+    const repo = createMemoryRepository();
+    const profiles = createMemoryProfileRepository();
+    const { document } = await repo.createDocument({
+      ownerId: 'owner',
+      filename: 'resume.md',
+      mimeType: 'text/markdown',
+      sizeBytes: 10,
+      sha256: 'b'.repeat(64),
+      storagePath: 'owner/b.md',
+      kind: 'resume',
+    });
+    await repo.completeIngestion(document.id, RESUME_MD, []);
+    const drafting = createProfileDrafting({ repo, profiles, drafter, log: silentLogger });
+    return { profiles, drafting };
+  }
+
+  const until = async (check: () => boolean) => {
+    for (let i = 0; i < 100 && !check(); i++) await new Promise((r) => setTimeout(r, 1));
+    expect(check()).toBe(true);
+  };
+
+  it('stays drafting while another draft is queued behind a finished one', async () => {
+    const { drafter, gates } = gatedDrafter();
+    const { profiles, drafting } = await setupDrafting(drafter);
+
+    drafting.request('owner');
+    await until(() => gates.length === 1);
+    drafting.request('owner'); // e.g. a newer resume finished meanwhile
+
+    gates[0]?.({ ...SAMPLE_PROFILE, title: 'First' });
+    await until(() => gates.length === 2);
+    expect(drafting.status('owner').state).toBe('drafting');
+
+    gates[1]?.({ ...SAMPLE_PROFILE, title: 'Second' });
+    await drafting.idle();
+    expect(drafting.status('owner')).toMatchObject({ state: 'idle', error: null });
+    expect((await profiles.getProfiles('owner')).draft?.data.title).toBe('Second');
+  });
+
+  it('keeps the owner’s edits saved while the model was drafting', async () => {
+    const { drafter, gates } = gatedDrafter();
+    const { profiles, drafting } = await setupDrafting(drafter);
+    await profiles.saveDraft('owner', SAMPLE_PROFILE, null);
+
+    drafting.request('owner');
+    await until(() => gates.length === 1);
+    await profiles.saveDraft('owner', { ...SAMPLE_PROFILE, title: 'Owner edit' }, null);
+
+    gates[0]?.({ ...SAMPLE_PROFILE, title: 'Model draft' });
+    await drafting.idle();
+    expect((await profiles.getProfiles('owner')).draft?.data.title).toBe('Owner edit');
+    expect(drafting.status('owner')).toMatchObject({ state: 'failed', error: DRAFT_KEPT_EDITS });
+  });
 });
 
 describe('chat drafter', () => {
@@ -475,6 +574,12 @@ describe('stub drafter', () => {
       links: { email: 'jordan@example.com', github: 'https://github.com/jordan-example' },
     });
     expect(await drafter.draft(text)).toEqual(first);
+  });
+
+  it('matches link hosts literally', async () => {
+    const drafter = createStubProfileDrafter();
+    const lookalike = await drafter.draft('Jordan\nEngineer\nhttps://githubxcom/jordan');
+    expect(lookalike.links.github).toBeNull();
   });
 });
 

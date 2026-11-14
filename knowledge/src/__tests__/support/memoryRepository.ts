@@ -123,6 +123,12 @@ export function createMemoryRepository(): KnowledgeRepository & {
       return { text: extractedText.get(id) ?? null };
     },
 
+    async getPrimaryResume(ownerId) {
+      return (
+        [...documents.values()].find((d) => d.ownerId === ownerId && d.isPrimaryResume) ?? null
+      );
+    },
+
     async setPrimaryResume(ownerId, id) {
       const doc = documents.get(id);
       if (!doc || doc.ownerId !== ownerId) return null;

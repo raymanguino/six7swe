@@ -85,6 +85,33 @@ export function describeProfileRepositoryContract(
       expect(await profiles.getPublished(owner)).toBeNull();
     });
 
+    it('writes a drafter’s draft only over the draft it started from', async () => {
+      const { profiles, newOwner } = target();
+      const owner = newOwner();
+      // No draft yet: written.
+      const first = await profiles.saveDraftIfUnchanged(owner, SAMPLE_PROFILE, null, null);
+      expect(first?.data).toEqual(SAMPLE_PROFILE);
+      if (!first) throw new Error('expected a draft');
+
+      // The owner edits it while a new one is drafted: the edits are kept.
+      await profiles.saveDraft(owner, { ...SAMPLE_PROFILE, title: 'Owner edit' }, null);
+      const drafted = { ...SAMPLE_PROFILE, title: 'Model draft' };
+      expect(await profiles.saveDraftIfUnchanged(owner, drafted, null, first.updatedAt)).toBeNull();
+      expect(await profiles.saveDraftIfUnchanged(owner, drafted, null, null)).toBeNull();
+      expect((await profiles.getProfiles(owner)).draft?.data.title).toBe('Owner edit');
+
+      // Unchanged since the drafter started: replaced.
+      const current = (await profiles.getProfiles(owner)).draft;
+      if (!current) throw new Error('expected a draft');
+      const saved = await profiles.saveDraftIfUnchanged(owner, drafted, null, current.updatedAt);
+      expect(saved?.data.title).toBe('Model draft');
+
+      // Discarded since the drafter started: written.
+      await profiles.deleteDraft(owner);
+      const after = await profiles.saveDraftIfUnchanged(owner, drafted, null, current.updatedAt);
+      expect(after?.data.title).toBe('Model draft');
+    });
+
     it('scopes profiles to the owner', async () => {
       const { profiles, newOwner } = target();
       const owner = newOwner();

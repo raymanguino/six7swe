@@ -125,6 +125,9 @@ export const PROFILE_LIMITS = {
   skills: 100,
   entries: 30,
   technologies: 30,
+  link: 500,
+  email: 254,
+  phone: 50,
 } as const;
 
 const shortText = z.string().trim().min(1).max(PROFILE_LIMITS.shortText);
@@ -135,7 +138,7 @@ const longText = z.string().trim().max(PROFILE_LIMITS.longText);
  * `javascript:` URL from a hallucinating model or a typo must never reach a
  * visitor.
  */
-const httpLink = z.httpUrl().max(500).nullable();
+const httpLink = z.httpUrl().max(PROFILE_LIMITS.link).nullable();
 
 export const ProfileExperienceSchema = z.strictObject({
   title: shortText,
@@ -155,8 +158,8 @@ export type ProfileProject = z.infer<typeof ProfileProjectSchema>;
 
 /** How to reach the owner. `email` is also where the portfolio's contact form delivers. */
 export const ProfileLinksSchema = z.strictObject({
-  email: z.email().max(254).nullable(),
-  phone: z.string().trim().min(1).max(50).nullable(),
+  email: z.email().max(PROFILE_LIMITS.email).nullable(),
+  phone: z.string().trim().min(1).max(PROFILE_LIMITS.phone).nullable(),
   linkedin: httpLink,
   github: httpLink,
   website: httpLink,

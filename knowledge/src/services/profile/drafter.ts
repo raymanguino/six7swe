@@ -184,7 +184,7 @@ export function createProfileDrafter(config: ProfileDrafterConfig): ProfileDraft
 
 const EMAIL_PATTERN = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/;
 const URL_PATTERN = (host: string) =>
-  new RegExp(`(?:https?://)?(?:www\\.)?${host.replace('.', '\\.')}/[\\w./-]+`, 'i');
+  new RegExp(`(?:https?://)?(?:www\\.)?${host.replace(/\./g, '\\.')}/[\\w./-]+`, 'i');
 
 /**
  * A deterministic, offline drafter for local development (`PROFILE_DRAFTER=stub`)
