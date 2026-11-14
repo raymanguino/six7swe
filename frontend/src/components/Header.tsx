@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { useTheme } from '../contexts/ThemeContext';
 import type { SectionId } from '../pages/Landing';
 
@@ -22,6 +23,17 @@ export default function Header({ activeSection }: HeaderProps) {
   const [atTop, setAtTop] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { theme, toggleTheme } = useTheme();
+  // Section links scroll in place on the landing page; elsewhere they navigate to it.
+  const onLanding = useLocation().pathname === '/';
+  const logoClass =
+    'text-2xl font-bold text-primary-600 hover:text-primary-700 dark:text-primary-300 dark:hover:text-primary-200 min-w-0 truncate';
+  const logo = (
+    <>
+      {'>'}
+      <span className="cursor-blink inline-block">_</span>
+      {' ray-manguino.dev ~ main'}
+    </>
+  );
 
   useEffect(() => {
     const handleScroll = () => setAtTop(window.scrollY < SCROLL_THRESHOLD);
@@ -46,13 +58,15 @@ export default function Header({ activeSection }: HeaderProps) {
               atTop ? 'max-h-24 sm:max-h-12 opacity-100' : 'max-h-0 opacity-0 max-md:!max-h-24 max-md:!opacity-100'
             }`}
           >
-            <a
-              href="#home"
-              onClick={(e) => handleNavClick(e, 'home')}
-              className="text-2xl font-bold text-primary-600 hover:text-primary-700 dark:text-primary-300 dark:hover:text-primary-200 min-w-0 truncate"
-            >
-              {'>'}<span className="cursor-blink inline-block">_</span>{' ray-manguino.dev ~ main'}
-            </a>
+            {onLanding ? (
+              <a href="#home" onClick={(e) => handleNavClick(e, 'home')} className={logoClass}>
+                {logo}
+              </a>
+            ) : (
+              <Link to="/#home" onClick={() => setMobileMenuOpen(false)} className={logoClass}>
+                {logo}
+              </Link>
+            )}
             <div className="flex flex-nowrap items-center gap-2 text-sm text-gray-600 dark:text-gray-300 min-w-0 overflow-hidden">
               <button
                 type="button"
@@ -85,20 +99,32 @@ export default function Header({ activeSection }: HeaderProps) {
           <div
             className={`flex flex-col md:flex-row flex-nowrap gap-2 justify-start items-stretch md:items-center min-w-0 overflow-visible md:overflow-hidden ${mobileMenuOpen ? 'flex' : 'hidden'} md:flex`}
           >
-            {SECTIONS.map(({ id, label }) => (
-              <a
-                key={id}
-                href={`#${id}`}
-                onClick={(e) => handleNavClick(e, id)}
-                className={`px-3 py-2 rounded-md text-sm font-medium transition-colors min-w-0 md:truncate ${
-                  activeSection === id
-                    ? 'text-primary-600 bg-primary-50 dark:text-primary-200 dark:bg-primary-900/50'
-                    : 'text-gray-700 hover:text-primary-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:text-primary-300 dark:hover:bg-gray-700'
-                }`}
-              >
-                {label}
-              </a>
-            ))}
+            {SECTIONS.map(({ id, label }) => {
+              const className = `px-3 py-2 rounded-md text-sm font-medium transition-colors min-w-0 md:truncate ${
+                onLanding && activeSection === id
+                  ? 'text-primary-600 bg-primary-50 dark:text-primary-200 dark:bg-primary-900/50'
+                  : 'text-gray-700 hover:text-primary-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:text-primary-300 dark:hover:bg-gray-700'
+              }`;
+              return onLanding ? (
+                <a
+                  key={id}
+                  href={`#${id}`}
+                  onClick={(e) => handleNavClick(e, id)}
+                  className={className}
+                >
+                  {label}
+                </a>
+              ) : (
+                <Link
+                  key={id}
+                  to={`/#${id}`}
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={className}
+                >
+                  {label}
+                </Link>
+              );
+            })}
             <button
               type="button"
               onClick={(e) => {

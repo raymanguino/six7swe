@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { useTheme } from './contexts/ThemeContext';
 import Header from './components/Header';
 import ChatAssistant from './components/ChatAssistant';
 import Landing from './pages/Landing';
+import NotFound from './pages/NotFound';
 import type { SectionId } from './pages/Landing';
 import { AuthProvider } from './contexts/AuthContext';
 import HunterLayout from './pages/hunter/HunterLayout';
@@ -13,6 +14,19 @@ import ProfileList from './pages/hunter/ProfileList';
 import ProfileDetail from './pages/hunter/ProfileDetail';
 import ProfileEditor from './pages/hunter/ProfileEditor';
 import KnowledgePage from './pages/hunter/knowledge/KnowledgePage';
+
+/** Header, content and chat assistant shared by every public-site page. */
+function PublicShell({ activeSection }: { activeSection: SectionId }) {
+  return (
+    <>
+      <Header activeSection={activeSection} />
+      <main className="flex-1 pt-16">
+        <Outlet />
+      </main>
+      <ChatAssistant />
+    </>
+  );
+}
 
 function App() {
   const [activeSection, setActiveSection] = useState<SectionId>('home');
@@ -42,20 +56,13 @@ function App() {
             </Route>
 
             {/* Public portfolio. */}
-            <Route
-              path="/"
-              element={
-                <>
-                  <Header activeSection={activeSection} />
-                  <main className="flex-1 pt-16">
-                    <Landing onSectionChange={setActiveSection} />
-                  </main>
-                  <ChatAssistant />
-                </>
-              }
-            />
-            <Route path="/work" element={<Navigate to="/#projects" replace />} />
-            <Route path="/contacts" element={<Navigate to="/#contacts" replace />} />
+            <Route element={<PublicShell activeSection={activeSection} />}>
+              <Route path="/" element={<Landing onSectionChange={setActiveSection} />} />
+              <Route path="/work" element={<Navigate to="/#projects" replace />} />
+              <Route path="/contacts" element={<Navigate to="/#contacts" replace />} />
+              {/* Anything else, including unknown /hunter/* paths. */}
+              <Route path="*" element={<NotFound />} />
+            </Route>
           </Routes>
         </div>
       </AuthProvider>
