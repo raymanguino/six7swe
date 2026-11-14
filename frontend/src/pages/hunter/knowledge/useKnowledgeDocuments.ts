@@ -136,10 +136,14 @@ export function useKnowledgeDocuments(enabled: boolean): KnowledgeDocuments {
     [load, report],
   );
 
-  /** Waits until the document settles; null when it is still in flight at the limit. */
+  /**
+   * Waits until the document settles; null when it is still in flight at the
+   * limit. Bounded by the deadline only, not by the page staying open: a
+   * replace keeps going after the owner navigates away.
+   */
   const waitUntilSettled = useCallback(async (id: string) => {
     const deadline = Date.now() + POLL_LIMIT_MS;
-    while (mounted.current && Date.now() < deadline) {
+    while (Date.now() < deadline) {
       const doc = parseDocument(await apiRequest(`/knowledge/documents/${id}`));
       if (!isInFlight(doc)) return doc;
       await sleep(POLL_INTERVAL_MS);
@@ -152,17 +156,30 @@ export function useKnowledgeDocuments(enabled: boolean): KnowledgeDocuments {
       const name = previous.filename;
       try {
         let uploaded: KnowledgeDocument;
+        let deduplicated: boolean;
         try {
-          uploaded = (await uploadFile(file, previous.kind)).document;
+          ({ document: uploaded, deduplicated } = await uploadFile(file, previous.kind));
         } catch (err) {
           report(`Replacing ${name}: ${errorMessage(err, 'Upload failed')}. ${name} is unchanged.`);
           return;
         }
         // Same bytes: the service returned this very document, which stays.
         if (uploaded.id === previous.id) return;
+        // The bytes are already stored as another document of a different
+        // kind (deduplication ignores the kind). Deleting `previous` would,
+        // say, leave a resume replaced by a supporting document.
+        if (deduplicated && uploaded.kind !== previous.kind) {
+          report(
+            `Replacing ${name}: this file is already stored as a ${uploaded.kind} document ` +
+              `(${uploaded.filename}). ${name} is unchanged.`,
+          );
+          return;
+        }
         // Show the new row with live status while it ingests.
-        setPollKick((n) => n + 1);
-        void load();
+        if (mounted.current) {
+          setPollKick((n) => n + 1);
+          void load();
+        }
 
         let settled: KnowledgeDocument | null;
         try {
@@ -189,6 +206,8 @@ export function useKnowledgeDocuments(enabled: boolean): KnowledgeDocuments {
           return;
         }
 
+        // Issued even if the page has been left: only the UI updates below
+        // (report, the final load) depend on it still being mounted.
         try {
           await apiRequest(`/knowledge/documents/${previous.id}`, { method: 'DELETE' });
         } catch (err) {
@@ -198,7 +217,7 @@ export function useKnowledgeDocuments(enabled: boolean): KnowledgeDocuments {
           );
         }
       } finally {
-        await load();
+        if (mounted.current) await load();
       }
     },
     [load, report, waitUntilSettled],
