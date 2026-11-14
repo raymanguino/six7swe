@@ -42,9 +42,11 @@ export default defineRailway(() => {
     // only the built files. A start command would switch Railpack back to a Node image.
     deploy: { ...restartPolicy },
     replicas: { 'us-east4-eqdc4a': 1 },
-    // Caddy listens on $PORT. It is pinned so the custom domain can name the port;
-    // `six7swe.up.railway.app` is Railway-generated and kept.
+    // Caddy listens on $PORT. It is pinned so the domains can name the port. The Railway-generated
+    // domain is declared too: an apply is declarative, and an undeclared one could be dropped or
+    // left pointing at the old port 4173. Check `railway config plan` for its exact key.
     domains: [{ domain: 'ray-manguino.dev', port: 8080 }],
+    networking: { serviceDomains: { 'six7swe.up.railway.app': { port: 8080 } } },
     env: {
       PORT: '8080',
       RAILPACK_SPA_OUTPUT_DIR: 'frontend/dist',
