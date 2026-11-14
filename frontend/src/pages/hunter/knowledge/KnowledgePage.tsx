@@ -2,14 +2,17 @@ import { useState } from 'react';
 import { Navigate, useOutletContext } from 'react-router-dom';
 import type { HunterOutletContext } from '../HunterLayout';
 import DocumentTable from './DocumentTable';
+import ProfileReview from './ProfileReview';
 import SearchPlayground from './SearchPlayground';
 import TextPreview from './TextPreview';
 import UploadDropzone from './UploadDropzone';
 import { useKnowledgeDocuments } from './useKnowledgeDocuments';
+import { useKnowledgeProfile } from './useKnowledgeProfile';
 
 /**
  * The owner's knowledge base: upload, the document table with live status,
- * the extracted-text preview and the "ask as a visitor" playground.
+ * the extracted-text preview, the landing profile's review and publish, and
+ * the "ask as a visitor" playground.
  *
  * Owner only. Anyone the backend says is not the owner is sent back to the
  * profiles; the backend answers 403 to their requests regardless.
@@ -17,6 +20,13 @@ import { useKnowledgeDocuments } from './useKnowledgeDocuments';
 export default function KnowledgePage() {
   const { knowledgeOwner } = useOutletContext<HunterOutletContext>();
   const knowledge = useKnowledgeDocuments(knowledgeOwner.isOwner === true);
+  // A resume that has just become primary starts a new draft, so the profile is
+  // re-read whenever the primary resume changes or finishes ingesting.
+  const primary = knowledge.documents.find((d) => d.isPrimaryResume);
+  const profile = useKnowledgeProfile(
+    knowledgeOwner.isOwner === true,
+    primary ? `${primary.id}:${primary.updatedAt}` : null,
+  );
   const [previewId, setPreviewId] = useState<string | null>(null);
 
   if (knowledgeOwner.failed) {
@@ -84,6 +94,8 @@ export default function KnowledgePage() {
       </section>
 
       {previewed && <TextPreview doc={previewed} onClose={() => setPreviewId(null)} />}
+
+      <ProfileReview profile={profile} />
 
       <SearchPlayground />
     </div>

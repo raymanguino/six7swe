@@ -2,7 +2,11 @@ import type { FastifyInstance } from 'fastify';
 import { OWNER_ROUTE, PUBLIC_ROUTE, SERVICE_ROUTE } from '../plugins/serviceAuth.js';
 import type { KnowledgeContext } from './context.js';
 import { documentHandlers } from './handlers/documentHandlers.js';
+import { profileHandlers } from './handlers/profileHandlers.js';
 import { retrievalHandlers } from './handlers/retrievalHandlers.js';
+
+/** Request body limit for a saved draft profile. */
+export const PROFILE_BODY_LIMIT = 512 * 1024;
 
 /**
  * Every route declares who may call it (see plugins/serviceAuth.ts). A route
@@ -11,6 +15,7 @@ import { retrievalHandlers } from './handlers/retrievalHandlers.js';
 export function registerRoutes(app: FastifyInstance, ctx: KnowledgeContext): void {
   const documents = documentHandlers(ctx);
   const retrieval = retrievalHandlers(ctx);
+  const profile = profileHandlers(ctx);
 
   app.get('/health', PUBLIC_ROUTE, async () => ({ status: 'ok' }));
 
@@ -28,4 +33,16 @@ export function registerRoutes(app: FastifyInstance, ctx: KnowledgeContext): voi
   app.delete('/documents/:id', OWNER_ROUTE, documents.remove);
   // The same retrieval as `/retrieve`, for the owner's "ask as a visitor" playground.
   app.post('/search', OWNER_ROUTE, retrieval.retrieve);
+
+  // The structured profile (#86). The portfolio reads the published one and
+  // the primary resume's PDF with the service key; the owner reviews,
+  // edits and publishes drafts through the backend's owner proxy.
+  app.get('/profile/published', SERVICE_ROUTE, profile.published);
+  app.get('/resume.pdf', SERVICE_ROUTE, profile.resumePdf);
+  app.get('/profile', OWNER_ROUTE, profile.state);
+  // A full profile can outgrow the app's 64 KB JSON limit.
+  app.put('/profile/draft', { ...OWNER_ROUTE, bodyLimit: PROFILE_BODY_LIMIT }, profile.saveDraft);
+  app.post('/profile/draft', OWNER_ROUTE, profile.redraft);
+  app.delete('/profile/draft', OWNER_ROUTE, profile.discardDraft);
+  app.post('/profile/publish', OWNER_ROUTE, profile.publish);
 }

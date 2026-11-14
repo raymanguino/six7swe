@@ -146,6 +146,23 @@ export function describeRepositoryContract(
       expect(await repo.getDocument(owner, old.id)).toMatchObject({ isPrimaryResume: true });
     });
 
+    it('finds the primary resume, scoped to the owner', async () => {
+      const { repo, newOwner } = target();
+      const owner = newOwner();
+      expect(await repo.getPrimaryResume(owner)).toBeNull();
+      await ready(owner, 'notes');
+      expect(await repo.getPrimaryResume(owner)).toBeNull();
+
+      const resume = await ready(owner, 'resume', { kind: 'resume' });
+      expect(await repo.getPrimaryResume(owner)).toMatchObject({ id: resume.id });
+      expect(await repo.getPrimaryResume(newOwner())).toBeNull();
+
+      // A primary whose re-ingest failed stays primary.
+      await repo.markProcessing(resume.id);
+      await repo.failIngestion(resume.id, 'Could not parse the PDF.');
+      expect(await repo.getPrimaryResume(owner)).toMatchObject({ id: resume.id, status: 'failed' });
+    });
+
     it('lets the owner pick the primary among ready resumes', async () => {
       const { repo, newOwner } = target();
       const owner = newOwner();

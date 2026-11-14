@@ -37,6 +37,11 @@ export class SerialQueue<T extends { id: string }> {
     return this.queued.has(id) || this.current?.id === id;
   }
 
+  /** True while an item with this id is waiting, not counting one being worked on. */
+  isWaiting(id: string): boolean {
+    return this.queued.has(id);
+  }
+
   /**
    * Removes a waiting item. Returns false when nothing with this id was
    * waiting; an item already being worked on is not interrupted.

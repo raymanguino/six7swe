@@ -3,7 +3,9 @@ import {
   boolean,
   index,
   integer,
+  jsonb,
   pgSchema,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -11,7 +13,12 @@ import {
   varchar,
   vector,
 } from 'drizzle-orm/pg-core';
-import { DOCUMENT_KINDS, DOCUMENT_STATUSES } from '../contract.js';
+import {
+  DOCUMENT_KINDS,
+  DOCUMENT_STATUSES,
+  PROFILE_STAGES,
+  type ProfileData,
+} from '../contract.js';
 
 /**
  * The knowledge service owns the `knowledge` Postgres schema and nothing else.
@@ -92,6 +99,44 @@ export const chunks = knowledge.table(
     uniqueIndex('chunks_document_ordinal_uq').on(t.documentId, t.ordinal),
     index('chunks_embedding_hnsw_idx').using('hnsw', t.embedding.op('vector_cosine_ops')),
   ],
+);
+
+export const profileStage = knowledge.enum('profile_stage', PROFILE_STAGES);
+
+/**
+ * The structured profile behind the landing page (#86), at most one row per
+ * owner and stage: the `draft` the model wrote (and the owner may have
+ * edited), and the `published` one the portfolio serves. Publishing copies the
+ * draft over the published row and deletes the draft, so a draft always means
+ * unpublished changes.
+ *
+ * The list fields are jsonb, validated against `ProfileDataSchema` on the way
+ * in and on the way out.
+ */
+export const profiles = knowledge.table(
+  'profiles',
+  {
+    ownerId: varchar('owner_id', { length: 255 }).notNull(),
+    stage: profileStage('stage').notNull(),
+    name: text('name').notNull(),
+    title: text('title').notNull(),
+    location: text('location'),
+    summary: text('summary').notNull(),
+    skills: jsonb('skills').$type<ProfileData['skills']>().notNull(),
+    experience: jsonb('experience').$type<ProfileData['experience']>().notNull(),
+    projects: jsonb('projects').$type<ProfileData['projects']>().notNull(),
+    links: jsonb('links').$type<ProfileData['links']>().notNull(),
+    /** The resume it was drafted from. Deleting that resume keeps the profile. */
+    sourceDocumentId: uuid('source_document_id').references(() => documents.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => sql`now()`),
+  },
+  (t) => [primaryKey({ columns: [t.ownerId, t.stage] })],
 );
 
 /**

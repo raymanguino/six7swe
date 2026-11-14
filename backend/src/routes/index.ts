@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { registerPortfolioRoutes } from './portfolio';
 import { registerJobHuntRoutes } from './jobHunt';
 import { registerKnowledgeRoutes } from './knowledge';
+import { clearPortfolioCache } from '../services/portfolioService';
 
 export * from './access';
 
@@ -16,6 +17,6 @@ export * from './access';
 export default async function registerRoutes(app: FastifyInstance): Promise<void> {
   await registerPortfolioRoutes(app);
   await registerJobHuntRoutes(app);
-  await registerKnowledgeRoutes(app);
+  // A published profile shows on the landing page at the next request, not after the TTL.
+  await registerKnowledgeRoutes(app, { onProfilePublished: clearPortfolioCache });
 }
-

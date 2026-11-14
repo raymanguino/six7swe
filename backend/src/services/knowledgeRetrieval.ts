@@ -4,12 +4,11 @@ import {
   type RetrieveResponse,
   type RetrievedChunkDto,
 } from '@six7swe/knowledge-types';
-import type { z } from 'zod';
 import {
-  KnowledgeTransportError,
-  parseJsonBody,
-  sendKnowledgeRequest,
+  KnowledgeServiceError,
+  requestKnowledgeJson,
   type FetchLike,
+  type KnowledgeErrorFactory,
 } from './knowledge/transport';
 import {
   getKnowledgeRetrievalConfig,
@@ -36,19 +35,16 @@ import {
  * news than the success, so its cooldown survives.
  */
 
-export class KnowledgeRetrievalError extends Error {
-  /** The HTTP status, when the service answered with one. */
-  readonly status: number | undefined;
-  /** The transport failure behind it (the TS lib target has no `Error.cause`). */
-  readonly cause?: unknown;
-
+/** Kept as its own class so callers can tell chat retrieval failures apart. */
+export class KnowledgeRetrievalError extends KnowledgeServiceError {
   constructor(message: string, options?: { status?: number; cause?: unknown }) {
-    super(message);
-    this.cause = options?.cause;
+    super(message, options);
     this.name = 'KnowledgeRetrievalError';
-    this.status = options?.status;
   }
 }
+
+const retrievalError: KnowledgeErrorFactory = (message, options) =>
+  new KnowledgeRetrievalError(message, options);
 
 export interface RetrievalClient {
   getVersion(): Promise<number>;
@@ -59,55 +55,35 @@ export function createHttpRetrievalClient(
   config: Pick<KnowledgeRetrievalConfig, 'baseUrl' | 'serviceKey' | 'timeoutMs'>,
   fetchFn?: FetchLike,
 ): RetrievalClient {
-  async function call(path: string, method: 'GET' | 'POST', body?: string): Promise<unknown> {
-    let reply;
-    try {
-      reply = await sendKnowledgeRequest({
-        baseUrl: config.baseUrl,
-        key: config.serviceKey,
-        method,
-        path,
-        body,
-        contentType: body === undefined ? undefined : 'application/json',
-        timeoutMs: config.timeoutMs,
-        fetch: fetchFn,
-      });
-    } catch (err) {
-      if (!(err instanceof KnowledgeTransportError)) throw err;
-      throw new KnowledgeRetrievalError(`Knowledge service ${path} ${err.message}`, {
-        cause: err,
-      });
-    }
-    if (reply.status < 200 || reply.status > 299) {
-      throw new KnowledgeRetrievalError(`Knowledge service ${path} answered ${reply.status}`, {
-        status: reply.status,
-      });
-    }
-    const json = parseJsonBody(reply.text);
-    if (json === undefined) {
-      throw new KnowledgeRetrievalError(`Knowledge service ${path} sent invalid JSON`);
-    }
-    return json;
-  }
-
-  function parse<T>(path: string, schema: z.ZodType<T>, body: unknown): T {
-    const parsed = schema.safeParse(body);
-    if (!parsed.success) {
-      throw new KnowledgeRetrievalError(
-        `Knowledge service ${path} response did not match the contract`,
-      );
-    }
-    return parsed.data;
-  }
+  const base = {
+    baseUrl: config.baseUrl,
+    key: config.serviceKey,
+    timeoutMs: config.timeoutMs,
+    fetch: fetchFn,
+  };
 
   return {
     async getVersion() {
-      const body = await call('/version', 'GET');
-      return parse('/version', VersionResponseSchema, body).version;
+      const path = '/version';
+      const body = await requestKnowledgeJson(
+        { ...base, method: 'GET', path },
+        VersionResponseSchema,
+        retrievalError,
+      );
+      return body.version;
     },
     async retrieve(query, k) {
-      const body = await call('/retrieve', 'POST', JSON.stringify({ query, k }));
-      return parse('/retrieve', RetrieveResponseSchema, body);
+      return requestKnowledgeJson(
+        {
+          ...base,
+          method: 'POST',
+          path: '/retrieve',
+          body: JSON.stringify({ query, k }),
+          contentType: 'application/json',
+        },
+        RetrieveResponseSchema,
+        retrievalError,
+      );
     },
   };
 }

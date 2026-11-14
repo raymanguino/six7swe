@@ -4,7 +4,7 @@ import { isResumeAvailable } from '../../services/resumeService';
 
 export async function getPortfolioHandler(_request: FastifyRequest, reply: FastifyReply) {
   try {
-    const { profile } = await getPortfolioData();
+    const { profile, knowledgeResume } = await getPortfolioData();
     if (!profile) {
       return reply.code(404).send({ error: 'Portfolio profile not found' });
     }
@@ -18,7 +18,8 @@ export async function getPortfolioHandler(_request: FastifyRequest, reply: Fasti
       githubUrl: profile.githubUrl,
       resumeFilename: profile.resumeFilename,
       // The site hides its download link when this is false, rather than link to a 404.
-      resumeAvailable: isResumeAvailable(profile.resumeFilename),
+      // The knowledge service's PDF counts (#86), as does a local or MCP one.
+      resumeAvailable: knowledgeResume?.isPdf === true || isResumeAvailable(profile.resumeFilename),
     });
   } catch (error) {
     _request.log.error(error, 'Error fetching portfolio');

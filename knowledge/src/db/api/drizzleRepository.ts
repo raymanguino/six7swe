@@ -235,6 +235,16 @@ export function createDrizzleRepository(db: KnowledgeDb): KnowledgeRepository {
       return row ?? null;
     },
 
+    async getPrimaryResume(ownerId) {
+      // Served by the partial unique index documents_owner_primary_resume_uq.
+      const [row] = await db
+        .select(documentColumns)
+        .from(documents)
+        .where(and(eq(documents.ownerId, ownerId), eq(documents.isPrimaryResume, true)))
+        .limit(1);
+      return row ?? null;
+    },
+
     async setPrimaryResume(ownerId, id) {
       return db.transaction(async (tx) => {
         // Same lock as the paths that recompute the primary, so a concurrent

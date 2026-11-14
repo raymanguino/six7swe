@@ -1,9 +1,11 @@
 import { buildApp } from './app.js';
 import { loadEnv } from './config/env.js';
+import { createDrizzleProfileRepository } from './db/api/drizzleProfileRepository.js';
 import { createDrizzleRepository } from './db/api/drizzleRepository.js';
 import { createDb } from './db/index.js';
 import { EMBEDDING_DIMENSIONS } from './db/schema.js';
 import { createEmbedder } from './services/embedding/index.js';
+import { createProfileDrafter } from './services/profile/drafter.js';
 import { createFileStore } from './services/storage/index.js';
 import { createShutdown } from './shutdown.js';
 
@@ -13,9 +15,11 @@ async function main(): Promise<void> {
   const repo = createDrizzleRepository(db);
   const files = createFileStore(env.fileStore);
   const embedder = createEmbedder(env.embedder, EMBEDDING_DIMENSIONS);
+  const drafter = createProfileDrafter(env.profileDrafter);
 
   const app = await buildApp({
     deps: { repo, files, embedder },
+    profile: { repo: createDrizzleProfileRepository(db), drafter },
     serviceKey: env.KNOWLEDGE_SERVICE_KEY,
     ownerKey: env.KNOWLEDGE_OWNER_KEY,
     ownerId: env.OWNER_AUTH_ID,
@@ -23,7 +27,10 @@ async function main(): Promise<void> {
   });
   const queue = app.ingestionQueue;
 
-  app.log.info({ embedder: embedder.name, files: files.name }, 'Knowledge service configured');
+  app.log.info(
+    { embedder: embedder.name, files: files.name, profileDrafter: drafter?.name ?? 'off' },
+    'Knowledge service configured',
+  );
 
   if (env.RESUME_INGESTION_ON_BOOT) {
     const unfinished = await repo.listUnfinished();
@@ -35,7 +42,9 @@ async function main(): Promise<void> {
 
   const shutdown = createShutdown({
     closeApp: () => app.close(),
-    stopQueue: () => queue.stop(),
+    // Drafting is not durable: a draft cut off here is not written, and the
+    // owner can ask for another.
+    stopQueue: () => Promise.all([queue.stop(), app.profileDrafting.stop()]),
     closeDb: close,
     log: app.log,
     exit: (code) => process.exit(code),

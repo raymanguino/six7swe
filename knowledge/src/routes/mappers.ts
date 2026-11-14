@@ -1,5 +1,28 @@
-import type { DocumentDto, RetrievedChunkDto } from '../contract.js';
+import type { DocumentDto, PrimaryResumeDto, ProfileDto, RetrievedChunkDto } from '../contract.js';
+import type { ProfileRecord } from '../db/api/profileRepository.js';
+import { isPdf } from '../services/profile/profiles.js';
 import type { DocumentRecord, RetrievedChunk } from '../db/api/repository.js';
+
+export function toProfileDto(profile: ProfileRecord): ProfileDto {
+  return {
+    stage: profile.stage,
+    data: profile.data,
+    sourceDocumentId: profile.sourceDocumentId,
+    createdAt: profile.createdAt.toISOString(),
+    updatedAt: profile.updatedAt.toISOString(),
+  };
+}
+
+export function toPrimaryResumeDto(doc: DocumentRecord, text: string | null): PrimaryResumeDto {
+  return {
+    documentId: doc.id,
+    filename: doc.filename,
+    mimeType: doc.mimeType,
+    isPdf: isPdf(doc),
+    text,
+    updatedAt: doc.updatedAt.toISOString(),
+  };
+}
 
 /** Storage keys and owner ids are internal and never leave the service. */
 export function toDocumentDto(doc: DocumentRecord): DocumentDto {

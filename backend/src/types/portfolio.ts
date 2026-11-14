@@ -25,4 +25,10 @@ export type ContentSectionData = {
 export type PortfolioData = {
   profile: PortfolioProfileData | null;
   contentSections: ContentSectionData[];
+  /**
+   * The knowledge service's primary resume, with `PORTFOLIO_DATA_SOURCE=knowledge`
+   * (#86); null when it has none. `/resume` serves it when `isPdf`. Absent for
+   * the other sources.
+   */
+  knowledgeResume?: { filename: string; isPdf: boolean } | null;
 };

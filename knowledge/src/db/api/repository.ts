@@ -107,6 +107,12 @@ export interface KnowledgeRepository {
   getExtractedText(ownerId: string, id: string): Promise<{ text: string | null } | null>;
 
   /**
+   * The owner's primary resume, whatever its status (a primary whose
+   * re-ingest failed stays primary), or null when there is none.
+   */
+  getPrimaryResume(ownerId: string): Promise<DocumentRecord | null>;
+
+  /**
    * Makes one of the owner's ready resumes primary and demotes the previous
    * one, atomically. Returns the updated document, or null when it does not
    * exist or belongs to someone else. Throws a ConflictError when the

@@ -12,6 +12,7 @@ import authPlugin from './plugins/auth';
 import routes from './routes';
 import { PUBLIC_ROUTE } from './routes/access';
 import { reapStaleRefreshes } from './services/jobHunt/standalone';
+import { setPortfolioLogger } from './services/portfolioService';
 import Fastify from 'fastify';
 import path from 'path';
 
@@ -51,8 +52,8 @@ fastify.register(fastifyStatic, {
 // Register Fastify Request Context plugin
 fastify.register(fastifyRequestContext, {
   defaultStoreValues: {
-    user: UnauthenticatedUser
-  }
+    user: UnauthenticatedUser,
+  },
 });
 
 // Register the auth plugin first: it populates the request context user that
@@ -98,6 +99,7 @@ const start = async () => {
     const host = process.env.HOST || '0.0.0.0';
 
     assertKnowledgeRetrievalConfigured();
+    setPortfolioLogger(fastify.log.child({ module: 'portfolio' }));
 
     // Refreshes abandoned by a previous process would otherwise stay
     // IN_PROGRESS forever, since there is no queue to recover them.
