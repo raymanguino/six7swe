@@ -17,7 +17,12 @@ const EnvSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     PORT: z.coerce.number().int().positive().default(3100),
-    HOST: z.string().default('0.0.0.0'),
+    /**
+     * `::` listens on IPv6 and, on Linux and Windows, IPv4 too (dual-stack), so
+     * `localhost` works whichever family it resolves to first. Set `0.0.0.0` on
+     * a host with IPv6 disabled.
+     */
+    HOST: z.string().default('::'),
 
     DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
 

@@ -90,15 +90,15 @@ Requirements on the database:
 1. Start the local Supabase stack: `supabase start`.
 2. Copy `.env.example` to `.env`, then set `KNOWLEDGE_SERVICE_KEY`, `KNOWLEDGE_OWNER_KEY` (a different value) and `OWNER_AUTH_ID`. The example file uses the offline `hashing` embedder and the local file store, so no API key is needed.
 3. Apply the migrations: `pnpm --filter @six7swe/knowledge db:migrate`.
-4. Start the service on port 3100: `pnpm dev:knowledge`.
-5. For the Knowledge page, set `OWNER_AUTH_ID`, `KNOWLEDGE_URL=http://localhost:3100` and `KNOWLEDGE_OWNER_KEY` (the same value) in `backend/.env`, then sign in to `/hunter` as that user. With `AUTH_DEV_BYPASS=true` the subject is `auth-dev-bypass`, so use that as `OWNER_AUTH_ID` on both sides.
+4. Start the service on port 3100: `pnpm dev:knowledge`. It listens on `HOST=::` by default, which accepts IPv6 and IPv4. Callers should still use `127.0.0.1` rather than `localhost`: Windows resolves `localhost` to `::1` first, which is refused if `HOST` is set to the IPv4-only `0.0.0.0`.
+5. For the Knowledge page, set `OWNER_AUTH_ID`, `KNOWLEDGE_URL=http://127.0.0.1:3100` and `KNOWLEDGE_OWNER_KEY` (the same value) in `backend/.env`, then sign in to `/hunter` as that user. With `AUTH_DEV_BYPASS=true` the subject is `auth-dev-bypass`, so use that as `OWNER_AUTH_ID` on both sides.
 
 To upload a file and query it:
 
 ```sh
-curl -X POST "localhost:3100/documents?kind=resume" -H "x-knowledge-key: $KNOWLEDGE_OWNER_KEY" \
+curl -X POST "127.0.0.1:3100/documents?kind=resume" -H "x-knowledge-key: $KNOWLEDGE_OWNER_KEY" \
   -F file=@resume.pdf
-curl -X POST localhost:3100/retrieve -H "x-knowledge-key: $KNOWLEDGE_SERVICE_KEY" \
+curl -X POST 127.0.0.1:3100/retrieve -H "x-knowledge-key: $KNOWLEDGE_SERVICE_KEY" \
   -H 'content-type: application/json' -d '{"query":"distributed systems experience"}'
 ```
 

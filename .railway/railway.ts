@@ -148,8 +148,8 @@ export default defineRailway(() => {
       // need a known port, http://six7sweknowledge.railway.internal:3100.
       PORT: '3100',
       // Railway's private network is IPv6-only in environments created before 16 October
-      // 2025, so listen on `::`, which accepts IPv6 and IPv4. The code's default, 0.0.0.0, is
-      // IPv4-only.
+      // 2025, so listen on `::`, which accepts IPv6 and IPv4. It is also the code's default;
+      // it is pinned here so a change to that default cannot break the private network.
       HOST: '::',
       DATABASE_URL: preserve(),
       KNOWLEDGE_SERVICE_KEY: preserve(),
