@@ -288,8 +288,13 @@ refresh runs, not at boot.
   the runtime looks in the same place.
 - The browser version follows the installed puppeteer release. A puppeteer upgrade picks up the
   new Chrome, and its library list, on the next deploy.
-- The container runs as root, and `services/jobFetchers/browser.ts` launches Chrome with
-  `--no-sandbox`.
+- The runtime stage runs as the unprivileged `node` user (`USER node`); the app is copied with
+  `COPY --chown=node:node` and corepack caches pnpm under `node`'s home, so nothing is fetched
+  at container start. Chrome's sandbox needs privileges a container does not grant, so
+  `services/jobFetchers/browser.ts` launches Chrome with `--no-sandbox`; running as non-root
+  limits what a compromised page or dependency can do inside the container. The pre-deploy
+  command and the cron run in this image as `node` too, so anything they write must go to `/app`
+  or the temp directory.
 
 If a refresh fails with `Could not find Chrome`, check the build log for the `browsers:install`
 step. A failure that names a missing `.so` file is a library missing from the runtime stage; add
@@ -306,6 +311,12 @@ docker build -f backend/Dockerfile -t six7-backend .
 `.dockerignore` keeps `node_modules`, `.env` files, build output, the Chrome cache and the
 private portfolio data out of the build context. Railway builds from git, so gitignored files
 never reach its build either.
+
+Check that the image runs as `node` and that pnpm resolves without a download:
+
+```bash
+docker run --rm six7-backend sh -c 'id -un && pnpm --version'
+```
 
 Check that Chrome launches in the image. Do this before deploying a change to the Dockerfile or a
 puppeteer upgrade:
