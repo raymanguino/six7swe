@@ -42,9 +42,10 @@ export interface JobRefreshService {
   /**
    * Rescores the profile's stale matches (scored against another knowledge
    * version) without fetching new postings. Runs in the background and is
-   * tracked by a refresh row, like `start`.
+   * tracked by a refresh row, like `start`. Returns a null id, and claims no
+   * row, when no match is stale.
    */
-  rescore(input: { profileId: number }): Promise<{ refreshStatusId: number }>;
+  rescore(input: { profileId: number }): Promise<{ refreshStatusId: number | null }>;
 }
 
 /** Thrown when a profile already has a refresh running. */
@@ -107,6 +108,12 @@ interface RunBackground {
   /** The corpus version when the run started; null without the knowledge service. */
   version: number | null;
   profileSummary: string | null;
+  /**
+   * The published profile could not be read. Rows scored without it get no
+   * knowledge version, so they stay stale and are rescored once the service
+   * answers again.
+   */
+  degraded: boolean;
 }
 
 /** A job to score, with the hash its match row records. */
@@ -165,22 +172,38 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
     const refreshId = await claimRefresh(profileId);
 
     // Runs in the background so the request returns straight away. runPipeline
-    // never rejects: it records failures on the refresh row instead.
-    void runPipeline(refreshId, profile);
+    // records failures on the refresh row; the catch is a last resort so no
+    // rejection is ever left unhandled.
+    runPipeline(refreshId, profile).catch((error: unknown) => {
+      logger.error({ err: error, refreshId, profileId }, 'Job refresh crashed');
+    });
 
     return { refreshStatusId: refreshId };
   }
 
-  async function rescore(input: { profileId: number }): Promise<{ refreshStatusId: number }> {
+  async function rescore(input: {
+    profileId: number;
+  }): Promise<{ refreshStatusId: number | null }> {
     const { profileId } = input;
     if (!knowledge) {
       throw new KnowledgeNotConfiguredError();
     }
     const profile = await loadProfile(profileId);
+
+    // Nothing stale means nothing to do, so no refresh row is claimed. The
+    // run checks again, since the corpus may change before it starts.
+    const version = await knowledge.getVersion();
+    const matches = await profileJobService.getJobsForProfile(profileId);
+    if (!matches.some((match) => isScoreStale(match.knowledgeVersion, version))) {
+      return { refreshStatusId: null };
+    }
+
     const refreshId = await claimRefresh(profileId);
 
-    // Like a refresh, a rescore never rejects: failures land on the row.
-    void runRescore(refreshId, profile);
+    // Like a refresh, failures land on the row; the catch is a last resort.
+    runRescore(refreshId, profile).catch((error: unknown) => {
+      logger.error({ err: error, refreshId, profileId }, 'Job rescore crashed');
+    });
 
     return { refreshStatusId: refreshId };
   }
@@ -226,22 +249,40 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
   }
 
   /**
+   * Ends a run as FAILED. If even that write fails, the row stays active
+   * until the stale-refresh reaper ends it, so the error is logged rather
+   * than thrown out of a background run.
+   */
+  async function markFailed(
+    transition: (event: RefreshEvent, description?: string) => Promise<void>,
+    context: { refreshId: number; profileId: number },
+    error: unknown,
+  ): Promise<void> {
+    try {
+      await transition({ type: 'FAILED' }, errorMessage(error));
+    } catch (writeError) {
+      logger.error({ err: writeError, ...context }, 'Could not mark the refresh as failed');
+    }
+  }
+
+  /**
    * Reads what a run scores against. When the service is configured the
    * corpus version is required: without it the run could not tell which
-   * scores are stale, so the run fails. The profile summary is optional.
+   * scores are stale, so the run fails. The profile summary is optional, but
+   * a failure to read it marks the run as degraded.
    */
   async function loadBackground(): Promise<RunBackground> {
     if (!knowledge) {
-      return { version: null, profileSummary: null };
+      return { version: null, profileSummary: null, degraded: false };
     }
     const version = await knowledge.getVersion();
-    let profileSummary: string | null = null;
     try {
-      profileSummary = await knowledge.getProfileSummary();
+      const profileSummary = await knowledge.getProfileSummary();
+      return { version, profileSummary, degraded: false };
     } catch (error) {
       logger.warn({ err: error }, 'Could not read the published profile; scoring without it');
+      return { version, profileSummary: null, degraded: true };
     }
-    return { version, profileSummary };
   }
 
   async function runPipeline(refreshId: number, profile: Profile): Promise<void> {
@@ -286,7 +327,7 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
       );
     } catch (error) {
       logger.error({ err: error, refreshId, profileId: profile.id }, 'Job refresh failed');
-      await transition({ type: 'FAILED' }, errorMessage(error));
+      await markFailed(transition, { refreshId, profileId: profile.id }, error);
     }
   }
 
@@ -303,12 +344,19 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
 
       await transition({ type: 'FILTERING_STARTED' }, `Rescoring ${stale.length} stale match(es).`);
 
-      // The posting itself has not changed, so the row keeps its job hash.
+      // `match.job` carries the posting's current hash, so the row records
+      // the hash of the text actually scored.
       const result = await scoreJobs(
         profile,
         background,
-        stale.map((match) => ({ ...match.job, id: match.jobId, hash: match.jobHash })),
+        stale.map((match) => ({ ...match.job, id: match.jobId })),
       );
+
+      if (result.scored === 0 && result.failed > 0) {
+        throw new Error(
+          `Rescore failed: none of the ${result.failed} stale match(es) could be evaluated.`,
+        );
+      }
 
       await transition(
         { type: 'COMPLETED' },
@@ -316,7 +364,7 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
       );
     } catch (error) {
       logger.error({ err: error, refreshId, profileId: profile.id }, 'Job rescore failed');
-      await transition({ type: 'FAILED' }, errorMessage(error));
+      await markFailed(transition, { refreshId, profileId: profile.id }, error);
     }
   }
 
@@ -400,7 +448,8 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
               second_skill_match: result.matchedSkills[1] ?? null,
               third_skill_match: result.matchedSkills[2] ?? null,
               summary: result.summary,
-              knowledge_version: retrieved?.version ?? null,
+              // A degraded run's rows stay stale so a later run redoes them.
+              knowledge_version: background.degraded ? null : (retrieved?.version ?? null),
               evidence: evidenceFromChunks(chunks),
             },
           };

@@ -3,6 +3,8 @@ import { apiRequest } from '../../utils/api';
 import type { MatchBand, MatchKnowledgeState, ProfileJob, RefreshStatusRow } from './types';
 
 const RESCORE_POLL_MS = 3000;
+/** Consecutive failed status polls before the rescore is reported as lost. */
+const MAX_POLL_FAILURES = 3;
 
 interface MatchWithDetails extends ProfileJob {
   job: {
@@ -28,56 +30,101 @@ const BAND_STYLES: Record<MatchBand, string> = {
 /**
  * Starts a rescore of the stale matches and polls its refresh row until it
  * finishes, then calls `onDone` so the list reloads.
+ *
+ * Every run gets a generation number. Unmounting, a new profile or a new
+ * start bumps it, and each step checks it after every await and before
+ * scheduling, so an abandoned poll can never reschedule itself or reload a
+ * list that is no longer on screen. The parent keys this component by
+ * profile, so a new profile also starts with fresh `running`/`error` state.
  */
 function useRescore(profileId: number, onDone: () => Promise<void>) {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const timerRef = useRef<number | null>(null);
+  const generationRef = useRef(0);
 
-  const stop = useCallback(() => {
+  const cancel = useCallback(() => {
+    generationRef.current += 1;
     if (timerRef.current !== null) {
       window.clearTimeout(timerRef.current);
       timerRef.current = null;
     }
   }, []);
 
-  useEffect(() => stop, [stop]);
+  useEffect(() => cancel, [profileId, cancel]);
 
   const start = useCallback(async () => {
-    stop();
+    cancel();
+    const generation = generationRef.current;
+    const live = () => generationRef.current === generation;
+
     setRunning(true);
     setError(null);
+
+    const finish = async (message: string | null) => {
+      if (!live()) return;
+      if (message) setError(message);
+      try {
+        await onDone();
+      } finally {
+        if (live()) setRunning(false);
+      }
+    };
+
+    let data: { refreshStatusId?: number } | undefined;
     try {
-      const data = await apiRequest(`/job-hunt/profiles/${profileId}/jobs/rescore`, {
+      data = await apiRequest(`/job-hunt/profiles/${profileId}/jobs/rescore`, {
         method: 'POST',
       });
-      const refreshId = data.refreshStatusId as number;
-
-      const tick = async () => {
-        try {
-          const status = await apiRequest(
-            `/job-hunt/profiles/${profileId}/jobs/refresh/${refreshId}`,
-          );
-          const row = status.refreshStatus as RefreshStatusRow;
-          if (row.status === 'COMPLETED' || row.status === 'FAILED') {
-            if (row.status === 'FAILED') setError(row.description ?? 'Rescore failed');
-            setRunning(false);
-            await onDone();
-            return;
-          }
-        } catch (err) {
-          setError(err instanceof Error ? err.message : 'Failed to read rescore status');
-          setRunning(false);
-          return;
-        }
-        timerRef.current = window.setTimeout(() => void tick(), RESCORE_POLL_MS);
-      };
-      timerRef.current = window.setTimeout(() => void tick(), RESCORE_POLL_MS);
     } catch (err) {
+      if (!live()) return;
       setError(err instanceof Error ? err.message : 'Failed to start rescore');
       setRunning(false);
+      return;
     }
-  }, [profileId, onDone, stop]);
+    if (!live()) return;
+
+    // 204: nothing was stale any more, so only the list needs reloading.
+    const refreshId = data?.refreshStatusId;
+    if (refreshId === undefined) {
+      await finish(null);
+      return;
+    }
+
+    let consecutiveFailures = 0;
+    const schedule = () => {
+      if (!live()) return;
+      timerRef.current = window.setTimeout(() => void tick(), RESCORE_POLL_MS);
+    };
+    const tick = async () => {
+      if (!live()) return;
+      let row: RefreshStatusRow;
+      try {
+        const status = await apiRequest(
+          `/job-hunt/profiles/${profileId}/jobs/refresh/${refreshId}`,
+        );
+        row = status.refreshStatus as RefreshStatusRow;
+      } catch (err) {
+        if (!live()) return;
+        // A blip should not abandon a rescore that is still running server-side.
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= MAX_POLL_FAILURES) {
+          await finish(err instanceof Error ? err.message : 'Failed to read rescore status');
+          return;
+        }
+        schedule();
+        return;
+      }
+      if (!live()) return;
+      consecutiveFailures = 0;
+      if (row.status === 'COMPLETED' || row.status === 'FAILED') {
+        await finish(row.status === 'FAILED' ? (row.description ?? 'Rescore failed') : null);
+        return;
+      }
+      schedule();
+    };
+    schedule();
+  }, [profileId, onDone, cancel]);
 
   return { running, error, start };
 }
@@ -107,7 +154,7 @@ function StaleBanner({
             older version of your knowledge base.
           </p>
         ) : (
-          <p>The rescore did not finish.</p>
+          <p>The last rescore ran into a problem.</p>
         )}
         {staleCount > 0 && (
           <button
@@ -151,11 +198,16 @@ export default function JobList({ profileId }: { profileId: number }) {
   }, [fetchMatches]);
 
   // After a rescore the list refreshes in place, without the loading state.
+  // A failed reload keeps the list on screen and reports in the banner.
+  const [reloadError, setReloadError] = useState<string | null>(null);
   const reloadQuietly = useCallback(async () => {
     try {
+      setReloadError(null);
       await fetchMatches();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load matches');
+      setReloadError(
+        `Could not reload the matches: ${err instanceof Error ? err.message : 'unknown error'}`,
+      );
     }
   }, [fetchMatches]);
 
@@ -190,7 +242,7 @@ export default function JobList({ profileId }: { profileId: number }) {
       <StaleBanner
         staleCount={knowledge?.staleCount ?? 0}
         running={rescore.running}
-        error={rescore.error}
+        error={rescore.error ?? reloadError}
         onRescore={() => void rescore.start()}
       />
 

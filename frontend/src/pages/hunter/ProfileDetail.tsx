@@ -45,7 +45,8 @@ export default function ProfileDetail() {
         <h3 className="mb-4 text-lg font-semibold text-gray-900 dark:text-white">
           Scored matches
         </h3>
-        <JobList profileId={numericId} />
+        {/* Keyed so a different profile starts with fresh list and rescore state. */}
+        <JobList key={numericId} profileId={numericId} />
       </section>
     </div>
   );

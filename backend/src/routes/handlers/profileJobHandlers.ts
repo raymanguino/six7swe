@@ -125,6 +125,10 @@ export async function runRescoreForProfile(
       profileId: profileIdNum,
     });
 
+    // No stale matches: nothing was started.
+    if (refreshStatusId === null) {
+      return reply.code(204).send();
+    }
     return reply.code(202).send({ refreshStatusId });
   } catch (error) {
     if (error instanceof ProfileNotFoundError) {

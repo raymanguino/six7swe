@@ -107,6 +107,8 @@ export interface ProfileJobWithDetails extends ProfileJob {
     description: string;
     location: string | null;
     datePosted: string | null;
+    /** The posting's current content hash (the match's `jobHash` is the one it was scored at). */
+    hash: string;
   };
 }
 
@@ -146,6 +148,7 @@ export async function getJobsForProfile(
         description: jobs.description,
         location: jobs.location,
         datePosted: jobs.datePosted,
+        hash: jobs.hash,
       },
     })
     .from(profileJobs)

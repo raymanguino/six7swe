@@ -290,7 +290,10 @@ version the chunks came from (`profile_jobs.knowledge_version`) and the
 documents they belong to (`evidence`). When the current `corpus_version`
 differs, the match is stale (`isScoreStale` in `domain/jobHunt/filtering.ts`):
 the next refresh rescores it, and `POST /job-hunt/profiles/:id/jobs/rescore`
-rescores every stale match without fetching postings. Without
+rescores every stale match without fetching postings (204 when none is stale).
+A run that could not read the published profile stores no version on its rows,
+so they stay stale. Publishing the profile does not bump `corpus_version`, so
+it does not by itself mark matches stale. Without
 `KNOWLEDGE_URL` / `KNOWLEDGE_SERVICE_KEY` jobs are scored on the profile's
 fields alone and nothing is stale.
 

@@ -21,8 +21,9 @@ jest.mock('../../services/ai/jobMatch', () => ({ matchJob: jest.fn() }));
 
 const matchJobMock = matchJob as jest.MockedFunction<typeof matchJob>;
 
+const loggerError = jest.fn();
 const logger = {
-  error: () => undefined,
+  error: loggerError,
   warn: () => undefined,
   info: () => undefined,
   debug: () => undefined,
@@ -70,12 +71,17 @@ function makeJob(id: number, hash: string): Job {
   };
 }
 
-function makeMatch(job: Job, knowledgeVersion: number | null): ProfileJobWithDetails {
+/** `scoredHash` is the hash the match was scored at; the job row holds its current one. */
+function makeMatch(
+  job: Job,
+  knowledgeVersion: number | null,
+  scoredHash: string = job.hash,
+): ProfileJobWithDetails {
   return {
     id: job.id * 10,
     profileId: profile.id,
     jobId: job.id,
-    jobHash: job.hash,
+    jobHash: scoredHash,
     score: 50,
     band: 'MEDIUM',
     explanation: null,
@@ -97,6 +103,7 @@ function makeMatch(job: Job, knowledgeVersion: number | null): ProfileJobWithDet
       description: job.description,
       location: job.location,
       datePosted: job.datePosted,
+      hash: job.hash,
     },
   };
 }
@@ -122,8 +129,12 @@ function makeKnowledge(
   };
 }
 
-/** Resolves once the background run has written a terminal status. */
-function terminalStatus(): { update: jest.Mock; done: Promise<string> } {
+/**
+ * Resolves once the background run has written (or tried to write) a
+ * terminal status. With `failTerminalWrite` that write rejects, as when the
+ * database drops out.
+ */
+function terminalStatus(failTerminalWrite: boolean): { update: jest.Mock; done: Promise<string> } {
   let resolve: (description: string) => void = () => undefined;
   const done = new Promise<string>((r) => {
     resolve = r;
@@ -131,6 +142,7 @@ function terminalStatus(): { update: jest.Mock; done: Promise<string> } {
   const update = jest.fn(async (_id: number, patch: { status?: string; description?: string }) => {
     if (patch.status === 'COMPLETED' || patch.status === 'FAILED') {
       resolve(`${patch.status}: ${patch.description ?? ''}`);
+      if (failTerminalWrite) throw new Error('database unavailable');
     }
     return true;
   });
@@ -141,8 +153,10 @@ function build(options: {
   knowledge: JobKnowledgeSource | null;
   fetched?: Job[];
   existing?: ProfileJobWithDetails[];
+  failTerminalWrite?: boolean;
 }) {
-  const status = terminalStatus();
+  const status = terminalStatus(options.failTerminalWrite ?? false);
+  const newProfileRefreshStatus = jest.fn(async () => ({ id: 42 }));
   const inserted: InsertProfileJobInput[] = [];
   const existing = options.existing ?? [];
   const service = createJobRefreshService({
@@ -163,16 +177,22 @@ function build(options: {
     profileService: { getProfileById: async () => profile } as never,
     refreshStatusService: {
       getActiveRefreshForProfile: async () => null,
-      newProfileRefreshStatus: async () => ({ id: 42 }),
+      newProfileRefreshStatus,
       updateRefreshStatus: status.update,
     } as never,
     knowledge: options.knowledge,
     logger,
   });
-  return { service, inserted, done: status.done };
+  return { service, inserted, done: status.done, newProfileRefreshStatus };
+}
+
+/** Lets the background run's remaining microtasks settle. */
+function settle(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 beforeEach(() => {
+  loggerError.mockReset();
   matchJobMock.mockReset();
   matchJobMock.mockResolvedValue({
     score: 80,
@@ -268,24 +288,119 @@ describe('refresh scoring against the knowledge base', () => {
   });
 });
 
+describe('degraded runs and failed status writes', () => {
+  it('stores no knowledge version when the profile summary cannot be read', async () => {
+    const knowledge = makeKnowledge(6);
+    knowledge.getProfileSummary.mockRejectedValue(new Error('/profile/published answered 500'));
+    const { service, inserted, done } = build({ knowledge, fetched: [makeJob(1, 'h1')] });
+
+    await service.start({ profileId: 1 });
+    expect(await done).toMatch(/^COMPLETED/);
+
+    // Scored, but left stale so a later run redoes it with the summary.
+    expect(inserted[0]).toMatchObject({ job_id: 1, knowledge_version: null });
+  });
+
+  it('logs, and never rejects, when the FAILED status cannot be written', async () => {
+    const knowledge = makeKnowledge(1);
+    knowledge.getVersion.mockRejectedValue(new Error('version down'));
+    const { service, done } = build({
+      knowledge,
+      fetched: [makeJob(1, 'h1')],
+      failTerminalWrite: true,
+    });
+    const unhandled = jest.fn();
+    process.on('unhandledRejection', unhandled);
+
+    try {
+      await service.start({ profileId: 1 });
+      expect(await done).toBe('FAILED: version down');
+      await settle();
+
+      expect(unhandled).not.toHaveBeenCalled();
+      expect(loggerError).toHaveBeenCalledWith(
+        expect.objectContaining({ refreshId: 42, profileId: 1 }),
+        'Could not mark the refresh as failed',
+      );
+    } finally {
+      process.off('unhandledRejection', unhandled);
+    }
+  });
+
+  it('logs, and never rejects, when a rescore cannot write its terminal status', async () => {
+    const knowledge = makeKnowledge(5);
+    const { service, done } = build({
+      knowledge,
+      existing: [makeMatch(makeJob(1, 'h1'), 4)],
+      failTerminalWrite: true,
+    });
+    const unhandled = jest.fn();
+    process.on('unhandledRejection', unhandled);
+
+    try {
+      await service.rescore({ profileId: 1 });
+      await done;
+      await settle();
+      await settle();
+
+      expect(unhandled).not.toHaveBeenCalled();
+      expect(loggerError).toHaveBeenCalledWith(
+        expect.anything(),
+        'Could not mark the refresh as failed',
+      );
+    } finally {
+      process.off('unhandledRejection', unhandled);
+    }
+  });
+});
+
 describe('rescore', () => {
-  it('rescores only stale matches, keeping their job hash', async () => {
+  it('rescores only stale matches with the current job hash', async () => {
     const knowledge = makeKnowledge(5);
     const fresh = makeJob(1, 'h1');
+    // Scored at hash 'old2'; the posting has since changed to 'h2'.
     const older = makeJob(2, 'h2');
     const preKnowledge = makeJob(3, 'h3');
     const { service, inserted, done } = build({
       knowledge,
-      existing: [makeMatch(fresh, 5), makeMatch(older, 4), makeMatch(preKnowledge, null)],
+      existing: [makeMatch(fresh, 5), makeMatch(older, 4, 'old2'), makeMatch(preKnowledge, null)],
     });
 
-    await service.rescore({ profileId: 1 });
+    await expect(service.rescore({ profileId: 1 })).resolves.toEqual({ refreshStatusId: 42 });
 
     expect(await done).toMatch(/^COMPLETED: Rescore completed. Rescored 2 match/);
     expect(inserted.map((row) => [row.job_id, row.job_hash, row.knowledge_version])).toEqual([
       [2, 'h2', 5],
       [3, 'h3', 5],
     ]);
+  });
+
+  it('starts nothing when no match is stale', async () => {
+    const knowledge = makeKnowledge(5);
+    const { service, newProfileRefreshStatus } = build({
+      knowledge,
+      existing: [makeMatch(makeJob(1, 'h1'), 5)],
+    });
+
+    await expect(service.rescore({ profileId: 1 })).resolves.toEqual({ refreshStatusId: null });
+    expect(newProfileRefreshStatus).not.toHaveBeenCalled();
+    expect(matchJobMock).not.toHaveBeenCalled();
+  });
+
+  it('fails the rescore when every stale match fails to evaluate', async () => {
+    const knowledge = makeKnowledge(5);
+    matchJobMock.mockRejectedValue(new Error('model unavailable'));
+    const { service, inserted, done } = build({
+      knowledge,
+      existing: [makeMatch(makeJob(1, 'h1'), 4), makeMatch(makeJob(2, 'h2'), null)],
+    });
+
+    await service.rescore({ profileId: 1 });
+
+    expect(await done).toBe(
+      'FAILED: Rescore failed: none of the 2 stale match(es) could be evaluated.',
+    );
+    expect(inserted).toEqual([]);
   });
 
   it('is refused when the knowledge service is not configured', async () => {
