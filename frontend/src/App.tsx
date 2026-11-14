@@ -4,6 +4,7 @@ import { useTheme } from './contexts/ThemeContext';
 import Header from './components/Header';
 import ChatAssistant from './components/ChatAssistant';
 import Landing from './pages/Landing';
+import NotFound from './pages/NotFound';
 import type { SectionId } from './pages/Landing';
 import { AuthProvider } from './contexts/AuthContext';
 import HunterLayout from './pages/hunter/HunterLayout';
@@ -56,6 +57,20 @@ function App() {
             />
             <Route path="/work" element={<Navigate to="/#projects" replace />} />
             <Route path="/contacts" element={<Navigate to="/#contacts" replace />} />
+
+            {/* Anything else, including unknown /hunter/* paths. */}
+            <Route
+              path="*"
+              element={
+                <>
+                  <Header activeSection={activeSection} />
+                  <main className="flex-1 pt-16">
+                    <NotFound />
+                  </main>
+                  <ChatAssistant />
+                </>
+              }
+            />
           </Routes>
         </div>
       </AuthProvider>
