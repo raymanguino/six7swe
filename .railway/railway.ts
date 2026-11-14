@@ -162,6 +162,10 @@ export default defineRailway(() => {
       OPENAI_API_KEY: preserve(),
       SUPABASE_URL: preserve(),
       SUPABASE_SECRET_KEY: preserve(),
+      // The model that drafts the landing profile from the primary resume (#86). Its default,
+      // `none`, turns drafting off, so production names it; `openai` reuses OPENAI_API_KEY
+      // above, so it needs no new secret. The model defaults to gpt-4o-mini (PROFILE_DRAFT_MODEL).
+      PROFILE_DRAFTER: 'openai',
     },
   });
 

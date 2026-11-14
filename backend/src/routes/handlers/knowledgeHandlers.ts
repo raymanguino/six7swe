@@ -1,5 +1,6 @@
 import { requestContext } from '@fastify/request-context';
 import { FastifyReply, FastifyRequest } from 'fastify';
+import { PublishRequestSchema, SaveDraftRequestSchema } from '@six7swe/knowledge-types';
 import { z } from 'zod';
 import type { KnowledgeConfig } from '../../config/knowledge';
 import { isKnowledgeOwner } from '../../services/knowledge/ownerGate';
@@ -7,6 +8,7 @@ import {
   forwardToKnowledge,
   UPLOAD_TIMEOUT_MS,
   type ProxyRequest,
+  type ProxyResponse,
 } from '../../services/knowledge/ownerProxy';
 import type { FetchLike } from '../../services/knowledge/transport';
 
@@ -31,6 +33,8 @@ const SearchBodySchema = z
 export interface KnowledgeHandlerDeps {
   config: KnowledgeConfig;
   fetch?: FetchLike;
+  /** Called after a profile is published, to bust the portfolio cache. */
+  onProfilePublished?: () => void;
 }
 
 type Handler = (req: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;
@@ -45,6 +49,8 @@ export function knowledgeHandlers(deps: KnowledgeHandlerDeps) {
     reply: FastifyReply,
     proxied: ProxyRequest,
     timeoutMs?: number,
+    /** Runs on the service's answer, before it is relayed. */
+    onResult?: (result: ProxyResponse) => void,
   ) {
     const { target } = deps.config;
     if (!target) {
@@ -55,11 +61,35 @@ export function knowledgeHandlers(deps: KnowledgeHandlerDeps) {
       timeoutMs,
       onFailure: (message, details) => req.log.error(details, message),
     });
+    onResult?.(result);
     reply.code(result.status);
     return result.body === undefined ? reply.send() : reply.send(result.body);
   }
 
   /** Validates `:id` as a UUID (400 otherwise) and builds the request from it. */
+  /** Forwards a validated JSON body. */
+  function withJsonBody<T>(
+    schema: z.ZodType<T>,
+    build: (body: T) => Omit<ProxyRequest, 'body' | 'contentType'>,
+    onResult?: (result: ProxyResponse) => void,
+  ): Handler {
+    return async (req, reply) => {
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) return badRequest(reply, parsed.error);
+      return forward(
+        req,
+        reply,
+        {
+          ...build(parsed.data),
+          body: JSON.stringify(parsed.data),
+          contentType: 'application/json',
+        },
+        undefined,
+        onResult,
+      );
+    };
+  }
+
   function withDocumentId(build: (id: string) => ProxyRequest): Handler {
     return async (req, reply) => {
       const parsed = DocumentParamsSchema.safeParse(req.params);
@@ -118,5 +148,34 @@ export function knowledgeHandlers(deps: KnowledgeHandlerDeps) {
         contentType: 'application/json',
       });
     },
+
+    /** The draft, the published profile and the drafting status, for the review screen. */
+    async getProfile(req: FastifyRequest, reply: FastifyReply) {
+      return forward(req, reply, { method: 'GET', path: '/profile' });
+    },
+
+    /** Saves the owner's edits to the draft; validated here and again by the service. */
+    saveProfileDraft: withJsonBody(SaveDraftRequestSchema, () => ({
+      method: 'PUT',
+      path: '/profile/draft',
+    })),
+
+    /** Drafts again from the primary resume (202; the service drafts in the background). */
+    async redraftProfile(req: FastifyRequest, reply: FastifyReply) {
+      return forward(req, reply, { method: 'POST', path: '/profile/draft' });
+    },
+
+    async discardProfileDraft(req: FastifyRequest, reply: FastifyReply) {
+      return forward(req, reply, { method: 'DELETE', path: '/profile/draft' });
+    },
+
+    /** Publishes the reviewed draft, then busts the portfolio cache so the landing page shows it. */
+    publishProfile: withJsonBody(
+      PublishRequestSchema,
+      () => ({ method: 'POST', path: '/profile/publish' }),
+      (result) => {
+        if (result.status === 200) deps.onProfilePublished?.();
+      },
+    ),
   };
 }

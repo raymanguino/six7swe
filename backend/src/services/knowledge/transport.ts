@@ -74,6 +74,34 @@ export interface KnowledgeReply {
  * connection dropped or a timeout while the body is read.
  */
 export async function sendKnowledgeRequest(request: KnowledgeRequest): Promise<KnowledgeReply> {
+  return exchange(request, async (response) => ({
+    status: response.status,
+    text: await response.text(),
+  }));
+}
+
+export interface KnowledgeBytesReply {
+  status: number;
+  contentType: string | null;
+  /** The raw body; empty when there is none. */
+  bytes: Buffer;
+}
+
+/** `sendKnowledgeRequest` for a binary body, such as the resume PDF. */
+export async function sendKnowledgeRequestForBytes(
+  request: KnowledgeRequest,
+): Promise<KnowledgeBytesReply> {
+  return exchange(request, async (response) => ({
+    status: response.status,
+    contentType: response.headers.get('content-type'),
+    bytes: Buffer.from(await response.arrayBuffer()),
+  }));
+}
+
+async function exchange<T>(
+  request: KnowledgeRequest,
+  read: (response: Response) => Promise<T>,
+): Promise<T> {
   const doFetch: FetchLike = request.fetch ?? ((url, init) => fetch(url, init));
   const headers: Record<string, string> = { [SERVICE_KEY_HEADER]: request.key };
   if (request.contentType) headers['content-type'] = request.contentType;
@@ -93,7 +121,7 @@ export async function sendKnowledgeRequest(request: KnowledgeRequest): Promise<K
     });
     // Read inside the try: the timeout and a dropped connection can also
     // strike while the body streams in.
-    return { status: response.status, text: await response.text() };
+    return await read(response);
   } catch (error) {
     throw new KnowledgeTransportError(
       isTimeoutError(error) ? 'timeout' : 'unreachable',
