@@ -1,5 +1,12 @@
 import { Link, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
+import { useKnowledgeOwner } from '../../hooks/useKnowledgeOwner';
+
+/** What the hunter pages read from the layout through `useOutletContext`. */
+export interface HunterOutletContext {
+  /** Null while loading. */
+  isKnowledgeOwner: boolean | null;
+}
 
 /**
  * Layout for the job-hunter product.
@@ -10,6 +17,8 @@ import { useAuth } from '../../contexts/AuthContext';
 export default function HunterLayout() {
   const { userEmail, signOut } = useAuth();
   const navigate = useNavigate();
+  const isKnowledgeOwner = useKnowledgeOwner();
+  const outletContext: HunterOutletContext = { isKnowledgeOwner };
 
   const handleSignOut = async () => {
     await signOut();
@@ -35,6 +44,15 @@ export default function HunterLayout() {
             >
               Profiles
             </Link>
+            {/* Owner only. The backend answers 403 to anyone else regardless. */}
+            {isKnowledgeOwner && (
+              <Link
+                to="/hunter/knowledge"
+                className="text-sm font-medium text-gray-700 hover:text-primary-600 dark:text-gray-200"
+              >
+                Knowledge
+              </Link>
+            )}
             <Link
               to="/"
               className="text-sm font-medium text-gray-700 hover:text-primary-600 dark:text-gray-200"
@@ -53,7 +71,7 @@ export default function HunterLayout() {
       </header>
 
       <main className="mx-auto max-w-6xl px-4 py-8">
-        <Outlet />
+        <Outlet context={outletContext} />
       </main>
     </div>
   );
