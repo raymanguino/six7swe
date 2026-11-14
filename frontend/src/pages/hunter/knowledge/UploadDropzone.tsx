@@ -2,12 +2,15 @@ import { useRef, useState } from 'react';
 import { ACCEPTED_EXTENSIONS, isAcceptedFile, type DocumentKind } from './types';
 
 interface UploadDropzoneProps {
-  /** Uploads one file; resolves once the service has accepted it (ingestion continues). */
-  onUpload: (file: File, kind: DocumentKind) => Promise<unknown>;
+  /**
+   * Uploads the files, reporting each failure itself; resolves once the
+   * service has accepted or refused every one (ingestion continues).
+   */
+  onUploadBatch: (files: File[], kind: DocumentKind) => Promise<void>;
 }
 
 /** Drag-and-drop (or browse) upload for pdf, md and txt files. */
-export default function UploadDropzone({ onUpload }: UploadDropzoneProps) {
+export default function UploadDropzone({ onUploadBatch }: UploadDropzoneProps) {
   const [kind, setKind] = useState<DocumentKind>('supporting');
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -15,16 +18,16 @@ export default function UploadDropzone({ onUpload }: UploadDropzoneProps) {
   const input = useRef<HTMLInputElement>(null);
 
   const handleFiles = async (list: FileList | null) => {
-    if (!list || list.length === 0) return;
+    // One batch at a time; a drop during an upload is ignored.
+    if (uploading || !list || list.length === 0) return;
     const files = Array.from(list);
     setRejected(files.filter((f) => !isAcceptedFile(f)).map((f) => f.name));
+    const accepted = files.filter(isAcceptedFile);
+    if (accepted.length === 0) return;
 
     setUploading(true);
     try {
-      // One at a time: the service ingests serially anyway.
-      for (const file of files.filter(isAcceptedFile)) {
-        await onUpload(file, kind);
-      }
+      await onUploadBatch(accepted, kind);
     } finally {
       setUploading(false);
       if (input.current) input.current.value = '';
@@ -56,11 +59,14 @@ export default function UploadDropzone({ onUpload }: UploadDropzoneProps) {
         role="button"
         tabIndex={0}
         aria-label="Upload files"
-        onClick={() => input.current?.click()}
+        aria-disabled={uploading}
+        onClick={() => {
+          if (!uploading) input.current?.click();
+        }}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
-            input.current?.click();
+            if (!uploading) input.current?.click();
           }
         }}
         onDragOver={(e) => {

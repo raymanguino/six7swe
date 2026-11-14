@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { apiRequest } from '../../../utils/api';
-import { DEFAULT_SEARCH_K, MAX_SEARCH_K, type SearchResponse } from './types';
+import { errorMessage } from '../../../utils/errorMessage';
+import { DEFAULT_SEARCH_K, MAX_SEARCH_K, parseSearch, type SearchResponse } from './types';
 
 /**
  * "Ask as a visitor": runs the retrieval the public chat will use and shows
@@ -19,13 +20,13 @@ export default function SearchPlayground() {
     setSearching(true);
     setError(null);
     try {
-      const data = (await apiRequest('/knowledge/search', {
+      const data: unknown = await apiRequest('/knowledge/search', {
         method: 'POST',
         body: JSON.stringify({ query: query.trim(), k }),
-      })) as SearchResponse;
-      setResult(data);
+      });
+      setResult(parseSearch(data));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Search failed');
+      setError(errorMessage(err, 'Search failed'));
     } finally {
       setSearching(false);
     }

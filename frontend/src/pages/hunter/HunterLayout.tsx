@@ -1,11 +1,10 @@
 import { Link, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { useKnowledgeOwner } from '../../hooks/useKnowledgeOwner';
+import { useKnowledgeOwner, type KnowledgeOwnerState } from '../../hooks/useKnowledgeOwner';
 
 /** What the hunter pages read from the layout through `useOutletContext`. */
 export interface HunterOutletContext {
-  /** Null while loading. */
-  isKnowledgeOwner: boolean | null;
+  knowledgeOwner: KnowledgeOwnerState;
 }
 
 /**
@@ -17,8 +16,9 @@ export interface HunterOutletContext {
 export default function HunterLayout() {
   const { userEmail, signOut } = useAuth();
   const navigate = useNavigate();
-  const isKnowledgeOwner = useKnowledgeOwner();
-  const outletContext: HunterOutletContext = { isKnowledgeOwner };
+  const knowledgeOwner = useKnowledgeOwner();
+  const isKnowledgeOwner = knowledgeOwner.isOwner === true;
+  const outletContext: HunterOutletContext = { knowledgeOwner };
 
   const handleSignOut = async () => {
     await signOut();

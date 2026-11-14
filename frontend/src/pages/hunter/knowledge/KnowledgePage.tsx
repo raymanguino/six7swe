@@ -11,18 +11,25 @@ import { useKnowledgeDocuments } from './useKnowledgeDocuments';
  * The owner's knowledge base: upload, the document table with live status,
  * the extracted-text preview and the "ask as a visitor" playground.
  *
- * Owner only. Anyone else is sent back to the profiles; the backend answers
- * 403 to their requests regardless.
+ * Owner only. Anyone the backend says is not the owner is sent back to the
+ * profiles; the backend answers 403 to their requests regardless.
  */
 export default function KnowledgePage() {
-  const { isKnowledgeOwner } = useOutletContext<HunterOutletContext>();
-  const knowledge = useKnowledgeDocuments(isKnowledgeOwner === true);
+  const { knowledgeOwner } = useOutletContext<HunterOutletContext>();
+  const knowledge = useKnowledgeDocuments(knowledgeOwner.isOwner === true);
   const [previewId, setPreviewId] = useState<string | null>(null);
 
-  if (isKnowledgeOwner === null) {
+  if (knowledgeOwner.failed) {
+    return (
+      <p className="text-sm text-gray-600 dark:text-gray-300">
+        Could not check access to the knowledge base. Reload the page to try again.
+      </p>
+    );
+  }
+  if (knowledgeOwner.isOwner === null) {
     return <p className="text-sm text-gray-500">Loading...</p>;
   }
-  if (!isKnowledgeOwner) {
+  if (!knowledgeOwner.isOwner) {
     return <Navigate to="/hunter/profiles" replace />;
   }
 
@@ -33,21 +40,32 @@ export default function KnowledgePage() {
       <section>
         <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Knowledge</h2>
         <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
-          The documents the portfolio chat and the job matcher answer from. The newest ready resume
-          is primary unless you pick another.
+          The documents the portfolio chat and the job matcher answer from. When a resume finishes
+          processing, the newest ready resume becomes primary. &ldquo;Make primary&rdquo; picks
+          another one until the next resume finishes processing.
         </p>
       </section>
 
-      {knowledge.error && (
+      {knowledge.loadError && (
+        <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/40 dark:text-red-200">
+          {knowledge.loadError}
+        </p>
+      )}
+
+      {knowledge.actionErrors.length > 0 && (
         <div className="flex items-start justify-between gap-3 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/40 dark:text-red-200">
-          <p>{knowledge.error}</p>
-          <button type="button" onClick={knowledge.clearError} className="font-medium underline">
+          <ul className="list-disc space-y-1 pl-5">
+            {knowledge.actionErrors.map((message, i) => (
+              <li key={i}>{message}</li>
+            ))}
+          </ul>
+          <button type="button" onClick={knowledge.dismissErrors} className="font-medium underline">
             Dismiss
           </button>
         </div>
       )}
 
-      <UploadDropzone onUpload={knowledge.upload} />
+      <UploadDropzone onUploadBatch={knowledge.uploadBatch} />
 
       <section className="space-y-4">
         <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Documents</h3>
@@ -65,7 +83,7 @@ export default function KnowledgePage() {
         />
       </section>
 
-      {previewed && <TextPreview document={previewed} onClose={() => setPreviewId(null)} />}
+      {previewed && <TextPreview doc={previewed} onClose={() => setPreviewId(null)} />}
 
       <SearchPlayground />
     </div>

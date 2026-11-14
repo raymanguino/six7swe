@@ -36,14 +36,19 @@ export default function DocumentTable({
 }: DocumentTableProps) {
   const replaceInput = useRef<HTMLInputElement>(null);
   const [replacing, setReplacing] = useState<KnowledgeDocument | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  // Per row: a replace can run for minutes while other rows stay usable.
+  const [busyIds, setBusyIds] = useState<ReadonlySet<string>>(() => new Set());
 
   const withBusy = async (doc: KnowledgeDocument, action: () => Promise<void>) => {
-    setBusyId(doc.id);
+    setBusyIds((ids) => new Set(ids).add(doc.id));
     try {
       await action();
     } finally {
-      setBusyId(null);
+      setBusyIds((ids) => {
+        const next = new Set(ids);
+        next.delete(doc.id);
+        return next;
+      });
     }
   };
 
@@ -98,7 +103,7 @@ export default function DocumentTable({
         </thead>
         <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
           {documents.map((doc) => {
-            const busy = busyId === doc.id;
+            const busy = busyIds.has(doc.id);
             return (
               <tr
                 key={doc.id}

@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react';
 import { apiRequest } from '../../../utils/api';
-import type { DocumentTextResponse, KnowledgeDocument } from './types';
+import { errorMessage } from '../../../utils/errorMessage';
+import { parseText, type KnowledgeDocument } from './types';
 
 interface TextPreviewProps {
-  document: KnowledgeDocument;
+  doc: KnowledgeDocument;
   onClose: () => void;
 }
 
 /** The text the service extracted from a document, as chunking and retrieval see it. */
-export default function TextPreview({ document, onClose }: TextPreviewProps) {
+export default function TextPreview({ doc, onClose }: TextPreviewProps) {
   const [text, setText] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -17,12 +18,12 @@ export default function TextPreview({ document, onClose }: TextPreviewProps) {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    (apiRequest(`/knowledge/documents/${document.id}/text`) as Promise<DocumentTextResponse>)
-      .then((data) => {
-        if (!cancelled) setText(data.text);
+    apiRequest(`/knowledge/documents/${doc.id}/text`)
+      .then((data: unknown) => {
+        if (!cancelled) setText(parseText(data).text);
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load the text');
+        if (!cancelled) setError(errorMessage(err, 'Failed to load the text'));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -31,13 +32,13 @@ export default function TextPreview({ document, onClose }: TextPreviewProps) {
       cancelled = true;
     };
     // Re-read when the document is re-ingested, not only when another is picked.
-  }, [document.id, document.updatedAt]);
+  }, [doc.id, doc.updatedAt]);
 
   return (
     <section className="rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-800">
       <div className="mb-3 flex items-center justify-between gap-3">
         <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-          Extracted text: {document.filename}
+          Extracted text: {doc.filename}
         </h3>
         <button
           type="button"
