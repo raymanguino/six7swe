@@ -174,6 +174,10 @@ export default defineRailway(() => {
       // app's LLM provider. Its default, `none`, turns drafting off, so production names it. The
       // model defaults to MiniMax-M3 (PROFILE_DRAFT_MODEL).
       PROFILE_DRAFTER: 'minimax',
+      // The model that answers each chat eval question in a run (#85), from the retrieved
+      // chunks. `none` records retrieval only. A run is the 10 active questions, once per corpus
+      // change or on the owner's request. Uses the same MiniMax keys.
+      EVAL_ANSWERER: 'minimax',
       // Set these on the knowledge service in Railway (the same values as the backend's).
       // The service refuses to boot with PROFILE_DRAFTER=minimax and no MINIMAX_API_KEY. The
       // secondary key is optional: it is tried once when MiniMax answers 429.

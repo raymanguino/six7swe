@@ -63,6 +63,8 @@ export const DEFAULT_EVAL_SETTINGS: EvalSettings = {
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Purging is cheap but not free; once an hour per owner is plenty for a 90-day rule. */
 const PURGE_INTERVAL_MS = 60 * 60 * 1000;
+/** Questions waiting to be recorded beyond this are dropped (and logged). */
+export const MAX_WAITING_RECORDS = 100;
 
 export interface RecordInput {
   ownerId: string;
@@ -138,17 +140,28 @@ export function createEvalSet(deps: EvalSetDeps): EvalSet {
   const now = deps.now ?? (() => new Date());
   const { repo, embedder, log } = deps;
   const lastPurge = new Map<string, number>();
+  const seeded = new Set<string>();
 
+  // Questions waiting to be recorded. The backend's chat is rate-limited, so
+  // this stays small; the cap only stops a flood from growing it unbounded.
+  let waiting = 0;
   const queue = new SerialQueue<RecordInput & { id: string }>(
     async (item) => {
+      waiting--;
       await record(item);
     },
     (item, error) => log.warn({ err: error, ownerId: item.ownerId }, 'Could not record question'),
   );
 
   async function ensureSeeded(ownerId: string): Promise<void> {
+    // Once an owner has questions they always will (canned ones are never
+    // purged), so the check runs once per owner and process.
+    if (seeded.has(ownerId)) return;
     // Cheap check first, so the canned questions are embedded only once.
-    if ((await repo.listQuestions(ownerId)).length > 0) return;
+    if ((await repo.listQuestions(ownerId)).length > 0) {
+      seeded.add(ownerId);
+      return;
+    }
     const texts = [...CANNED_EVAL_QUESTIONS];
     const vectors = await embedder.embed(texts);
     const canned = texts.map((question, i) => {
@@ -159,6 +172,7 @@ export function createEvalSet(deps: EvalSetDeps): EvalSet {
     if (await repo.seedIfEmpty(ownerId, canned, now())) {
       log.info({ ownerId, count: canned.length }, 'Seeded the eval set');
     }
+    seeded.add(ownerId);
   }
 
   async function purge(ownerId: string): Promise<number> {
@@ -292,7 +306,11 @@ export function createEvalSet(deps: EvalSetDeps): EvalSet {
     ensureSeeded,
     record,
     enqueueRecord(input) {
-      queue.enqueue({ ...input, id: randomUUID() });
+      if (waiting >= MAX_WAITING_RECORDS) {
+        log.warn({ ownerId: input.ownerId }, 'Too many questions waiting; not recording this one');
+        return;
+      }
+      if (queue.enqueue({ ...input, id: randomUUID() })) waiting++;
     },
     async list(ownerId) {
       await maybePurge(ownerId);
@@ -301,6 +319,10 @@ export function createEvalSet(deps: EvalSetDeps): EvalSet {
     purge,
     act,
     idle: () => queue.idle(),
-    stop: () => queue.stop(),
+    async stop() {
+      const dropped = await queue.stop();
+      waiting = 0;
+      return dropped;
+    },
   };
 }
