@@ -438,6 +438,33 @@ describe('normalizeProfileDraft', () => {
     // A phone number that long is not one: dropped.
     expect(profile.links.phone).toBeNull();
   });
+
+  it('treats keys the model left out as empty, without dropping the rest', () => {
+    const profile = normalizeProfileDraft({
+      name: 'Jordan',
+      title: 'Engineer',
+      links: { github: 'https://github.com/jordan' },
+    });
+    expect(profile).toMatchObject({
+      location: null,
+      summary: '',
+      skills: [],
+      links: { email: null, phone: null, github: 'https://github.com/jordan', website: null },
+    });
+  });
+
+  it('cuts by UTF-16 code units without splitting an emoji', () => {
+    const emoji = (n: number) => '😀'.repeat(n); // two code units each
+    const profile = normalizeProfileDraft({
+      name: emoji(150),
+      title: 'x' + emoji(150), // odd offset: the cut would land mid-pair
+      summary: emoji(2500),
+    });
+    const { shortText, longText } = PROFILE_LIMITS;
+    expect(profile.name).toBe(emoji(shortText / 2));
+    expect(profile.title).toBe('x' + emoji(shortText / 2 - 1));
+    expect(profile.summary).toBe(emoji(longText / 2));
+  });
 });
 
 describe('drafting races', () => {

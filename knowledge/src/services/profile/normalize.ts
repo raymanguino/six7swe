@@ -19,16 +19,24 @@ import { PROFILE_LIMITS, ProfileDataSchema, type ProfileData } from '../../contr
  * unchanged and fails there.
  */
 
-/** Cuts to `max` code points (never splitting a surrogate pair) and trims the cut end. */
+/**
+ * Cuts to `max` UTF-16 code units (what zod's `.max()` counts), never leaving
+ * half a surrogate pair, and trims the cut end.
+ */
 function truncate(text: string, max: number): string {
-  const chars = Array.from(text);
-  return chars.length <= max ? text : chars.slice(0, max).join('').trimEnd();
+  if (text.length <= max) return text;
+  let end = max;
+  const last = text.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  return text.slice(0, end).trimEnd();
 }
 
 /** Any string or number as trimmed text, cut to `max`; anything else is ''. */
 const looseText = (max: number) =>
   z
     .unknown()
+    // A key the model left out is '' too; without the default, zod rejects it.
+    .default('')
     .transform((v) =>
       truncate(typeof v === 'string' ? v.trim() : typeof v === 'number' ? String(v) : '', max),
     );
