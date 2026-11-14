@@ -44,8 +44,8 @@ async function main(): Promise<void> {
   // Imported after the env is loaded: `src/db` reads DATABASE_URL on load.
   const { getChatContext, getKnowledgeChatContext } = await import('../src/data/chatContext');
   const { getDefaultRetriever } = await import('../src/services/knowledgeRetrieval');
-  const { buildChatMessages } = await import('../src/services/ai/chat');
-  const { chatCompletion, structuredCompletion } = await import('../src/services/minimaxService');
+  const { answerWithContext } = await import('../src/services/ai/chat');
+  const { structuredCompletion } = await import('../src/services/minimaxService');
   const { SEED_EVAL_QUESTIONS, JudgeVerdictSchema, buildJudgeMessages, renderEvalReport } =
     await import('../src/domain/chatEval');
   type EvalRow = import('../src/domain/chatEval').EvalRow;
@@ -56,57 +56,68 @@ async function main(): Promise<void> {
   const stuffedContext = await getChatContext();
   const log = {
     warn: (obj: Record<string, unknown>, msg: string) =>
-      process.stderr.write(`warn: ${msg} ${obj.err instanceof Error ? obj.err.message : ''}\n`),
+      process.stderr.write(`warn: ${msg} ${JSON.stringify(obj.error ?? {})}\n`),
   };
+  const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
   const rows: EvalRow[] = [];
   for (const [i, question] of SEED_EVAL_QUESTIONS.entries()) {
     process.stderr.write(`[${i + 1}/${SEED_EVAL_QUESTIONS.length}] ${question.question}\n`);
-    const retrieved = await getKnowledgeChatContext({
-      message: question.question,
-      history: question.history,
-      retriever,
-      log,
-    });
-
-    const answer = (context: string) =>
-      chatCompletion(buildChatMessages(context, question.question, question.history), {
-        reasoning_effort: 'medium',
-      });
-    const [stuffedAnswer, retrievedAnswer] = await Promise.all([
-      answer(stuffedContext),
-      answer(retrieved.context),
-    ]);
-
     // Alternate which side is shown first, so position bias cancels out.
     const firstSide = i % 2 === 0 ? 'stuffed' : 'retrieved';
     const row: EvalRow = {
       question,
-      stuffed: { answer: stuffedAnswer, contextChars: stuffedContext.length },
-      retrieved: {
-        answer: retrievedAnswer,
-        contextChars: retrieved.context.length,
-        chunkCount: retrieved.chunkCount,
-        mode: retrieved.mode,
-      },
+      stuffed: { answer: null, contextChars: stuffedContext.length },
+      retrieved: { answer: null, contextChars: 0, chunkCount: 0, outcome: null },
       firstSide,
       verdict: null,
     };
+    rows.push(row);
+
+    // One question failing is recorded on its row; the report is always written.
     try {
+      const retrieved = await getKnowledgeChatContext({
+        message: question.question,
+        history: question.history,
+        retriever,
+        log,
+      });
+      row.retrieved.contextChars = retrieved.context.length;
+      row.retrieved.chunkCount = retrieved.chunkCount;
+      row.retrieved.outcome =
+        retrieved.mode === 'retrieved'
+          ? { mode: retrieved.mode }
+          : { mode: retrieved.mode, reason: retrieved.reason };
+
+      const [stuffedAnswer, retrievedAnswer] = await Promise.allSettled([
+        answerWithContext(stuffedContext, question.question, question.history),
+        answerWithContext(retrieved.context, question.question, question.history),
+      ]);
+      const errors: string[] = [];
+      if (stuffedAnswer.status === 'fulfilled') row.stuffed.answer = stuffedAnswer.value;
+      else errors.push(`stuffed answer: ${message(stuffedAnswer.reason)}`);
+      if (retrievedAnswer.status === 'fulfilled') row.retrieved.answer = retrievedAnswer.value;
+      else errors.push(`retrieved answer: ${message(retrievedAnswer.reason)}`);
+      if (errors.length > 0) {
+        row.error = errors.join('; ');
+        continue;
+      }
+
+      const stuffed = row.stuffed.answer ?? '';
+      const retrievedText = row.retrieved.answer ?? '';
       row.verdict = await structuredCompletion(
         buildJudgeMessages({
           reference: stuffedContext,
           question,
-          answer1: firstSide === 'stuffed' ? stuffedAnswer : retrievedAnswer,
-          answer2: firstSide === 'stuffed' ? retrievedAnswer : stuffedAnswer,
+          answer1: firstSide === 'stuffed' ? stuffed : retrievedText,
+          answer2: firstSide === 'stuffed' ? retrievedText : stuffed,
         }),
         JudgeVerdictSchema,
         { reasoning_effort: 'medium', max_tokens: 4096 },
       );
     } catch (error) {
-      row.error = error instanceof Error ? error.message : String(error);
+      row.error = message(error);
     }
-    rows.push(row);
   }
 
   const report = renderEvalReport(rows, {
@@ -117,9 +128,12 @@ async function main(): Promise<void> {
   if (out) {
     fs.writeFileSync(path.resolve(out), `${report}\n`);
     process.stderr.write(`Wrote ${path.resolve(out)}\n`);
-  } else {
-    process.stdout.write(`${report}\n`);
+    return;
   }
+  // Exit only once stdout has flushed; a piped report is otherwise cut short.
+  await new Promise<void>((resolve, reject) => {
+    process.stdout.write(`${report}\n`, (err) => (err ? reject(err) : resolve()));
+  });
 }
 
 if (require.main === module) {
@@ -128,7 +142,7 @@ if (require.main === module) {
     .catch((error: unknown) => {
       process.stderr.write(
         `Chat eval failed: ${error instanceof Error ? error.message : String(error)}\n`,
+        () => process.exit(1),
       );
-      process.exit(1);
     });
 }

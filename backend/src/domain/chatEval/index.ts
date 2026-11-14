@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { KnowledgeChatContext } from '../../data/chatContext';
 
 /**
  * The chat eval: canned questions answered twice, once with the stuffed
@@ -111,14 +112,39 @@ export function buildJudgeMessages(input: {
 
 export type Side = 'stuffed' | 'retrieved';
 
+/** How the retrieved side's context was built, from `getKnowledgeChatContext`. */
+export type RetrievalOutcome =
+  | { mode: Extract<KnowledgeChatContext, { mode: 'retrieved' }>['mode'] }
+  | Pick<Extract<KnowledgeChatContext, { mode: 'profile-only' }>, 'mode' | 'reason'>;
+
 export interface EvalRow {
   question: EvalQuestion;
-  stuffed: { answer: string; contextChars: number };
-  retrieved: { answer: string; contextChars: number; chunkCount: number; mode: string };
+  /** Null when generating that answer failed (see `error`). */
+  stuffed: { answer: string | null; contextChars: number };
+  retrieved: {
+    answer: string | null;
+    contextChars: number;
+    chunkCount: number;
+    outcome: RetrievalOutcome | null;
+  };
   /** Which side the judge saw as answer 1. */
   firstSide: Side;
   verdict: JudgeVerdict | null;
   error?: string;
+}
+
+/**
+ * The retrieved side fell back to the profile because the service failed. Its
+ * answer measures an outage, not retrieval, so it is not scored as retrieved.
+ */
+export function retrievalUnavailable(row: Pick<EvalRow, 'retrieved'>): boolean {
+  const outcome = row.retrieved.outcome;
+  return outcome?.mode === 'profile-only' && outcome.reason === 'unavailable';
+}
+
+function describeOutcome(outcome: RetrievalOutcome | null): string {
+  if (!outcome) return 'n/a';
+  return outcome.mode === 'retrieved' ? 'retrieved' : `profile-only, ${outcome.reason}`;
 }
 
 /** The judge's scores mapped back from answer 1 / answer 2 to the two sides. */
@@ -147,28 +173,44 @@ const mean = (xs: number[]) => (xs.length === 0 ? 0 : xs.reduce((a, b) => a + b,
 const oneLine = (s: string) => s.replace(/\s+/g, ' ').replace(/\|/g, '\\|').trim();
 
 export interface EvalSummary {
+  /** Rows that count: judged, with retrieval actually available. */
   judged: number;
+  /** Rows whose retrieved side fell back because the service was unavailable. */
+  unavailable: number;
+  /** Rows that failed (answer generation or judging) and were not judged. */
+  failed: number;
   stuffedMean: number;
   retrievedMean: number;
   wins: number;
   ties: number;
   losses: number;
-  /** The acceptance bar: retrieved scores at least as well as stuffed. */
+  /**
+   * The acceptance bar: every question judged with retrieval available, and
+   * retrieved scoring at least as well as stuffed on average.
+   */
   retrievedAtLeastAsGood: boolean;
 }
 
 export function summarizeEval(rows: EvalRow[]): EvalSummary {
-  const judged = rows.map(scoresBySide).filter((s) => s !== null);
-  const stuffedMean = mean(judged.map((s) => total(s.stuffed)));
-  const retrievedMean = mean(judged.map((s) => total(s.retrieved)));
+  const unavailable = rows.filter(retrievalUnavailable).length;
+  const scored = rows
+    .filter((row) => !retrievalUnavailable(row))
+    .map(scoresBySide)
+    .filter((s) => s !== null);
+  const failed = rows.filter((row) => !retrievalUnavailable(row) && !row.verdict).length;
+  const stuffedMean = mean(scored.map((s) => total(s.stuffed)));
+  const retrievedMean = mean(scored.map((s) => total(s.retrieved)));
   return {
-    judged: judged.length,
+    judged: scored.length,
+    unavailable,
+    failed,
     stuffedMean,
     retrievedMean,
-    wins: judged.filter((s) => s.winner === 'retrieved').length,
-    ties: judged.filter((s) => s.winner === 'tie').length,
-    losses: judged.filter((s) => s.winner === 'stuffed').length,
-    retrievedAtLeastAsGood: judged.length === rows.length && retrievedMean >= stuffedMean,
+    wins: scored.filter((s) => s.winner === 'retrieved').length,
+    ties: scored.filter((s) => s.winner === 'tie').length,
+    losses: scored.filter((s) => s.winner === 'stuffed').length,
+    retrievedAtLeastAsGood:
+      rows.length > 0 && scored.length === rows.length && retrievedMean >= stuffedMean,
   };
 }
 
@@ -184,17 +226,37 @@ export function renderEvalReport(
     `Generated ${meta.generatedAt} with ${meta.model}. Scores are accuracy + completeness (2-10), from a blind judge that saw the full stuffed context as the reference.`,
     '',
     `- Judged: ${summary.judged} of ${rows.length}`,
+  ];
+  if (summary.unavailable > 0) {
+    lines.push(
+      `- **Knowledge service unavailable for ${summary.unavailable} question(s):** those answers fell back to the profile only and are excluded from the scores below.`,
+    );
+  }
+  if (summary.failed > 0) {
+    lines.push(`- **Failed (not judged): ${summary.failed} question(s).** See the errors below.`);
+  }
+  lines.push(
     `- Mean score: stuffed ${summary.stuffedMean.toFixed(2)}, retrieved ${summary.retrievedMean.toFixed(2)}`,
     `- Retrieved vs stuffed: ${summary.wins} wins, ${summary.ties} ties, ${summary.losses} losses`,
-    `- Retrieved at least as good as stuffed: **${summary.retrievedAtLeastAsGood ? 'yes' : 'no'}**`,
+    `- Retrieved at least as good as stuffed: **${summary.retrievedAtLeastAsGood ? 'yes' : 'no'}**${
+      summary.retrievedAtLeastAsGood || summary.judged === rows.length
+        ? ''
+        : ' (not every question was judged with retrieval available)'
+    }`,
     '',
-    '| # | Question | Stuffed | Retrieved | Winner | Chunks | Context chars (stuffed / retrieved) |',
+    '| # | Question | Stuffed | Retrieved | Winner | Retrieval | Context chars (stuffed / retrieved) |',
     '|---|---|---|---|---|---|---|',
-  ];
+  );
   rows.forEach((row, i) => {
-    const s = scoresBySide(row);
+    const unavailable = retrievalUnavailable(row);
+    const s = unavailable ? null : scoresBySide(row);
+    const winner = unavailable
+      ? 'excluded: service unavailable'
+      : s
+        ? s.winner
+        : `error: ${oneLine(row.error ?? 'not judged')}`;
     lines.push(
-      `| ${i + 1} | ${oneLine(row.question.question)} | ${s ? total(s.stuffed) : 'n/a'} | ${s ? total(s.retrieved) : 'n/a'} | ${s ? s.winner : `error: ${oneLine(row.error ?? 'not judged')}`} | ${row.retrieved.chunkCount} (${row.retrieved.mode}) | ${row.stuffed.contextChars} / ${row.retrieved.contextChars} |`,
+      `| ${i + 1} | ${oneLine(row.question.question)} | ${s ? total(s.stuffed) : 'n/a'} | ${s ? total(s.retrieved) : 'n/a'} | ${winner} | ${row.retrieved.chunkCount} chunks (${describeOutcome(row.retrieved.outcome)}) | ${row.stuffed.contextChars} / ${row.retrieved.contextChars} |`,
     );
   });
   lines.push('', '## Answers', '');
@@ -207,14 +269,20 @@ export function renderEvalReport(
         '',
       );
     }
+    if (retrievalUnavailable(row)) {
+      lines.push(
+        '_The knowledge service was unavailable; the retrieved answer used the profile only._',
+        '',
+      );
+    }
     lines.push(
       '**Stuffed**',
       '',
-      row.stuffed.answer,
+      row.stuffed.answer ?? '_(no answer)_',
       '',
       '**Retrieved**',
       '',
-      row.retrieved.answer,
+      row.retrieved.answer ?? '_(no answer)_',
       '',
     );
     if (s && row.verdict) {
@@ -225,7 +293,8 @@ export function renderEvalReport(
         `- Retrieved: accuracy ${s.retrieved.accuracy}, completeness ${s.retrieved.completeness}. ${s.retrieved.notes}`,
         '',
       );
-    } else if (row.error) {
+    }
+    if (row.error) {
       lines.push(`**Error:** ${row.error}`, '');
     }
   });
