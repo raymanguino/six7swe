@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import type {
-  DocumentRecord,
-  KnowledgeRepository,
-  NewChunk,
-  RetrievedChunk,
+import {
+  ConflictError,
+  type DocumentRecord,
+  type KnowledgeRepository,
+  type NewChunk,
+  type RetrievedChunk,
 } from '../../db/api/repository.js';
 
 interface StoredChunk extends NewChunk {
@@ -114,6 +115,27 @@ export function createMemoryRepository(): KnowledgeRepository & {
 
     async listDocuments(ownerId) {
       return [...documents.values()].filter((d) => d.ownerId === ownerId).sort(newestFirst);
+    },
+
+    async getExtractedText(ownerId, id) {
+      const doc = documents.get(id);
+      if (!doc || doc.ownerId !== ownerId) return null;
+      return { text: extractedText.get(id) ?? null };
+    },
+
+    async setPrimaryResume(ownerId, id) {
+      const doc = documents.get(id);
+      if (!doc || doc.ownerId !== ownerId) return null;
+      if (doc.kind !== 'resume' || doc.status !== 'ready') {
+        throw new ConflictError('Only a ready resume can be the primary resume');
+      }
+      for (const d of documents.values()) {
+        if (d.ownerId === ownerId && d.isPrimaryResume && d.id !== id) {
+          update(d.id, { isPrimaryResume: false });
+        }
+      }
+      if (!doc.isPrimaryResume) update(id, { isPrimaryResume: true });
+      return documents.get(id) ?? null;
     },
 
     async resetToPending(id) {

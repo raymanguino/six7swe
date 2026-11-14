@@ -82,7 +82,8 @@ export class ConflictError extends Error {
  * ingesting and when the primary is deleted, so a resume whose ingest fails
  * never displaces a good one, and a re-upload of existing bytes never changes
  * it. A primary whose re-ingest fails stays primary until another resume
- * completes or it is deleted.
+ * completes or it is deleted. The owner can pick another ready resume
+ * (`setPrimaryResume`); that choice holds until the rule is next applied.
  */
 export interface KnowledgeRepository {
   findBySha256(ownerId: string, sha256: string): Promise<DocumentRecord | null>;
@@ -97,6 +98,23 @@ export interface KnowledgeRepository {
   getDocument(ownerId: string, id: string): Promise<DocumentRecord | null>;
 
   listDocuments(ownerId: string): Promise<DocumentRecord[]>;
+
+  /**
+   * The text extracted from one of the owner's documents. Null when the
+   * document does not exist or belongs to someone else; `text` is null until
+   * an ingest has extracted it.
+   */
+  getExtractedText(ownerId: string, id: string): Promise<{ text: string | null } | null>;
+
+  /**
+   * Makes one of the owner's ready resumes primary and demotes the previous
+   * one, atomically. Returns the updated document, or null when it does not
+   * exist or belongs to someone else. Throws a ConflictError when the
+   * document is not a ready resume. The choice holds until another resume
+   * finishes ingesting or the primary is deleted; both re-apply the
+   * newest-ready-resume rule.
+   */
+  setPrimaryResume(ownerId: string, id: string): Promise<DocumentRecord | null>;
 
   /** Puts a failed or stranded document back to `pending` for another attempt. */
   resetToPending(id: string): Promise<void>;

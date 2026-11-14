@@ -22,9 +22,9 @@ export interface BuildAppOptions {
   deps: KnowledgeDeps;
   /** Opens service routes only. */
   serviceKey: string;
-  /** Opens owner routes only, until the owner JWT gate (step 2, #83) replaces it. */
+  /** Opens owner routes only; held by the backend's owner proxy. */
   ownerKey: string;
-  /** The owner every authenticated request acts for, until the owner JWT gate lands. */
+  /** The single owner (`OWNER_AUTH_ID`) every authenticated request acts for. */
   ownerId: string;
   maxUploadBytes: number;
   logger?: FastifyServerOptions['logger'];

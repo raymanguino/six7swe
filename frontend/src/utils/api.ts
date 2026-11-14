@@ -50,8 +50,11 @@ export const apiRequest = async (endpoint: string, options: RequestInit = {}) =>
   // `Content-Type: application/json` with an empty body makes Fastify reject
   // the request with FST_ERR_CTP_EMPTY_JSON_BODY, which broke bodyless POSTs
   // such as starting a job refresh. A caller-supplied Content-Type wins.
+  // FormData is left alone: the browser sets multipart/form-data with its
+  // boundary, which a hand-written header would lose.
   const hasBody = options.body !== undefined && options.body !== null;
-  if (hasBody && headers['Content-Type'] === undefined) {
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
+  if (hasBody && !isFormData && headers['Content-Type'] === undefined) {
     headers['Content-Type'] = 'application/json';
   }
 

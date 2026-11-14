@@ -87,6 +87,11 @@ export default defineRailway(() => {
       RESEND_FROM_NAME: preserve(),
       SUPABASE_URL: preserve(),
       PORTFOLIO_CACHE_TTL_MS: preserve(),
+      // The knowledge owner proxy (/knowledge/*): the backend checks the owner's JWT, then
+      // calls the knowledge service over the private network with its owner key.
+      OWNER_AUTH_ID: preserve(),
+      KNOWLEDGE_URL: 'http://six7sweknowledge.railway.internal:3100',
+      KNOWLEDGE_OWNER_KEY: preserve(),
     },
   });
 
@@ -119,8 +124,8 @@ export default defineRailway(() => {
     // Same region as the backend, its main caller over the private network.
     replicas: { 'us-west2': 1 },
     // Private networking only (six7sweknowledge.railway.internal); the backends call it there.
-    // A public domain is added in step 2 (#83) or step 7 (#89) if browser or Claude-client
-    // access needs one.
+    // The owner's Knowledge page goes through the backend's /knowledge/* proxy, so the browser
+    // never needs a public domain. Step 7 (#89) adds one if Claude-client access needs it.
     networking: { privateNetworkEndpoint: 'six7sweknowledge' },
     // Only the variables the service requires. Optional ones (EMBEDDER, EMBEDDING_MODEL,
     // FILE_STORE, STORAGE_BUCKET, MAX_UPLOAD_BYTES, RESUME_INGESTION_ON_BOOT, ...) are left

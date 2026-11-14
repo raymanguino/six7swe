@@ -50,7 +50,7 @@ For local development point `SUPABASE_URL` at the local stack
 (`http://127.0.0.1:54321`) so the API verifies tokens issued by the local Auth
 service. It must match the frontend's `VITE_SUPABASE_URL`.
 
-Optional variables (`PORT`, `PORTFOLIO_DATA_SOURCE`, `PORTFOLIO_CACHE_TTL_MS`, `MCP_*`, `SUPABASE_JWKS_URL`, `AUTH_DEV_BYPASS`, `JOB_REFRESH_STALE_MINUTES`) are documented in [`backend/.env.example`](backend/.env.example).
+Optional variables (`PORT`, `PORTFOLIO_DATA_SOURCE`, `PORTFOLIO_CACHE_TTL_MS`, `MCP_*`, `SUPABASE_JWKS_URL`, `AUTH_DEV_BYPASS`, `JOB_REFRESH_STALE_MINUTES`, and `OWNER_AUTH_ID` / `KNOWLEDGE_URL` / `KNOWLEDGE_OWNER_KEY` for the Knowledge page) are documented in [`backend/.env.example`](backend/.env.example).
 
 Set `MINIMAX_API_KEY_SECONDARY` optionally to retry once with a second key when the primary request receives HTTP 429.
 
