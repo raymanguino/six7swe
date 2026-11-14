@@ -205,7 +205,8 @@ the never-wired `PORTFOLIO_DATA_SOURCE=mcp` path. Full details are in
   (`backend/src/data/chatContext.ts`). Retrievals are cached in memory by
   `(corpus_version, normalized question)`
   (`backend/src/services/knowledgeRetrieval.ts`); the version is re-read at most
-  every 30 s. The backend refuses to start if the flag is set without
+  every 30 s. Chunks per question default to 6 (`KNOWLEDGE_RETRIEVE_K`); production sets 10
+  (`.railway/railway.ts`). The backend refuses to start if the flag is set without
   `KNOWLEDGE_SERVICE_URL` and `KNOWLEDGE_SERVICE_KEY`. If the service fails, chat
   answers from the profile summary alone, and for the next 15 s uncached
   questions skip the service instead of waiting on it again (cached questions

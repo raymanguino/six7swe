@@ -96,6 +96,10 @@ export default defineRailway(() => {
       // the knowledge service's KNOWLEDGE_SERVICE_KEY, set to the same value on both services.
       KNOWLEDGE_SERVICE_URL: 'http://six7sweknowledge.railway.internal:3100',
       KNOWLEDGE_SERVICE_KEY: preserve(),
+      // Chunks retrieved per chat question. Chosen from the #84 chat eval (10 seed questions:
+      // stuffed mean 8.50 vs retrieved 9.20 at k=10; the default of 6 did not match stuffed).
+      // The service caps it at MAX_RETRIEVE_K (20).
+      KNOWLEDGE_RETRIEVE_K: '10',
       // The knowledge owner proxy (/knowledge/*): the backend checks the owner's JWT, then
       // calls the knowledge service over the private network with its owner key.
       OWNER_AUTH_ID: preserve(),
