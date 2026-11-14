@@ -101,6 +101,42 @@ describe('createSwrCache', () => {
     expect(load).toHaveBeenCalledTimes(2);
   });
 
+  it('asks the source again right after invalidate(), even during a failure pause', async () => {
+    const { cache, load, willLoad } = setup();
+    willLoad(() => Promise.reject(new Error('down')));
+    await expect(cache.get()).rejects.toThrow('down');
+
+    // The service is back and the owner publishes within the pause.
+    willLoad(() => Promise.resolve('published'));
+    cache.invalidate();
+    expect(await cache.get()).toBe('published');
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it('treats a load that throws synchronously like one that rejects', async () => {
+    const { cache, load, errors, advance, willLoad } = setup();
+    willLoad(() => {
+      throw new Error('sync boom');
+    });
+    await expect(cache.get()).rejects.toThrow('sync boom');
+    // Remembered like any failure: no second call within the pause.
+    await expect(cache.get()).rejects.toThrow('sync boom');
+    expect(load).toHaveBeenCalledTimes(1);
+
+    advance(30);
+    willLoad(() => Promise.resolve('v1'));
+    expect(await cache.get()).toBe('v1');
+
+    // As a background refresh, it is reported and the value is kept.
+    advance(100);
+    willLoad(() => {
+      throw new Error('sync boom');
+    });
+    expect(await cache.get()).toBe('v1');
+    await flush();
+    expect(errors).toHaveLength(1);
+  });
+
   it('never lets a load started before invalidate() stand in for fresh data', async () => {
     const { cache, advance, willLoad } = setup();
     await cache.get();

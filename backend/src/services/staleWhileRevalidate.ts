@@ -48,7 +48,10 @@ export function createSwrCache<T>(load: () => Promise<T>, options: SwrCacheOptio
   function refresh(): Promise<T> {
     if (inFlight && inFlight.generation === generation) return inFlight.promise;
     const started = generation;
-    const promise = load()
+    // Called inside a promise, so a load that throws synchronously takes the
+    // same failure path as one that rejects.
+    const promise = Promise.resolve()
+      .then(load)
       .then((value) => {
         if (started === generation) {
           entry = { value, expiresAt: now() + options.ttlMs };
@@ -102,6 +105,8 @@ export function createSwrCache<T>(load: () => Promise<T>, options: SwrCacheOptio
     invalidate() {
       generation += 1;
       invalidated = true;
+      // A remembered failure predates the change; try the source again now.
+      failure = null;
     },
     clear() {
       entry = null;
