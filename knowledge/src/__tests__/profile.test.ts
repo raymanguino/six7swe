@@ -16,6 +16,7 @@ import {
   createMiniMaxProfileDrafter,
   MINIMAX_MAX_COMPLETION_TOKENS,
   stripThinking,
+  createProfileDrafter,
   createStubProfileDrafter,
   DraftError,
   parseModelJson,
@@ -130,7 +131,8 @@ describe('profile drafting on upload', () => {
   it('records a failed draft with the reason the owner may see', async () => {
     const failing: ProfileDrafter = {
       name: 'failing',
-      draft: () => Promise.reject(new DraftError('OpenAI returned an error (status 503).', 'body')),
+      draft: () =>
+        Promise.reject(new DraftError('MiniMax returned an error (status 503).', 'body')),
     };
     const { upload, state } = await start(failing);
     const resume = await upload('resume.md', utf8(RESUME_MD), 'resume');
@@ -139,7 +141,7 @@ describe('profile drafting on upload', () => {
       drafting: {
         state: 'failed',
         documentId: resume.id,
-        error: 'OpenAI returned an error (status 503).',
+        error: 'MiniMax returned an error (status 503).',
       },
     });
   });
@@ -550,13 +552,31 @@ describe('MiniMax drafter', () => {
       base_resp: { status_code: 0, status_msg: 'success' },
     });
 
-  const drafterWith = (fetchImpl: typeof fetch, secondaryApiKey?: string) =>
+  const drafterWith = (fetchImpl: typeof fetch, secondaryApiKey?: string, timeoutMs?: number) =>
     createMiniMaxProfileDrafter({
       url: URL,
       apiKey: 'mm-primary',
       secondaryApiKey,
       model: 'MiniMax-M3',
       fetchImpl,
+      timeoutMs,
+    });
+
+  /** The DraftError a draft fails with. */
+  const failure = async (promise: Promise<unknown>): Promise<DraftError> => {
+    try {
+      await promise;
+    } catch (error) {
+      if (error instanceof DraftError) return error;
+      throw error;
+    }
+    throw new Error('expected the draft to fail');
+  };
+
+  /** A fetch that never answers on its own, only rejects when the request's signal aborts. */
+  const hangingFetch: typeof fetch = (_url, init) =>
+    new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
     });
 
   it('sends the resume the way the backend calls MiniMax, and validates the answer', async () => {
@@ -647,9 +667,147 @@ describe('MiniMax drafter', () => {
     ).rejects.toThrow('MiniMax could not be reached.');
   });
 
-  it('parses JSON with or without a code fence', () => {
+  it('parses JSON with or without a code fence, or wrapped in prose', () => {
     expect(parseModelJson('{"a":1}')).toEqual({ a: 1 });
     expect(parseModelJson('```\n{"a":1}\n```')).toEqual({ a: 1 });
+    expect(parseModelJson('Here is the profile:\n{"a":{"b":2}}\nHope that helps.')).toEqual({
+      a: { b: 2 },
+    });
+  });
+
+  it('logs only the length of an answer that is not JSON, never its text', async () => {
+    const error = await failure(
+      drafterWith(() => Promise.resolve(answer('Jordan lives at 1 Main St'))).draft('x'),
+    );
+    expect(error.message).toBe('The model did not answer with JSON.');
+    expect(error.detail).toBe('answer of 25 characters was not JSON');
+    expect(error.cause).toBeUndefined();
+  });
+
+  it('reports the token limit when reasoning was cut off inside <think>', async () => {
+    expect(stripThinking('<think>never closes')).toBe('');
+    await expect(
+      drafterWith(() => Promise.resolve(answer('<think>never closes', 'length'))).draft('x'),
+    ).rejects.toThrow('MiniMax hit its token limit before answering.');
+  });
+
+  it('cancels the rate-limited body before retrying', async () => {
+    const cancel = vi.fn(() => Promise.resolve());
+    const limited = reply({ error: 'rate limited' }, 429);
+    Object.defineProperty(limited, 'body', { value: { cancel } });
+    const fetchImpl = vi.fn<typeof fetch>((_url, init) =>
+      Promise.resolve(
+        new Headers(init?.headers).get('authorization') === 'Bearer mm-primary'
+          ? limited
+          : answer(JSON.stringify(SAMPLE_PROFILE)),
+      ),
+    );
+    expect(await drafterWith(fetchImpl, 'mm-secondary').draft('x')).toEqual(SAMPLE_PROFILE);
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it('reports the secondary key’s failure when it fails too', async () => {
+    for (const second of [429, 503]) {
+      const fetchImpl = vi.fn<typeof fetch>((_url, init) =>
+        Promise.resolve(
+          new Headers(init?.headers).get('authorization') === 'Bearer mm-primary'
+            ? reply({}, 429)
+            : reply({}, second),
+        ),
+      );
+      await expect(drafterWith(fetchImpl, 'mm-secondary').draft('x')).rejects.toThrow(
+        `MiniMax returned an error (status ${second}).`,
+      );
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    }
+  });
+
+  it('says so when a 200 body is not JSON', async () => {
+    await expect(
+      drafterWith(() => Promise.resolve(new Response('<html>gateway</html>'))).draft('x'),
+    ).rejects.toThrow('MiniMax sent a response that was not JSON.');
+  });
+
+  it('reports a timeout, whether while connecting or reading the body', async () => {
+    await expect(drafterWith(hangingFetch, undefined, 20).draft('x')).rejects.toThrow(
+      'MiniMax did not answer in time.',
+    );
+
+    // The deadline strikes during res.json().
+    const slowBody: typeof fetch = (_url, init) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+          }),
+      } as unknown as Response);
+    await expect(drafterWith(slowBody, undefined, 20).draft('x')).rejects.toThrow(
+      'MiniMax did not answer in time.',
+    );
+
+    // ...or while an error body is read.
+    const slowError: typeof fetch = (_url, init) =>
+      Promise.resolve({
+        ok: false,
+        status: 500,
+        text: () =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+          }),
+      } as unknown as Response);
+    await expect(drafterWith(slowError, undefined, 20).draft('x')).rejects.toThrow(
+      'MiniMax did not answer in time.',
+    );
+  });
+
+  it('never puts a key in an error message or detail', async () => {
+    const leaky = [
+      reply({ error: 'bad key mm-primary', echo: 'Bearer mm-primary-long-token-value' }, 401),
+      reply({ base_resp: { status_code: 1004, status_msg: 'invalid key mm-secondary' } }),
+    ];
+    for (const res of leaky) {
+      const error = await failure(
+        drafterWith(() => Promise.resolve(res), 'mm-secondary').draft('x'),
+      );
+      for (const text of [error.message, error.detail ?? '']) {
+        expect(text).not.toContain('mm-primary');
+        expect(text).not.toContain('mm-secondary');
+      }
+      expect(error.detail).toContain('[redacted]');
+    }
+  });
+});
+
+describe('createProfileDrafter', () => {
+  it('wires the configured drafter', async () => {
+    expect(createProfileDrafter({ kind: 'none' })).toBeNull();
+    expect(createProfileDrafter({ kind: 'stub' })?.name).toBe('stub');
+
+    const fetchImpl = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [
+            { finish_reason: 'stop', message: { content: JSON.stringify(SAMPLE_PROFILE) } },
+          ],
+          base_resp: { status_code: 0 },
+        }),
+      ),
+    );
+    try {
+      const drafter = createProfileDrafter({
+        kind: 'minimax',
+        url: 'https://api.minimax.io/v1/chat/completions',
+        apiKey: 'mm-primary',
+        model: 'MiniMax-M3',
+      });
+      expect(drafter?.name).toBe('minimax:MiniMax-M3');
+      expect(await drafter?.draft(RESUME_MD)).toEqual(SAMPLE_PROFILE);
+      expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://api.minimax.io/v1/chat/completions');
+    } finally {
+      fetchImpl.mockRestore();
+    }
   });
 });
 

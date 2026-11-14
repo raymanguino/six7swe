@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ProfileDrafterConfig } from '../../config/env.js';
 import { PROFILE_LIMITS, type ProfileData } from '../../contract.js';
+import { redactSecrets } from '../../lib/redact.js';
 import { normalizeProfileDraft } from './normalize.js';
 
 /**
@@ -61,18 +62,38 @@ export function draftUserPrompt(resumeText: string): string {
   return `Resume:\n"""\n${resumeText.slice(0, MAX_RESUME_CHARS)}\n"""`;
 }
 
-/** The model's JSON, with a Markdown code fence around it tolerated. */
+function tryJson(text: string): { ok: true; value: unknown } | { ok: false } {
+  try {
+    return { ok: true, value: JSON.parse(text) as unknown };
+  } catch {
+    return { ok: false };
+  }
+}
+
+/**
+ * The model's JSON. A Markdown code fence around it is tolerated, and so is
+ * prose around it: failing a whole parse, the text from the first `{` to the
+ * last `}` is tried. Only the answer's length is logged, never its text,
+ * which can echo the resume.
+ */
 export function parseModelJson(content: string): unknown {
   const trimmed = content.trim();
   const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
   const body = fenced?.[1] ?? trimmed;
-  try {
-    return JSON.parse(body) as unknown;
-  } catch (error) {
-    throw new DraftError('The model did not answer with JSON.', body.slice(0, 300), {
-      cause: error,
-    });
+  const whole = tryJson(body);
+  if (whole.ok) return whole.value;
+
+  const start = body.indexOf('{');
+  const end = body.lastIndexOf('}');
+  if (start !== -1 && end > start) {
+    const embedded = tryJson(body.slice(start, end + 1));
+    if (embedded.ok) return embedded.value;
   }
+  // No `cause`: JSON.parse's message quotes the text it choked on.
+  throw new DraftError(
+    'The model did not answer with JSON.',
+    `answer of ${body.length} characters was not JSON`,
+  );
 }
 
 /** Validates and normalizes a parsed answer; a DraftError when it is not a usable profile. */
@@ -107,9 +128,13 @@ const MiniMaxResponseSchema = z.object({
 export const MINIMAX_MAX_COMPLETION_TOKENS = 8192;
 const MINIMAX = 'MiniMax';
 
-/** A reasoning model may put its thinking before the answer; only the answer is JSON. */
+/**
+ * A reasoning model may put its thinking before the answer; only the answer is
+ * JSON. A `<think>` block that never closes (cut off at the token limit) is all
+ * thinking, so nothing is left.
+ */
 export function stripThinking(content: string): string {
-  return content.replace(/^\s*<think>[\s\S]*?<\/think>/i, '').trim();
+  return content.replace(/^\s*<think>(?:[\s\S]*?<\/think>|[\s\S]*$)/i, '').trim();
 }
 
 export interface MiniMaxDrafterOptions {
@@ -153,15 +178,26 @@ export function createMiniMaxProfileDrafter(options: MiniMaxDrafterOptions): Pro
           signal,
         });
 
+      // Provider text goes to the logs only, and never with a key in it.
+      const redact = (text: string) =>
+        redactSecrets(text, [options.apiKey, options.secondaryApiKey]);
+
       let json: unknown;
       try {
         let res = await send(options.apiKey);
         if (res.status === 429 && options.secondaryApiKey) {
+          // Release the first response's connection before the retry.
+          await res.body?.cancel().catch(() => undefined);
           res = await send(options.secondaryApiKey);
         }
         if (!res.ok) {
-          const detail = (await res.text().catch(() => '')).slice(0, 300);
-          throw new DraftError(`${MINIMAX} returned an error (status ${res.status}).`, detail);
+          const text = await res.text().catch(() => '');
+          // The deadline can strike while the error body is read.
+          if (signal.aborted) throw new Error('timed out reading the error body');
+          throw new DraftError(
+            `${MINIMAX} returned an error (status ${res.status}).`,
+            redact(text),
+          );
         }
         try {
           json = await res.json();
@@ -189,7 +225,7 @@ export function createMiniMaxProfileDrafter(options: MiniMaxDrafterOptions): Pro
       if (baseResp && baseResp.status_code !== 0) {
         throw new DraftError(
           `${MINIMAX} returned an error (code ${baseResp.status_code}).`,
-          baseResp.status_msg,
+          baseResp.status_msg === undefined ? undefined : redact(baseResp.status_msg),
         );
       }
       const choice = choices?.[0];
