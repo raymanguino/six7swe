@@ -91,9 +91,9 @@ async function main(): Promise<void> {
         'waiting for the knowledge service (it may be restarting after the types rebuild)...\n',
       ),
   });
-  if (!ready) {
+  if (!ready.ready) {
     process.stderr.write(
-      '\nWARNING: the knowledge service did not answer /version within 30 s; continuing, ' +
+      `\nWARNING: the knowledge service is not ready (${ready.reason}); continuing, ` +
         'so the reference fetch, warm-up and retrieval may fail.\n\n',
     );
   }
