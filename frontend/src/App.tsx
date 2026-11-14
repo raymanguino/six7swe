@@ -12,6 +12,7 @@ import RequireAuth from './pages/hunter/RequireAuth';
 import ProfileList from './pages/hunter/ProfileList';
 import ProfileDetail from './pages/hunter/ProfileDetail';
 import ProfileEditor from './pages/hunter/ProfileEditor';
+import KnowledgePage from './pages/hunter/knowledge/KnowledgePage';
 
 function App() {
   const [activeSection, setActiveSection] = useState<SectionId>('home');
@@ -36,6 +37,8 @@ function App() {
               <Route path="profiles" element={<ProfileList />} />
               <Route path="profiles/:profileId" element={<ProfileDetail />} />
               <Route path="profiles/:profileId/edit" element={<ProfileEditor />} />
+              {/* Owner only: the page redirects anyone else, and the API answers 403. */}
+              <Route path="knowledge" element={<KnowledgePage />} />
             </Route>
 
             {/* Public portfolio. */}

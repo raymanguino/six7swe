@@ -146,6 +146,46 @@ export function describeRepositoryContract(
       expect(await repo.getDocument(owner, old.id)).toMatchObject({ isPrimaryResume: true });
     });
 
+    it('lets the owner pick the primary among ready resumes', async () => {
+      const { repo, newOwner } = target();
+      const owner = newOwner();
+      const old = await ready(owner, 'old resume', { kind: 'resume' });
+      const newer = await ready(owner, 'new resume', { kind: 'resume' });
+      expect(await repo.getDocument(owner, newer.id)).toMatchObject({ isPrimaryResume: true });
+
+      expect(await repo.setPrimaryResume(owner, old.id)).toMatchObject({
+        id: old.id,
+        isPrimaryResume: true,
+      });
+      expect(await repo.getDocument(owner, newer.id)).toMatchObject({ isPrimaryResume: false });
+      // Idempotent.
+      expect(await repo.setPrimaryResume(owner, old.id)).toMatchObject({ isPrimaryResume: true });
+
+      // Only a ready resume qualifies, and only the owner's own.
+      const supporting = await ready(owner, 'notes');
+      await expect(repo.setPrimaryResume(owner, supporting.id)).rejects.toThrow(/ready resume/);
+      const { document: pending } = await repo.createDocument(newDoc(owner, { kind: 'resume' }));
+      await expect(repo.setPrimaryResume(owner, pending.id)).rejects.toThrow(/ready resume/);
+      expect(await repo.setPrimaryResume(newOwner(), old.id)).toBeNull();
+      expect(await repo.getDocument(owner, old.id)).toMatchObject({ isPrimaryResume: true });
+
+      // The next completed resume re-applies the newest-ready rule.
+      await repo.completeIngestion(pending.id, 'newest resume', [chunk('newest resume')]);
+      expect(await repo.getDocument(owner, pending.id)).toMatchObject({ isPrimaryResume: true });
+      expect(await repo.getDocument(owner, old.id)).toMatchObject({ isPrimaryResume: false });
+    });
+
+    it('returns the extracted text to the owner only', async () => {
+      const { repo, newOwner } = target();
+      const owner = newOwner();
+      const doc = await ready(owner, 'kafka billing');
+      expect(await repo.getExtractedText(owner, doc.id)).toEqual({ text: 'kafka billing' });
+      expect(await repo.getExtractedText(newOwner(), doc.id)).toBeNull();
+
+      const { document: pending } = await repo.createDocument(newDoc(owner));
+      expect(await repo.getExtractedText(owner, pending.id)).toEqual({ text: null });
+    });
+
     it('reports storage keys in use and unfinished documents', async () => {
       const { repo, newOwner } = target();
       const owner = newOwner();

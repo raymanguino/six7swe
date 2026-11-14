@@ -34,19 +34,30 @@ POST /retrieve {query, k} ──► embed query ──► pgvector cosine search
 
 Every route declares who may call it: `public`, `service` or `owner` (`src/plugins/serviceAuth.ts`). A route that declares nothing is `service`, so a forgotten declaration fails closed. Both modes take a key in the `x-knowledge-key` header (never in a query string), but each accepts only its own: `service` routes take `KNOWLEDGE_SERVICE_KEY`, and `owner` routes take `KNOWLEDGE_OWNER_KEY`. The service key gets 401 on owner routes and the owner key gets 401 on service routes. Unknown paths answer 401 without the service key and 404 with it.
 
-| Method | Path             | Purpose                                                                                                                           |
-| ------ | ---------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/health`        | Liveness (public)                                                                                                                 |
-| POST   | `/retrieve`      | `{ query, k? }` returns `{ version, chunks[] }`; `k` defaults to 6, max 20                                                        |
-| GET    | `/version`       | `{ version }`                                                                                                                     |
-| POST   | `/documents`     | Multipart upload with a `file` part (`.pdf`, `.md`, `.txt`). Add `?kind=resume` for a resume. Returns 202, or 200 if a duplicate. |
-| GET    | `/documents`     | List documents with status and chunk count                                                                                        |
-| GET    | `/documents/:id` | One document                                                                                                                      |
-| DELETE | `/documents/:id` | Deletes the document, its chunks and its file (204)                                                                               |
+| Method | Path                     | Purpose                                                                                                                           |
+| ------ | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/health`                | Liveness (public)                                                                                                                 |
+| POST   | `/retrieve`              | `{ query, k? }` returns `{ version, chunks[] }`; `k` defaults to 6, max 20                                                        |
+| GET    | `/version`               | `{ version }`                                                                                                                     |
+| POST   | `/documents`             | Multipart upload with a `file` part (`.pdf`, `.md`, `.txt`). Add `?kind=resume` for a resume. Returns 202, or 200 if a duplicate. |
+| GET    | `/documents`             | List documents with status and chunk count                                                                                        |
+| GET    | `/documents/:id`         | One document                                                                                                                      |
+| GET    | `/documents/:id/text`    | `{ documentId, text }`: the extracted text, for previews; `text` is null until an ingest has extracted it                         |
+| PUT    | `/documents/:id/primary` | Makes a ready resume the primary one; 409 for anything else                                                                       |
+| DELETE | `/documents/:id`         | Deletes the document, its chunks and its file (204)                                                                               |
+| POST   | `/search`                | The same as `/retrieve`, as an owner route, for the Knowledge page's "ask as a visitor" playground                                |
 
-The `/documents` endpoints are `owner` routes, temporarily behind the owner key. Step 2 (#83) replaces it with an owner gate: a Supabase JWT whose `sub` equals `OWNER_AUTH_ID`. The auth plugin keeps one authenticator per access mode (`service`, `owner`); that step swaps only the `owner` entry (`buildApp({ authenticators: { owner } })`). Whatever an authenticator returns must be a safe storage-key segment, or the request gets 401. Handlers read the owner per request (`requireOwner(req)`).
+`/retrieve` and `/version` are `service` routes; `/documents/*` and `/search` are `owner` routes.
 
-The wire contract lives in the shared package [`packages/knowledge-types`](../packages/knowledge-types) (`@six7swe/knowledge-types`) as zod schemas with inferred types (request bodies, the document and chunk DTOs, the retrieve, version and upload responses, and the error body). The backend imports the same package, so both sides share one definition. Inside the service, `src/contract.ts` re-exports it. The package depends on nothing but zod and is compiled to CommonJS in its `dist/`. `pnpm install` does not build it (a `prepare` hook would run before Railpack and the backend Dockerfile copy the source); instead the service's `build`, `typecheck` and `test` scripts build it first. Anything else that reads it, such as an editor, needs `pnpm build:types` after a change. The database enums are derived from its `DOCUMENT_KINDS` and `DOCUMENT_STATUSES`.
+**The owner gate lives in the backend (#83).** The service is private-network only, so the browser never calls it. The owner's Knowledge page (`/hunter/knowledge`) calls the backend's `/knowledge/*` proxy (`backend/src/routes/knowledge.ts`). The backend verifies the Supabase JWT as it does for every route, requires `sub === OWNER_AUTH_ID` (403 for any other signed-in user, before the body is read), and forwards the request with `KNOWLEDGE_OWNER_KEY`. It never forwards the user's token. So the owner key stays the service's owner credential, and only the backend holds it.
+
+The service does not verify the JWT again. The owner key is the only thing that opens owner routes, and the backend is its only holder. A second check would need the user's token forwarded and the JWKS configured here, and it would add nothing against a caller that already holds the key. The auth plugin keeps one authenticator per access mode (`service`, `owner`), so a caller with its own credential, such as the MCP adapter (#89), can replace the `owner` entry (`buildApp({ authenticators: { owner } })`). Whatever an authenticator returns must be a safe storage-key segment, or the request gets 401. Handlers read the owner per request (`requireOwner(req)`).
+
+**Choosing the primary resume.** By default the newest ready resume is primary. `PUT /documents/:id/primary` picks another ready resume. That choice holds until another resume finishes ingesting (the newest-ready rule applies again) or the primary is deleted.
+
+**Replacing a document** is done by the Knowledge page. It uploads the new file, waits until the new document is `ready`, and only then deletes the old one, so retrieval never loses the content in between. If the new document fails, or is still processing after 5 minutes, the old one is kept. If the new bytes are identical, the upload returns the existing document and nothing is deleted.
+
+The wire contract lives in the shared package [`packages/knowledge-types`](../packages/knowledge-types) (`@six7swe/knowledge-types`) as zod schemas with inferred types (request bodies, the document and chunk DTOs, the retrieve, version, upload and document-text responses, and the error body). The backend imports the same package, so both sides share one definition. Inside the service, `src/contract.ts` re-exports it. The package depends on nothing but zod and is compiled to CommonJS in its `dist/`. `pnpm install` does not build it (a `prepare` hook would run before Railpack and the backend Dockerfile copy the source); instead the service's `build`, `typecheck` and `test` scripts build it first. Anything else that reads it, such as an editor, needs `pnpm build:types` after a change. The database enums are derived from its `DOCUMENT_KINDS` and `DOCUMENT_STATUSES`.
 
 ## Database
 
@@ -80,6 +91,7 @@ Requirements on the database:
 2. Copy `.env.example` to `.env`, then set `KNOWLEDGE_SERVICE_KEY`, `KNOWLEDGE_OWNER_KEY` (a different value) and `OWNER_AUTH_ID`. The example file uses the offline `hashing` embedder and the local file store, so no API key is needed.
 3. Apply the migrations: `pnpm --filter @six7swe/knowledge db:migrate`.
 4. Start the service on port 3100: `pnpm dev:knowledge`.
+5. For the Knowledge page, set `OWNER_AUTH_ID`, `KNOWLEDGE_URL=http://localhost:3100` and `KNOWLEDGE_OWNER_KEY` (the same value) in `backend/.env`, then sign in to `/hunter` as that user. With `AUTH_DEV_BYPASS=true` the subject is `auth-dev-bypass`, so use that as `OWNER_AUTH_ID` on both sides.
 
 To upload a file and query it:
 
@@ -132,7 +144,7 @@ An apply is declarative: a service, variable or domain that exists in Railway bu
 Code pushes to `main` that touch `knowledge/` (or the root `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml` or `tsconfig.base.json`) redeploy the service as usual.
 
 - **Pre-deploy** runs `pnpm --filter @six7swe/knowledge db:migrate:prod`, the migrator compiled to `dist/db/migrate.js` by the build, run with plain `node`. It needs only runtime dependencies, not tsx, drizzle-kit or dotenv. CI runs the same compiled migrator against an empty database after the build.
-- **Networking is private only.** The service has no public domain. The backends reach it at `http://six7sweknowledge.railway.internal:3100`, using plain HTTP: the private network is already encrypted. `HOST=::` is set in `railway.ts`, because older Railway environments resolve private names to IPv6 only. A public domain gets added in step 2 (#83) or step 7 (#89) if browser or Claude-client access needs one.
+- **Networking is private only.** The service has no public domain. The backends reach it at `http://six7sweknowledge.railway.internal:3100`, using plain HTTP: the private network is already encrypted. `HOST=::` is set in `railway.ts`, because older Railway environments resolve private names to IPv6 only. The browser reaches the owner routes through the backend's `/knowledge/*` proxy, so no public domain is needed for it. Step 7 (#89) adds one if Claude-client access needs it.
 - **Shutdown.** On SIGTERM the service drains for up to 20 s, inside Railway's default 30 s stop window.
 
 ### Railway variables
@@ -147,7 +159,7 @@ The service validates its whole environment at boot and refuses to start if anyt
 | ----------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `DATABASE_URL`          | Postgres connection string for the same Supabase project as the backend | Supabase dashboard → **Connect**. Use the IPv4 connection string (Railway has no outbound IPv6). Any mode works (direct, session pooler on 5432, or transaction pooler on 6543), because prepared statements are off. This service only touches the `knowledge` and `knowledge_migrations` schemas. |
 | `KNOWLEDGE_SERVICE_KEY` | A random secret, at least 32 characters                                 | `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. Opens the service routes only (`/retrieve`, `/version`). The portfolio and hunter backends will need the same value when they start calling the service (step 3).                                                       |
-| `KNOWLEDGE_OWNER_KEY`   | A different random secret, at least 32 characters                       | Same command. Opens the owner routes only (upload, list, delete), until the owner JWT gate replaces it (step 2). Must differ from `KNOWLEDGE_SERVICE_KEY`. Treat it like an admin password.                                                                                                         |
+| `KNOWLEDGE_OWNER_KEY`   | A different random secret, at least 32 characters                       | Same command. Opens the owner routes only (documents, search). Set the backend's `KNOWLEDGE_OWNER_KEY` to the same value: the backend's owner proxy is its only holder. Must differ from `KNOWLEDGE_SERVICE_KEY`. Treat it like an admin password.                                                  |
 | `OWNER_AUTH_ID`         | Your Supabase auth user id (a UUID)                                     | Supabase dashboard → **Authentication → Users** → your user → **User UID**. Letters, digits, `.`, `_` and `-` only; it becomes the first segment of every storage key.                                                                                                                              |
 | `OPENAI_API_KEY`        | An OpenAI API key                                                       | platform.openai.com → **API keys**. Required because `EMBEDDER` defaults to `openai`. Tip: create a dedicated project for this service with a monthly budget cap, and a key scoped to that project, so a runaway ingest can't run up the bill.                                                      |
 | `SUPABASE_URL`          | `https://<project-ref>.supabase.co`                                     | Supabase dashboard → **Project Settings → Data API**.                                                                                                                                                                                                                                               |
@@ -180,3 +192,5 @@ Don't set `LOCAL_FILE_STORE_DIR` (local store only) or `KNOWLEDGE_TEST_DATABASE_
    ```
 
    It should print `200 {"version":0}`. With the owner key instead, it should print a 401.
+
+7. Set `OWNER_AUTH_ID` and `KNOWLEDGE_OWNER_KEY` on the backend (the same values as here; `KNOWLEDGE_URL` is written in `railway.ts`), sign in as the owner and open `/hunter/knowledge`.

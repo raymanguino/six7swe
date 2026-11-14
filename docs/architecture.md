@@ -134,6 +134,7 @@ user, so a caller cannot reach another user's profile by guessing an id.
 | `/hunter/profiles` | Search profile list and creation |
 | `/hunter/profiles/:id` | Refresh controls and scored matches |
 | `/hunter/profiles/:id/edit` | Profile editor |
+| `/hunter/knowledge` | Knowledge base (owner only): upload, documents, text preview, "ask as a visitor" playground |
 
 **API communication**
 
@@ -159,6 +160,7 @@ auth context has registered one.
 |---|---|
 | `routes/portfolio.ts` | `GET /portfolio`, `GET /resume`, `POST /chat`, `POST /fitcheck`, `POST /contact` |
 | `routes/jobHunt.ts` | `/job-hunt/jobs`, `/job-hunt/profiles` (CRUD), `/job-hunt/profiles/:id/jobs`, `/job-hunt/profiles/:id/jobs/refresh[/:refreshId]`, `/job-hunt/users` |
+| `routes/knowledge.ts` | `GET /knowledge/access`; owner only: `/knowledge/documents` (list, upload, get, text, primary, delete), `POST /knowledge/search` |
 
 **AI layer** — `backend/src/services/ai/`:
 
@@ -215,7 +217,6 @@ the never-wired `PORTFOLIO_DATA_SOURCE=mcp` path. Full details are in
   service and the CommonJS backend load it. The backend and service builds
   compile it first, and so do their `test` scripts, the backend's `chat:eval`, and the root
   `lint` and `dev` scripts. `pnpm install` does not build it.
-
 - **Schemas.** The service owns the `knowledge` schema, with `documents`,
   `chunks` and `corpus_state`, and keeps its own migration ledger in
   `knowledge_migrations`. Its `schemaFilter`, and the backend's `db:reset`
@@ -227,9 +228,15 @@ the never-wired `PORTFOLIO_DATA_SOURCE=mcp` path. Full details are in
   staleness signal.
 - **Access.** Callers authenticate with the `x-knowledge-key` header, using one
   of two keys: the service key opens only the retrieval routes, and the owner
-  key opens only the document routes, until a Supabase JWT replaces it. On
-  Railway the service is private-network only. Raw files live in the private
+  key opens only the owner routes (documents and search). On Railway the
+  service is private-network only. Raw files live in the private
   `portfolio-files` Storage bucket.
+- **Owner gate.** The owner's Knowledge page never calls the service. It calls
+  the backend's `/knowledge/*` proxy (`backend/src/routes/knowledge.ts`), which
+  verifies the Supabase JWT, requires `sub === OWNER_AUTH_ID` (403 otherwise,
+  checked on `onRequest`, before an upload body is read) and forwards the
+  request with the owner key, never the user's token. `GET /knowledge/access`
+  tells the frontend whether to show the nav entry.
 - **Embeddings.** OpenAI `text-embedding-3-small` (1536 dimensions) by
   default, through an OpenAI-compatible client that also works with
   OpenRouter.
@@ -297,6 +304,9 @@ imports:
 | `SUPABASE_JWT_SECRET` | backend | Legacy HS256 mode (optional) |
 | `AUTH_DEV_BYPASS` | backend | Dev-only user impersonation |
 | `JOB_REFRESH_STALE_MINUTES` | backend | Abandoned refresh threshold (default 30) |
+| `OWNER_AUTH_ID` | backend, knowledge | Supabase subject that owns the knowledge base |
+| `KNOWLEDGE_URL` | backend | Knowledge service base URL (private network on Railway) |
+| `KNOWLEDGE_OWNER_KEY` | backend, knowledge | Owner credential the backend proxy sends to the service |
 | `VITE_API_URL` | frontend | Backend base URL |
 | `VITE_SUPABASE_URL` | frontend | Supabase project URL |
 | `VITE_SUPABASE_ANON_KEY` | frontend | Supabase anon key |

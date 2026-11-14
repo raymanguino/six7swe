@@ -86,6 +86,9 @@ policy and the watch paths.
    - `SUPABASE_URL` - Supabase project URL; the JWKS endpoint is derived from it. Required for the job-hunter routes
    - `SUPABASE_JWKS_URL` - Optional explicit JWKS endpoint
    - `JOB_REFRESH_STALE_MINUTES` - Optional; how long a refresh may run before it is considered abandoned (default 30)
+   - `OWNER_AUTH_ID` - The knowledge base owner's Supabase auth user id; the same value as on the knowledge service. Only this user gets the Knowledge page (`/hunter/knowledge`); everyone else gets 403 on `/knowledge/*`
+   - `KNOWLEDGE_URL` - Written in `railway.ts` as `http://six7sweknowledge.railway.internal:3100`, the knowledge service's private address
+   - `KNOWLEDGE_OWNER_KEY` - The knowledge service's `KNOWLEDGE_OWNER_KEY` (same value). The backend sends it to the service only after checking the caller is the owner
 
 > `AUTH_DEV_BYPASS` must **not** be set in production. The server refuses to
 > start with it enabled when `NODE_ENV=production`.

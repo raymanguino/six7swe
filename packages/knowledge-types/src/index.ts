@@ -93,3 +93,10 @@ export const ErrorResponseSchema = z.object({
   issues: z.array(z.unknown()).optional(),
 });
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
+
+/** `GET /documents/:id/text`. `text` is null until an ingest has extracted it. */
+export const DocumentTextResponseSchema = z.object({
+  documentId: z.uuid(),
+  text: z.string().nullable(),
+});
+export type DocumentTextResponse = z.infer<typeof DocumentTextResponseSchema>;

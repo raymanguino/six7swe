@@ -18,9 +18,14 @@ export function registerRoutes(app: FastifyInstance, ctx: KnowledgeContext): voi
   app.post('/retrieve', SERVICE_ROUTE, retrieval.retrieve);
   app.get('/version', SERVICE_ROUTE, retrieval.version);
 
-  // Owner. Behind the service key until the owner JWT gate lands.
+  // Owner: the backend's owner proxy, with the owner key, once it has checked
+  // that the signed-in user is the owner.
   app.post('/documents', OWNER_ROUTE, documents.upload);
   app.get('/documents', OWNER_ROUTE, documents.list);
   app.get('/documents/:id', OWNER_ROUTE, documents.get);
+  app.get('/documents/:id/text', OWNER_ROUTE, documents.text);
+  app.put('/documents/:id/primary', OWNER_ROUTE, documents.setPrimary);
   app.delete('/documents/:id', OWNER_ROUTE, documents.remove);
+  // The same retrieval as `/retrieve`, for the owner's "ask as a visitor" playground.
+  app.post('/search', OWNER_ROUTE, retrieval.retrieve);
 }

@@ -27,9 +27,10 @@ const EnvSchema = z
       .min(32, 'KNOWLEDGE_SERVICE_KEY must be at least 32 characters'),
 
     /**
-     * Secret for the owner endpoints (upload, list, delete) until the owner
-     * JWT gate replaces it in step 2. Must differ from the service key, so a
-     * leaked service key cannot change the knowledge base.
+     * Secret for the owner endpoints (documents, search). Only the backend's
+     * owner proxy holds it, and it sends it only after checking the caller's
+     * Supabase JWT against OWNER_AUTH_ID. Must differ from the service key, so
+     * a leaked service key cannot change the knowledge base.
      */
     KNOWLEDGE_OWNER_KEY: z.string().min(32, 'KNOWLEDGE_OWNER_KEY must be at least 32 characters'),
 
