@@ -46,7 +46,7 @@ describe('normalizeQuestion', () => {
 describe('createCachedRetriever', () => {
   let clock: number;
   const now = () => clock;
-  const options = { k: 4, versionTtlMs: 1_000, maxEntries: 2, now };
+  const options = { k: 4, versionTtlMs: 1_000, failureCooldownMs: 5_000, maxEntries: 2, now };
 
   beforeEach(() => {
     clock = 0;
@@ -126,7 +126,69 @@ describe('createCachedRetriever', () => {
     const retriever = createCachedRetriever(client, options);
 
     await expect(retriever.retrieve('kafka')).rejects.toThrow('down');
+    clock = 5_000;
     await expect(retriever.retrieve('kafka')).resolves.toHaveLength(1);
+  });
+
+  describe('after a failure', () => {
+    it('fails fast for the cooldown, then tries the service again', async () => {
+      const { client } = fakeClient();
+      client.retrieve.mockRejectedValueOnce(new KnowledgeRetrievalError('timed out'));
+      const retriever = createCachedRetriever(client, options);
+
+      await expect(retriever.retrieve('kafka')).rejects.toThrow('timed out');
+      clock = 4_999;
+      await expect(retriever.retrieve('postgres')).rejects.toThrow('(cooling down): timed out');
+      expect(client.retrieve).toHaveBeenCalledTimes(1);
+
+      clock = 5_000;
+      await expect(retriever.retrieve('postgres')).resolves.toHaveLength(1);
+      expect(client.retrieve).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not ask for the version again during the cooldown', async () => {
+      const { client } = fakeClient();
+      client.getVersion.mockRejectedValueOnce(new KnowledgeRetrievalError('unreachable'));
+      const retriever = createCachedRetriever(client, options);
+
+      await expect(retriever.retrieve('kafka')).rejects.toThrow('unreachable');
+      await expect(retriever.retrieve('kafka')).rejects.toThrow(/cooling down/);
+      expect(client.getVersion).toHaveBeenCalledTimes(1);
+      expect(client.retrieve).not.toHaveBeenCalled();
+    });
+
+    it('still serves cached questions under the last known version', async () => {
+      const { client } = fakeClient();
+      const retriever = createCachedRetriever(client, options);
+      const cached = await retriever.retrieve('kafka');
+
+      clock = 1_000; // the version TTL has expired
+      client.getVersion.mockRejectedValueOnce(new KnowledgeRetrievalError('unreachable'));
+      await expect(retriever.retrieve('Kafka?')).resolves.toBe(cached);
+      await expect(retriever.retrieve('postgres')).rejects.toThrow(/cooling down/);
+      expect(client.retrieve).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('shares one in-flight version request between concurrent questions', async () => {
+    const { client } = fakeClient();
+    const retriever = createCachedRetriever(client, options);
+
+    await Promise.all([retriever.retrieve('a'), retriever.retrieve('b'), retriever.retrieve('c')]);
+    expect(client.getVersion).toHaveBeenCalledTimes(1);
+  });
+
+  it('never moves the known version backwards', async () => {
+    const { client } = fakeClient(5);
+    const retriever = createCachedRetriever(client, options);
+    await retriever.retrieve('a');
+    // A slow /retrieve answers with an older corpus version.
+    client.retrieve.mockResolvedValueOnce({ version: 4, chunks: [chunk('old')] });
+    await retriever.retrieve('b');
+
+    // Still keyed by version 5, so 'a' is a hit.
+    await retriever.retrieve('a');
+    expect(client.retrieve).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -162,9 +224,19 @@ describe('createHttpRetrievalClient', () => {
     await expect(client.getVersion()).resolves.toBe(3);
   });
 
-  it('rejects a non-2xx answer', async () => {
+  it('rejects a non-2xx answer with its status', async () => {
     const client = createHttpRetrievalClient(config, respond(503, { error: 'down' }));
-    await expect(client.retrieve('kafka', 5)).rejects.toThrow(KnowledgeRetrievalError);
+    const error: unknown = await client.retrieve('kafka', 5).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(KnowledgeRetrievalError);
+    expect((error as KnowledgeRetrievalError).status).toBe(503);
+  });
+
+  it('says when the service timed out', async () => {
+    const fetchFn = jest.fn<Promise<Response>, Parameters<typeof fetch>>(async () => {
+      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    });
+    const client = createHttpRetrievalClient(config, fetchFn);
+    await expect(client.getVersion()).rejects.toThrow('/version timed out after 1000 ms');
   });
 
   it('rejects a body that breaks the contract', async () => {

@@ -6,6 +6,7 @@ import fastifyStatic from '@fastify/static';
 import { FastifyReply, FastifyRequest } from 'fastify';
 import { UnauthenticatedUser } from './constants';
 import { getSafeEnv } from './config/env';
+import { assertKnowledgeRetrievalConfigured } from './config/knowledgeRetrieval';
 import * as plugins from './plugins';
 import authPlugin from './plugins/auth';
 import routes from './routes';
@@ -95,6 +96,8 @@ const start = async () => {
   try {
     const port = parseInt(process.env.PORT || '3000');
     const host = process.env.HOST || '0.0.0.0';
+
+    assertKnowledgeRetrievalConfigured();
 
     // Refreshes abandoned by a previous process would otherwise stay
     // IN_PROGRESS forever, since there is no queue to recover them.

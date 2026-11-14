@@ -203,14 +203,18 @@ the never-wired `PORTFOLIO_DATA_SOURCE=mcp` path. Full details are in
   (`backend/src/data/chatContext.ts`). Retrievals are cached in memory by
   `(corpus_version, normalized question)`
   (`backend/src/services/knowledgeRetrieval.ts`); the version is re-read at most
-  every 30 s. If the service is down or not configured, chat answers from the
-  profile summary alone. The portfolio page, the resume and fitcheck still read
+  every 30 s. The backend refuses to start if the flag is set without
+  `KNOWLEDGE_SERVICE_URL` and `KNOWLEDGE_SERVICE_KEY`. If the service fails, chat
+  answers from the profile summary alone, and for the next 15 s uncached
+  questions skip the service instead of waiting on it again (cached questions
+  are still served). The portfolio page, the resume and fitcheck still read
   the portfolio tables. `pnpm --filter @six7swe/backend chat:eval` compares the
   two contexts on the seed eval questions (`backend/src/domain/chatEval/`).
 - **Shared contract.** The wire contract is the `@six7swe/knowledge-types`
   package (`packages/knowledge-types`), compiled to CommonJS so both the ESM
   service and the CommonJS backend load it. The backend and service builds
-  compile it first; the root `lint` and `test` scripts do too.
+  compile it first, and so do their `test` scripts, the backend's `chat:eval`, and the root
+  `lint` and `dev` scripts. `pnpm install` does not build it.
 
 - **Schemas.** The service owns the `knowledge` schema, with `documents`,
   `chunks` and `corpus_state`, and keeps its own migration ledger in

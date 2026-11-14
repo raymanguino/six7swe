@@ -20,16 +20,21 @@ import {
  * knowledge service makes every cached answer miss without any invalidation
  * call. The version itself is re-read at most every `versionTtlMs`, so a
  * corpus change reaches chat within that window.
+ *
+ * An outage costs one timeout, not one per chat turn: after any failed call
+ * the retriever fails fast for `failureCooldownMs`. During that window a
+ * question already in the cache is still answered from it, under the last
+ * known version.
  */
 
 export class KnowledgeRetrievalError extends Error {
-  /** The underlying failure, if any (network error, zod issues). */
-  readonly reason: unknown;
+  /** The HTTP status, when the service answered with one. */
+  readonly status: number | undefined;
 
-  constructor(message: string, options?: { cause?: unknown }) {
+  constructor(message: string, options?: { status?: number }) {
     super(message);
     this.name = 'KnowledgeRetrievalError';
-    this.reason = options?.cause;
+    this.status = options?.status;
   }
 }
 
@@ -39,6 +44,21 @@ export interface RetrievalClient {
 }
 
 type FetchFn = typeof fetch;
+
+/**
+ * Duck-typed: the abort reason is a DOMException, which is not an `Error`
+ * instance in every realm (Jest's sandbox, for one).
+ */
+function errorField(err: unknown, field: 'name' | 'message'): string | undefined {
+  if (typeof err !== 'object' || err === null || !(field in err)) return undefined;
+  const value: unknown = (err as Record<string, unknown>)[field];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function isTimeout(err: unknown): boolean {
+  const name = errorField(err, 'name');
+  return name === 'TimeoutError' || name === 'AbortError';
+}
 
 export function createHttpRetrievalClient(
   config: Pick<KnowledgeRetrievalConfig, 'baseUrl' | 'serviceKey' | 'timeoutMs'>,
@@ -56,17 +76,27 @@ export function createHttpRetrievalClient(
         signal: AbortSignal.timeout(config.timeoutMs),
       });
     } catch (err) {
-      throw new KnowledgeRetrievalError(`Knowledge service ${path} unreachable`, { cause: err });
+      throw new KnowledgeRetrievalError(
+        isTimeout(err)
+          ? `Knowledge service ${path} timed out after ${config.timeoutMs} ms`
+          : `Knowledge service ${path} unreachable: ${errorField(err, 'message') ?? String(err)}`,
+      );
     }
     if (!res.ok) {
-      throw new KnowledgeRetrievalError(`Knowledge service ${path} answered ${res.status}`);
+      // Release the connection; the error body is not needed.
+      await res.body?.cancel().catch(() => undefined);
+      throw new KnowledgeRetrievalError(`Knowledge service ${path} answered ${res.status}`, {
+        status: res.status,
+      });
     }
     try {
       return (await res.json()) as unknown;
     } catch (err) {
-      throw new KnowledgeRetrievalError(`Knowledge service ${path} sent invalid JSON`, {
-        cause: err,
-      });
+      throw new KnowledgeRetrievalError(
+        isTimeout(err)
+          ? `Knowledge service ${path} timed out after ${config.timeoutMs} ms`
+          : `Knowledge service ${path} sent invalid JSON`,
+      );
     }
   }
 
@@ -75,7 +105,6 @@ export function createHttpRetrievalClient(
     if (!parsed.success) {
       throw new KnowledgeRetrievalError(
         `Knowledge service ${path} response did not match the contract`,
-        { cause: parsed.error },
       );
     }
     return parsed.data;
@@ -109,6 +138,7 @@ export function normalizeQuestion(question: string): string {
 export interface CachedRetrieverOptions {
   k: number;
   versionTtlMs: number;
+  failureCooldownMs: number;
   maxEntries: number;
   now?: () => number;
 }
@@ -125,14 +155,62 @@ export function createCachedRetriever(
   // A Map keeps insertion order; re-inserting on a hit makes it an LRU.
   const entries = new Map<string, RetrievedChunkDto[]>();
   let knownVersion: { value: number; fetchedAt: number } | null = null;
+  let versionInFlight: Promise<number> | null = null;
+  let lastFailure: { at: number; error: unknown } | null = null;
 
+  function coolingDown(): boolean {
+    return lastFailure !== null && now() - lastFailure.at < options.failureCooldownMs;
+  }
+
+  function failFast(): never {
+    const cause = lastFailure?.error;
+    const detail = cause instanceof Error ? `: ${cause.message}` : '';
+    throw new KnowledgeRetrievalError(`Knowledge service unavailable (cooling down)${detail}`, {
+      status: cause instanceof KnowledgeRetrievalError ? cause.status : undefined,
+    });
+  }
+
+  function recordFailure(error: unknown): void {
+    lastFailure = { at: now(), error };
+  }
+
+  function learnVersion(value: number): void {
+    // Never move backwards: a slow response can carry an older version.
+    knownVersion = { value: Math.max(value, knownVersion?.value ?? value), fetchedAt: now() };
+  }
+
+  async function fetchVersion(): Promise<number> {
+    // Concurrent turns share one /version call.
+    versionInFlight ??= client
+      .getVersion()
+      .then((value) => {
+        learnVersion(value);
+        lastFailure = null;
+        return knownVersion?.value ?? value;
+      })
+      .finally(() => {
+        versionInFlight = null;
+      });
+    return versionInFlight;
+  }
+
+  /** The version to key the cache with, or a throw when none can be had. */
   async function currentVersion(): Promise<number> {
     if (knownVersion && now() - knownVersion.fetchedAt < options.versionTtlMs) {
       return knownVersion.value;
     }
-    const value = await client.getVersion();
-    knownVersion = { value, fetchedAt: now() };
-    return value;
+    if (coolingDown()) {
+      if (knownVersion) return knownVersion.value;
+      failFast();
+    }
+    try {
+      return await fetchVersion();
+    } catch (error) {
+      recordFailure(error);
+      // A stale version still serves cached questions; misses fail fast.
+      if (knownVersion) return knownVersion.value;
+      throw error;
+    }
   }
 
   function store(key: string, chunks: RetrievedChunkDto[]): void {
@@ -155,12 +233,18 @@ export function createCachedRetriever(
         store(key, hit);
         return hit;
       }
-      const result = await client.retrieve(query, options.k);
-      // The corpus may have moved on since the version was read; file the
-      // result under the version it was actually computed against.
-      if (result.version !== version) {
-        knownVersion = { value: result.version, fetchedAt: now() };
+      if (coolingDown()) failFast();
+
+      let result: RetrieveResponse;
+      try {
+        result = await client.retrieve(query, options.k);
+      } catch (error) {
+        recordFailure(error);
+        throw error;
       }
+      lastFailure = null;
+      learnVersion(result.version);
+      // File the result under the version it was actually computed against.
       store(`${result.version}\u0000${normalized}`, result.chunks);
       return result.chunks;
     },
@@ -180,6 +264,7 @@ export function getDefaultRetriever(): CachedRetriever | null {
       ? createCachedRetriever(createHttpRetrievalClient(config), {
           k: config.k,
           versionTtlMs: config.versionTtlMs,
+          failureCooldownMs: config.failureCooldownMs,
           maxEntries: config.cacheEntries,
         })
       : null;

@@ -5,7 +5,7 @@ import {
   getKnowledgeChatContext,
 } from '../../data/chatContext';
 import { getPortfolioData } from '../../services/portfolioService';
-import type { CachedRetriever } from '../../services/knowledgeRetrieval';
+import { KnowledgeRetrievalError, type CachedRetriever } from '../../services/knowledgeRetrieval';
 import type { PortfolioData } from '../../types/portfolio';
 
 jest.mock('../../services/portfolioService', () => ({ getPortfolioData: jest.fn() }));
@@ -76,15 +76,34 @@ describe('getKnowledgeChatContext', () => {
       log: { warn },
     });
 
-    expect(result.mode).toBe('profile-only');
-    expect(result.chunkCount).toBe(0);
+    expect(result).toMatchObject({ mode: 'profile-only', reason: 'unavailable', chunkCount: 0 });
     expect(result.context).toContain('Profile summary:');
     expect(result.context).toContain('Skills: TypeScript, Postgres');
     expect(result.context).toContain('Detailed background documents are unavailable right now.');
     expect(result.context).not.toContain('Relevant excerpts');
     expect(warn).toHaveBeenCalledWith(
-      expect.objectContaining({ source: 'knowledge' }),
+      { source: 'knowledge', error: { message: 'connect ECONNREFUSED' } },
       expect.stringContaining('Knowledge retrieval failed'),
+    );
+  });
+
+  it('logs the status of a failed call, not the raw error', async () => {
+    const warn = jest.fn();
+    await getKnowledgeChatContext({
+      message: 'Kafka?',
+      retriever: retrieverReturning(async () => {
+        throw new KnowledgeRetrievalError('Knowledge service /retrieve answered 503', {
+          status: 503,
+        });
+      }),
+      log: { warn },
+    });
+    expect(warn).toHaveBeenCalledWith(
+      {
+        source: 'knowledge',
+        error: { message: 'Knowledge service /retrieve answered 503', status: 503 },
+      },
+      expect.any(String),
     );
   });
 
@@ -96,7 +115,7 @@ describe('getKnowledgeChatContext', () => {
       log: { warn },
     });
 
-    expect(result.mode).toBe('profile-only');
+    expect(result).toMatchObject({ mode: 'profile-only', reason: 'unavailable' });
     expect(result.context).toContain('Detailed background documents are unavailable right now.');
     expect(warn).toHaveBeenCalledTimes(1);
   });
@@ -109,7 +128,7 @@ describe('getKnowledgeChatContext', () => {
       log: { warn },
     });
 
-    expect(result.mode).toBe('profile-only');
+    expect(result).toMatchObject({ mode: 'profile-only', reason: 'no-match' });
     expect(result.context).toContain('No background documents matched this question.');
     expect(warn).not.toHaveBeenCalled();
   });

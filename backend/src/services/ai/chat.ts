@@ -65,12 +65,25 @@ export function buildChatMessages(
 }
 
 /**
+ * The production answer path for a given context block: the chat prompt, the
+ * model and its settings. The chat eval calls it too, so it measures exactly
+ * what visitors get.
+ */
+export async function answerWithContext(
+  context: string,
+  message: string,
+  history?: ChatHistory,
+): Promise<string> {
+  return chatCompletion(buildChatMessages(context, message, history), {
+    reasoning_effort: 'medium',
+  });
+}
+
+/**
  * Answers a chat message grounded in the portfolio owner's background.
  */
 export async function chatWithContext(options: ChatOptions): Promise<string> {
   const trimmed = options.message.trim();
   const baseContext = await getContextForChat({ ...options, message: trimmed });
-  return chatCompletion(buildChatMessages(baseContext, trimmed, options.history), {
-    reasoning_effort: 'medium',
-  });
+  return answerWithContext(baseContext, trimmed, options.history);
 }

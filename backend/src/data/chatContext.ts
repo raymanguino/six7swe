@@ -1,6 +1,10 @@
-import type { RetrievedChunkDto } from '@six7swe/knowledge-types';
+import { MAX_RETRIEVE_QUERY_CHARS, type RetrievedChunkDto } from '@six7swe/knowledge-types';
 import { getPortfolioData } from '../services/portfolioService';
-import { getDefaultRetriever, type CachedRetriever } from '../services/knowledgeRetrieval';
+import {
+  getDefaultRetriever,
+  KnowledgeRetrievalError,
+  type CachedRetriever,
+} from '../services/knowledgeRetrieval';
 import type { PortfolioProfileData } from '../types/portfolio';
 
 /**
@@ -30,8 +34,8 @@ export async function getChatContext(): Promise<string> {
 
 const MAX_SUMMARY_SKILLS = 30;
 const MAX_SUMMARY_CHARS = 800;
-/** Each turn is capped so the query stays well inside the service's 2000-character limit. */
-const MAX_QUERY_PART_CHARS = 900;
+/** Each of the two turns gets just under half, so the joined query fits the service's limit. */
+const MAX_QUERY_PART_CHARS = Math.floor((MAX_RETRIEVE_QUERY_CHARS - 1) / 2);
 
 /**
  * A compact profile: who, what, where, the summary, the skills and one line
@@ -60,7 +64,8 @@ export function buildProfileSummary(profile: PortfolioProfileData | null): strin
   return lines.join('\n');
 }
 
-export type ChatHistory = Array<{ role: string; content: string }>;
+export type ChatRole = 'user' | 'assistant';
+export type ChatHistory = Array<{ role: ChatRole; content: string }>;
 
 /**
  * What to retrieve for: the current question plus the last user turn, so a
@@ -69,7 +74,7 @@ export type ChatHistory = Array<{ role: string; content: string }>;
 export function buildRetrievalQuery(message: string, history?: ChatHistory): string {
   const current = message.trim().slice(0, MAX_QUERY_PART_CHARS);
   const lastUser = Array.isArray(history)
-    ? [...history].reverse().find((m) => m.role === 'user' && typeof m.content === 'string')
+    ? [...history].reverse().find((m) => m.role === 'user')
     : undefined;
   const previous = lastUser?.content.trim().slice(0, MAX_QUERY_PART_CHARS);
   if (!previous || previous === current) return current;
@@ -98,11 +103,21 @@ export interface KnowledgeChatContextOptions {
   log?: ContextLogger;
 }
 
-export interface KnowledgeChatContext {
-  context: string;
-  /** `retrieved` when chunks were found; `profile-only` otherwise. */
-  mode: 'retrieved' | 'profile-only';
-  chunkCount: number;
+/**
+ * `retrieved` when chunks were found. `profile-only` otherwise, with why:
+ * `unavailable` (the service failed or is not configured, an outage) or
+ * `no-match` (the service answered, but nothing matched).
+ */
+export type KnowledgeChatContext =
+  | { mode: 'retrieved'; context: string; chunkCount: number }
+  | { mode: 'profile-only'; reason: 'unavailable' | 'no-match'; context: string; chunkCount: 0 };
+
+/** The error fields worth logging: no raw cause objects, which can carry request details. */
+function describeError(err: unknown): { message: string; status?: number } {
+  if (err instanceof KnowledgeRetrievalError && err.status !== undefined) {
+    return { message: err.message, status: err.status };
+  }
+  return { message: err instanceof Error ? err.message : String(err) };
 }
 
 const PROFILE_ONLY_NOTE =
@@ -139,7 +154,7 @@ export async function getKnowledgeChatContext(
     } catch (err) {
       unavailable = true;
       options.log?.warn(
-        { err, source: 'knowledge' },
+        { source: 'knowledge', error: describeError(err) },
         'Knowledge retrieval failed; answering from the profile only',
       );
     }
@@ -149,6 +164,7 @@ export async function getKnowledgeChatContext(
     return {
       context: [summary, '', unavailable ? PROFILE_ONLY_NOTE : NO_MATCH_NOTE].join('\n'),
       mode: 'profile-only',
+      reason: unavailable ? 'unavailable' : 'no-match',
       chunkCount: 0,
     };
   }

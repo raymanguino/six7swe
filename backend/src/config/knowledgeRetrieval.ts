@@ -1,4 +1,5 @@
-import { MAX_RETRIEVE_K } from '@six7swe/knowledge-types';
+import { DEFAULT_RETRIEVE_K, MAX_RETRIEVE_K } from '@six7swe/knowledge-types';
+import { getPortfolioDataSource } from './portfolioMcp';
 
 /**
  * How the portfolio chat reaches the knowledge service when
@@ -18,13 +19,19 @@ export interface KnowledgeRetrievalConfig {
   timeoutMs: number;
   /** How long a fetched corpus version is trusted before asking again. */
   versionTtlMs: number;
+  /**
+   * After a failed call, how long every uncached retrieval fails fast instead
+   * of waiting on the service again, so an outage costs one timeout, not one
+   * per chat turn.
+   */
+  failureCooldownMs: number;
   /** Cached retrievals kept, least recently used evicted first. */
   cacheEntries: number;
 }
 
-export const DEFAULT_CHAT_RETRIEVE_K = 6;
 const DEFAULT_TIMEOUT_MS = 3_000;
 const DEFAULT_VERSION_TTL_MS = 30_000;
+const DEFAULT_FAILURE_COOLDOWN_MS = 15_000;
 const DEFAULT_CACHE_ENTRIES = 200;
 
 function positiveInt(
@@ -37,7 +44,7 @@ function positiveInt(
   return Math.min(n, max);
 }
 
-/** Null when the service is not configured; chat then answers from the profile only. */
+/** Null when the service is not configured. */
 export function getKnowledgeRetrievalConfig(
   env: Record<string, string | undefined> = process.env,
 ): KnowledgeRetrievalConfig | null {
@@ -47,9 +54,25 @@ export function getKnowledgeRetrievalConfig(
   return {
     baseUrl: baseUrl.replace(/\/+$/, ''),
     serviceKey,
-    k: positiveInt(env.KNOWLEDGE_RETRIEVE_K, DEFAULT_CHAT_RETRIEVE_K, MAX_RETRIEVE_K),
+    k: positiveInt(env.KNOWLEDGE_RETRIEVE_K, DEFAULT_RETRIEVE_K, MAX_RETRIEVE_K),
     timeoutMs: positiveInt(env.KNOWLEDGE_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
     versionTtlMs: DEFAULT_VERSION_TTL_MS,
+    failureCooldownMs: DEFAULT_FAILURE_COOLDOWN_MS,
     cacheEntries: DEFAULT_CACHE_ENTRIES,
   };
+}
+
+/**
+ * Called at startup. `PORTFOLIO_DATA_SOURCE=knowledge` without the URL or key
+ * is a deploy mistake, so the server refuses to start rather than quietly
+ * answering every chat from the profile alone. Outages are handled per
+ * request instead.
+ */
+export function assertKnowledgeRetrievalConfigured(): void {
+  if (getPortfolioDataSource() !== 'knowledge') return;
+  if (!getKnowledgeRetrievalConfig()) {
+    throw new Error(
+      'PORTFOLIO_DATA_SOURCE=knowledge requires KNOWLEDGE_SERVICE_URL and KNOWLEDGE_SERVICE_KEY',
+    );
+  }
 }
