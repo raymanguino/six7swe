@@ -88,9 +88,53 @@ describe('createSwrCache', () => {
     expect(errors).toHaveLength(1);
   });
 
-  it('throws when there is nothing to fall back on', async () => {
-    const { cache, willLoad } = setup();
+  it('throws when there is nothing to fall back on, without asking again during the pause', async () => {
+    const { cache, load, advance, willLoad } = setup();
     willLoad(() => Promise.reject(new Error('down')));
     await expect(cache.get()).rejects.toThrow('down');
+    await expect(cache.get()).rejects.toThrow('down');
+    expect(load).toHaveBeenCalledTimes(1);
+
+    advance(30);
+    willLoad(() => Promise.resolve('back'));
+    expect(await cache.get()).toBe('back');
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it('never lets a load started before invalidate() stand in for fresh data', async () => {
+    const { cache, advance, willLoad } = setup();
+    await cache.get();
+    advance(100);
+
+    // A background refresh starts with pre-publish data and is still in flight...
+    let finishOld: (value: string) => void = () => {};
+    willLoad(() => new Promise<string>((resolve) => (finishOld = resolve)));
+    expect(await cache.get()).toBe('v1');
+
+    // ...when the owner publishes.
+    cache.invalidate();
+    willLoad(() => Promise.resolve('published'));
+    const next = cache.get();
+    finishOld('pre-publish');
+    expect(await next).toBe('published');
+    await flush();
+    expect(await cache.get()).toBe('published');
+  });
+
+  it('keeps the invalidation when a load from before it fails', async () => {
+    const { cache, load, advance, willLoad } = setup();
+    await cache.get();
+    advance(100);
+    let failOld: (error: Error) => void = () => {};
+    willLoad(() => new Promise<string>((_, reject) => (failOld = reject)));
+    expect(await cache.get()).toBe('v1');
+
+    cache.invalidate();
+    failOld(new Error('old load failed'));
+    await flush();
+
+    willLoad(() => Promise.resolve('published'));
+    expect(await cache.get()).toBe('published');
+    expect(load).toHaveBeenCalledTimes(3);
   });
 });

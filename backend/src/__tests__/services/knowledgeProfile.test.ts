@@ -94,7 +94,7 @@ describe('createKnowledgeProfileClient', () => {
     return {
       calls,
       client: createKnowledgeProfileClient(
-        { baseUrl: SERVICE_URL, serviceKey: SERVICE_KEY, timeoutMs: 1000 },
+        { baseUrl: SERVICE_URL, key: SERVICE_KEY, timeoutMs: 1000 },
         fetch,
       ),
     };

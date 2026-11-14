@@ -8,9 +8,12 @@
  *   for a refresh, so the change shows on the next request.
  * - Refresh failed: the last good value keeps being served, and the source is
  *   tried again after `retryAfterFailureMs`. Only a caller with no value at all
- *   to fall back on sees the error.
+ *   to fall back on sees the error, and within that window it sees it at once,
+ *   without the source being asked again (an outage costs one timeout, not one
+ *   per request).
  *
- * Concurrent refreshes share one call to the source.
+ * Concurrent refreshes of the same generation share one call to the source; a
+ * refresh started before `invalidate()` is never joined after it.
  */
 export interface SwrCacheOptions {
   ttlMs: number;
@@ -32,55 +35,78 @@ export function createSwrCache<T>(load: () => Promise<T>, options: SwrCacheOptio
   const now = options.now ?? Date.now;
   let entry: { value: T; expiresAt: number } | null = null;
   let invalidated = false;
-  let inFlight: Promise<T> | null = null;
+  /**
+   * Bumped by `invalidate()`. A load started before an invalidation may carry
+   * data from before it (a publish), so it is never joined by a later caller,
+   * and its result neither replaces the value nor ends the invalidation.
+   */
+  let generation = 0;
+  let inFlight: { promise: Promise<T>; generation: number } | null = null;
+  /** With no value to fall back on, a failure is remembered until then, so callers fail fast. */
+  let failure: { error: unknown; until: number } | null = null;
 
   function refresh(): Promise<T> {
-    if (!inFlight) {
-      inFlight = load()
-        .then((value) => {
+    if (inFlight && inFlight.generation === generation) return inFlight.promise;
+    const started = generation;
+    const promise = load()
+      .then((value) => {
+        if (started === generation) {
           entry = { value, expiresAt: now() + options.ttlMs };
           invalidated = false;
-          return value;
-        })
-        .finally(() => {
-          inFlight = null;
-        });
-    }
-    return inFlight;
+          failure = null;
+        }
+        return value;
+      })
+      .catch((error: unknown) => {
+        if (started === generation) backOff(error);
+        throw error;
+      })
+      .finally(() => {
+        if (inFlight?.promise === promise) inFlight = null;
+      });
+    inFlight = { promise, generation: started };
+    return promise;
   }
 
-  /** Keeps serving the last good value for a while before trying the source again. */
-  function backOff(): void {
-    if (entry) entry = { value: entry.value, expiresAt: now() + options.retryAfterFailureMs };
-    invalidated = false;
+  /**
+   * After a current load failed: keep serving the last good value for a while
+   * before trying the source again, or, with none, fail fast for that long.
+   */
+  function backOff(error: unknown): void {
+    const until = now() + options.retryAfterFailureMs;
+    if (entry) {
+      entry = { value: entry.value, expiresAt: until };
+      invalidated = false;
+    } else {
+      failure = { error, until };
+    }
   }
 
   return {
     async get() {
       if (entry && !invalidated) {
         if (now() >= entry.expiresAt && !inFlight) {
-          refresh().catch((error: unknown) => {
-            backOff();
-            options.onBackgroundError?.(error);
-          });
+          refresh().catch((error: unknown) => options.onBackgroundError?.(error));
         }
         return entry.value;
       }
+      if (!entry && failure && now() < failure.until) throw failure.error;
       try {
         return await refresh();
       } catch (error) {
         if (!entry) throw error;
-        backOff();
         options.onBackgroundError?.(error);
         return entry.value;
       }
     },
     invalidate() {
+      generation += 1;
       invalidated = true;
     },
     clear() {
       entry = null;
       invalidated = false;
+      failure = null;
     },
   };
 }

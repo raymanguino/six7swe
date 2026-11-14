@@ -137,7 +137,13 @@ describe('portfolio data from the knowledge service', () => {
   });
 
   it('falls back to the seeded profile on a cold start with the service down', async () => {
-    const service = load(() => Promise.reject(new Error('down')));
+    const getPublished = jest.fn(() => Promise.reject(new Error('down')));
+    const service = load(getPublished);
     expect(names(await service.getPortfolioData())).toBe('Seeded Name');
+    // The next requests go straight to the fallback instead of waiting on the
+    // service again (an outage costs one timeout, not one per request).
+    expect(names(await service.getPortfolioData())).toBe('Seeded Name');
+    expect(names(await service.getPortfolioData())).toBe('Seeded Name');
+    expect(getPublished).toHaveBeenCalledTimes(1);
   });
 });

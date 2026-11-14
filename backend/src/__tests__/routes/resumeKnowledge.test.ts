@@ -80,9 +80,27 @@ describe('resume from the knowledge service', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toBe('application/pdf');
-    expect(res.headers['content-disposition']).toBe('attachment; filename="jordan.pdf"');
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers['content-disposition']).toBe(
+      `attachment; filename="jordan.pdf"; filename*=UTF-8''jordan.pdf`,
+    );
     expect(res.rawPayload).toEqual(PDF);
     expect(mockedFindLocalResume).not.toHaveBeenCalled();
+  });
+
+  it('serves a resume whose name is not Latin-1', async () => {
+    clientReturning(() => Promise.resolve(PDF));
+    mockedGetPortfolioData.mockResolvedValue({
+      ...portfolio,
+      knowledgeResume: { filename: '履歴書 (2026).pdf', isPdf: true },
+    });
+
+    const res = await app.inject({ method: 'GET', url: '/resume' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-disposition']).toBe(
+      `attachment; filename="___ (2026).pdf"; filename*=UTF-8''${encodeURIComponent('履歴書')}%20%282026%29.pdf`,
+    );
   });
 
   it('falls back to a local file, then 404, when the service has none or is down', async () => {

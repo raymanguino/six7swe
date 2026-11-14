@@ -1,4 +1,5 @@
 import { SERVICE_KEY_HEADER } from '@six7swe/knowledge-types';
+import type { z } from 'zod';
 
 /**
  * The one HTTP transport to the private knowledge service, shared by the owner
@@ -139,4 +140,70 @@ export function parseJsonBody(text: string): unknown {
   } catch {
     return undefined;
   }
+}
+
+/** Where a service-to-service client sends its requests, and with which key. */
+export interface KnowledgeClientConfig {
+  /** Service base URL, without a trailing slash. */
+  baseUrl: string;
+  /** Sent in the service's key header. */
+  key: string;
+  timeoutMs: number;
+}
+
+/**
+ * A knowledge service call that failed: no answer, an error status, or a body
+ * that is not the contract. Callers may subclass it to keep their own name.
+ */
+export class KnowledgeServiceError extends Error {
+  /** The HTTP status, when the service answered with one. */
+  readonly status: number | undefined;
+  /** The transport failure behind it (the TS lib target has no `Error.cause`). */
+  readonly cause?: unknown;
+
+  constructor(message: string, options?: { status?: number; cause?: unknown }) {
+    super(message);
+    this.name = 'KnowledgeServiceError';
+    this.status = options?.status;
+    this.cause = options?.cause;
+  }
+}
+
+export type KnowledgeErrorFactory = (
+  message: string,
+  options?: { status?: number; cause?: unknown },
+) => KnowledgeServiceError;
+
+const defaultError: KnowledgeErrorFactory = (message, options) =>
+  new KnowledgeServiceError(message, options);
+
+/**
+ * Sends a request and returns its 2xx JSON body, validated against `schema`.
+ * Every failure is thrown as the factory's error, with the path in the message.
+ */
+export async function requestKnowledgeJson<T>(
+  request: KnowledgeRequest,
+  schema: z.ZodType<T>,
+  makeError: KnowledgeErrorFactory = defaultError,
+): Promise<T> {
+  const { path } = request;
+  let reply: KnowledgeReply;
+  try {
+    reply = await sendKnowledgeRequest(request);
+  } catch (error) {
+    if (!(error instanceof KnowledgeTransportError)) throw error;
+    throw makeError(`Knowledge service ${path} ${error.message}`, { cause: error });
+  }
+  if (reply.status < 200 || reply.status > 299) {
+    throw makeError(`Knowledge service ${path} answered ${reply.status}`, {
+      status: reply.status,
+    });
+  }
+  const json = parseJsonBody(reply.text);
+  if (json === undefined) throw makeError(`Knowledge service ${path} sent invalid JSON`);
+  const parsed = schema.safeParse(json);
+  if (!parsed.success) {
+    throw makeError(`Knowledge service ${path} response did not match the contract`);
+  }
+  return parsed.data;
 }

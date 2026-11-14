@@ -66,11 +66,10 @@ export function knowledgeHandlers(deps: KnowledgeHandlerDeps) {
     return result.body === undefined ? reply.send() : reply.send(result.body);
   }
 
-  /** Validates `:id` as a UUID (400 otherwise) and builds the request from it. */
-  /** Forwards a validated JSON body. */
+  /** Validates the JSON body against `schema` (400 otherwise) and forwards it. */
   function withJsonBody<T>(
     schema: z.ZodType<T>,
-    build: (body: T) => Omit<ProxyRequest, 'body' | 'contentType'>,
+    build: () => Omit<ProxyRequest, 'body' | 'contentType'>,
     onResult?: (result: ProxyResponse) => void,
   ): Handler {
     return async (req, reply) => {
@@ -80,7 +79,7 @@ export function knowledgeHandlers(deps: KnowledgeHandlerDeps) {
         req,
         reply,
         {
-          ...build(parsed.data),
+          ...build(),
           body: JSON.stringify(parsed.data),
           contentType: 'application/json',
         },
@@ -90,6 +89,7 @@ export function knowledgeHandlers(deps: KnowledgeHandlerDeps) {
     };
   }
 
+  /** Validates `:id` as a UUID (400 otherwise) and builds the request from it. */
   function withDocumentId(build: (id: string) => ProxyRequest): Handler {
     return async (req, reply) => {
       const parsed = DocumentParamsSchema.safeParse(req.params);
