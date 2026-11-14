@@ -142,7 +142,7 @@ const CONFIG_FILE =
  * (`FIXTURE_DIRECTORIES`) so a fixture `package.json` stays a fixture.
  */
 const PINNED_FILE =
-  /^(package\.json|railway\.json|nixpacks\.toml|dockerfile([.-].+)?|.+\.dockerfile)$/i;
+  /^(package\.json|railway\.json|dockerfile([.-].+)?|.+\.dockerfile)$/i;
 
 /**
  * Instructions read by coding agents that have shell access. They end in
@@ -202,7 +202,7 @@ function splitPath(path: string): { base: string; directories: string[] } {
  *
  * These are the files a hostile pull request would most want to slip past
  * the review: CI workflows (`.github/**`), the build and deploy definition
- * (`package.json`, `Dockerfile`, `.railway/**`, `railway.json`, `nixpacks.toml`), the login
+ * (`package.json`, `Dockerfile`, `.railway/**`, `railway.json`), the login
  * path (any `auth/` directory and `AUTH_GATE_FILES`) and the instructions
  * coding agents follow (`CLAUDE.md`, `AGENTS.md`, `.claude/**`). They are
  * tier 0, and within tier 0 they come first, so padding a pull request with
