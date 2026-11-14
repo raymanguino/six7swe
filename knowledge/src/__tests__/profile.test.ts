@@ -13,7 +13,9 @@ import {
 import { createHashingEmbedder } from '../services/embedding/hashing.js';
 import { ingestDocument } from '../services/ingestion/pipeline.js';
 import {
-  createChatProfileDrafter,
+  createMiniMaxProfileDrafter,
+  MINIMAX_MAX_COMPLETION_TOKENS,
+  stripThinking,
   createStubProfileDrafter,
   DraftError,
   parseModelJson,
@@ -534,45 +536,106 @@ describe('drafting races', () => {
   });
 });
 
-describe('chat drafter', () => {
-  const answer = (content: string, status = 200) =>
-    new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
+describe('MiniMax drafter', () => {
+  const URL = 'https://api.minimax.io/v1/chat/completions';
+
+  const reply = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
       status,
       headers: { 'content-type': 'application/json' },
     });
+  const answer = (content: string, finishReason = 'stop') =>
+    reply({
+      choices: [{ finish_reason: finishReason, message: { content, role: 'assistant' } }],
+      base_resp: { status_code: 0, status_msg: 'success' },
+    });
 
-  const drafterWith = (fetchImpl: typeof fetch) =>
-    createChatProfileDrafter({
-      provider: 'openai',
-      label: 'OpenAI',
-      baseUrl: 'https://api.example.test/v1/',
-      apiKey: 'sk-test',
-      model: 'test-model',
+  const drafterWith = (fetchImpl: typeof fetch, secondaryApiKey?: string) =>
+    createMiniMaxProfileDrafter({
+      url: URL,
+      apiKey: 'mm-primary',
+      secondaryApiKey,
+      model: 'MiniMax-M3',
       fetchImpl,
     });
 
-  it('sends the resume and validates the answer', async () => {
+  it('sends the resume the way the backend calls MiniMax, and validates the answer', async () => {
     const fetchImpl = vi.fn<typeof fetch>(() =>
       Promise.resolve(answer('```json\n' + JSON.stringify(SAMPLE_PROFILE) + '\n```')),
     );
     const profile = await drafterWith(fetchImpl).draft(RESUME_MD);
     expect(profile).toEqual(SAMPLE_PROFILE);
 
+    expect(fetchImpl).toHaveBeenCalledOnce();
     const [url, init] = fetchImpl.mock.calls[0] ?? [];
-    expect(url).toBe('https://api.example.test/v1/chat/completions');
-    const body = JSON.parse(String(init?.body)) as {
-      model: string;
+    expect(url).toBe(URL);
+    expect(init?.method).toBe('POST');
+    expect(new Headers(init?.headers).get('authorization')).toBe('Bearer mm-primary');
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown> & {
       messages: Array<{ role: string; content: string }>;
     };
-    expect(body.model).toBe('test-model');
+    expect(body).toMatchObject({
+      model: 'MiniMax-M3',
+      max_completion_tokens: MINIMAX_MAX_COMPLETION_TOKENS,
+      reasoning_effort: 'medium',
+    });
+    expect(body).not.toHaveProperty('response_format');
+    expect(body.messages.map((m) => m.role)).toEqual(['system', 'user']);
     expect(body.messages[1]?.content).toContain('Acme Corp');
-    expect(new Headers(init?.headers).get('authorization')).toBe('Bearer sk-test');
   });
 
-  it('turns provider failures into user-facing errors', async () => {
+  it('strips a leading think block before parsing', async () => {
+    const content = `<think>The resume says Acme...</think>\n${JSON.stringify(SAMPLE_PROFILE)}`;
+    const profile = await drafterWith(() => Promise.resolve(answer(content))).draft(RESUME_MD);
+    expect(profile).toEqual(SAMPLE_PROFILE);
+    expect(stripThinking('  <think>a\nb</think> {"a":1}')).toBe('{"a":1}');
+  });
+
+  it('reports an error MiniMax returns inside a 200 body', async () => {
+    const error = drafterWith(() =>
+      Promise.resolve(
+        reply({ base_resp: { status_code: 1008, status_msg: 'insufficient balance' } }),
+      ),
+    ).draft('x');
+    await expect(error).rejects.toThrow('MiniMax returned an error (code 1008).');
+    await expect(error).rejects.toMatchObject({ detail: 'insufficient balance' });
+  });
+
+  it('says so when the token limit was hit before an answer', async () => {
+    await expect(
+      drafterWith(() => Promise.resolve(answer('', 'length'))).draft('x'),
+    ).rejects.toThrow('MiniMax hit its token limit before answering.');
+    await expect(drafterWith(() => Promise.resolve(answer(''))).draft('x')).rejects.toThrow(
+      'MiniMax sent an empty answer.',
+    );
+  });
+
+  it('retries a 429 once with the secondary key', async () => {
+    const fetchImpl = vi.fn<typeof fetch>((_url, init) =>
+      Promise.resolve(
+        new Headers(init?.headers).get('authorization') === 'Bearer mm-primary'
+          ? reply({ error: 'rate limited' }, 429)
+          : answer(JSON.stringify(SAMPLE_PROFILE)),
+      ),
+    );
+    expect(await drafterWith(fetchImpl, 'mm-secondary').draft('x')).toEqual(SAMPLE_PROFILE);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(new Headers(fetchImpl.mock.calls[1]?.[1]?.headers).get('authorization')).toBe(
+      'Bearer mm-secondary',
+    );
+
+    // Without a secondary key, the 429 is the answer.
+    const once = vi.fn<typeof fetch>(() => Promise.resolve(reply({}, 429)));
+    await expect(drafterWith(once).draft('x')).rejects.toThrow(
+      'MiniMax returned an error (status 429).',
+    );
+    expect(once).toHaveBeenCalledOnce();
+  });
+
+  it('turns other failures into fixed, owner-facing messages', async () => {
     await expect(
       drafterWith(() => Promise.resolve(new Response('overloaded', { status: 503 }))).draft('x'),
-    ).rejects.toThrow('OpenAI returned an error (status 503).');
+    ).rejects.toThrow('MiniMax returned an error (status 503).');
     await expect(drafterWith(() => Promise.resolve(answer('not json'))).draft('x')).rejects.toThrow(
       'The model did not answer with JSON.',
     );
@@ -581,7 +644,7 @@ describe('chat drafter', () => {
     ).rejects.toThrow('did not match the profile format');
     await expect(
       drafterWith(() => Promise.reject(new TypeError('fetch failed'))).draft('x'),
-    ).rejects.toThrow('OpenAI could not be reached.');
+    ).rejects.toThrow('MiniMax could not be reached.');
   });
 
   it('parses JSON with or without a code fence', () => {
@@ -624,30 +687,49 @@ describe('PROFILE_DRAFTER configuration', () => {
     expect(loadEnv(base).profileDrafter).toEqual({ kind: 'none' });
   });
 
-  it('uses the provider key and default model, or an override', () => {
+  it('uses MiniMax with its key and default model, or an override', () => {
     expect(
-      loadEnv({ ...base, PROFILE_DRAFTER: 'openai', OPENAI_API_KEY: 'sk' }).profileDrafter,
+      loadEnv({ ...base, PROFILE_DRAFTER: 'minimax', MINIMAX_API_KEY: 'mm' }).profileDrafter,
     ).toEqual({
-      kind: 'chat',
-      provider: 'openai',
-      baseUrl: 'https://api.openai.com/v1',
-      apiKey: 'sk',
-      model: 'gpt-4o-mini',
+      kind: 'minimax',
+      url: 'https://api.minimax.io/v1/chat/completions',
+      apiKey: 'mm',
+      secondaryApiKey: undefined,
+      model: 'MiniMax-M3',
     });
     expect(
       loadEnv({
         ...base,
-        PROFILE_DRAFTER: 'openrouter',
-        OPENROUTER_API_KEY: 'or',
-        PROFILE_DRAFT_MODEL: 'anthropic/claude-x',
+        PROFILE_DRAFTER: 'minimax',
+        MINIMAX_API_KEY: 'mm',
+        MINIMAX_API_KEY_SECONDARY: 'mm2',
+        PROFILE_DRAFT_MODEL: 'MiniMax-Other',
       }).profileDrafter,
-    ).toMatchObject({ provider: 'openrouter', model: 'anthropic/claude-x' });
+    ).toMatchObject({ secondaryApiKey: 'mm2', model: 'MiniMax-Other' });
   });
 
-  it('requires the key and refuses the stub in production', () => {
-    expect(() => loadEnv({ ...base, PROFILE_DRAFTER: 'openai' })).toThrow(
-      /OPENAI_API_KEY is required when PROFILE_DRAFTER=openai/,
+  it('requires the MiniMax key, and the embedder is unaffected', () => {
+    expect(() => loadEnv({ ...base, PROFILE_DRAFTER: 'minimax' })).toThrow(
+      /MINIMAX_API_KEY is required when PROFILE_DRAFTER=minimax/,
     );
+    // OpenAI and OpenRouter are embedders only; MiniMax is a drafter only.
+    expect(() => loadEnv({ ...base, PROFILE_DRAFTER: 'openai', OPENAI_API_KEY: 'sk' })).toThrow(
+      /PROFILE_DRAFTER/,
+    );
+    expect(() => loadEnv({ ...base, EMBEDDER: 'minimax', MINIMAX_API_KEY: 'mm' })).toThrow(
+      /EMBEDDER/,
+    );
+    const env = loadEnv({
+      ...base,
+      EMBEDDER: 'openai',
+      OPENAI_API_KEY: 'sk',
+      PROFILE_DRAFTER: 'minimax',
+      MINIMAX_API_KEY: 'mm',
+    });
+    expect(env.embedder).toMatchObject({ provider: 'openai', apiKey: 'sk' });
+  });
+
+  it('refuses the stub in production', () => {
     expect(() =>
       loadEnv({
         ...base,

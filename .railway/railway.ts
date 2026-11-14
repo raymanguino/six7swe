@@ -159,13 +159,19 @@ export default defineRailway(() => {
       KNOWLEDGE_SERVICE_KEY: preserve(),
       KNOWLEDGE_OWNER_KEY: preserve(),
       OWNER_AUTH_ID: preserve(),
+      // Embeddings only (EMBEDDER defaults to openai). Profile drafting uses MiniMax below.
       OPENAI_API_KEY: preserve(),
       SUPABASE_URL: preserve(),
       SUPABASE_SECRET_KEY: preserve(),
-      // The model that drafts the landing profile from the primary resume (#86). Its default,
-      // `none`, turns drafting off, so production names it; `openai` reuses OPENAI_API_KEY
-      // above, so it needs no new secret. The model defaults to gpt-4o-mini (PROFILE_DRAFT_MODEL).
-      PROFILE_DRAFTER: 'openai',
+      // The model that drafts the landing profile from the primary resume (#86): MiniMax, the
+      // app's LLM provider. Its default, `none`, turns drafting off, so production names it. The
+      // model defaults to MiniMax-M3 (PROFILE_DRAFT_MODEL).
+      PROFILE_DRAFTER: 'minimax',
+      // Set these on the knowledge service in Railway (the same values as the backend's).
+      // The service refuses to boot with PROFILE_DRAFTER=minimax and no MINIMAX_API_KEY. The
+      // secondary key is optional: it is tried once when MiniMax answers 429.
+      MINIMAX_API_KEY: preserve(),
+      MINIMAX_API_KEY_SECONDARY: preserve(),
     },
   });
 

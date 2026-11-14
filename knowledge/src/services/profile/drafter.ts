@@ -1,13 +1,13 @@
 import { z } from 'zod';
-import { EMBEDDING_PROVIDERS, type ProfileDrafterConfig } from '../../config/env.js';
+import type { ProfileDrafterConfig } from '../../config/env.js';
 import { PROFILE_LIMITS, type ProfileData } from '../../contract.js';
 import { normalizeProfileDraft } from './normalize.js';
 
 /**
  * Drafts the structured profile from a resume's extracted text.
  *
- * The production drafter calls a chat model through an OpenAI-compatible
- * `POST {baseUrl}/chat/completions` (OpenAI or OpenRouter). The `stub`
+ * The production drafter calls MiniMax's chat completions API, as the
+ * backend's chat does (`PROFILE_DRAFTER=minimax`). The `stub`
  * drafter is deterministic and offline, for local development and tests.
  * Either way the result is validated against the contract before anything
  * is stored.
@@ -87,78 +87,121 @@ export function toProfileData(raw: unknown): ProfileData {
   }
 }
 
-const CompletionSchema = z.object({
+/**
+ * MiniMax's chat completions response, as `backend/src/services/minimaxService.ts`
+ * reads it. MiniMax reports most failures inside a 200 body (`base_resp`).
+ */
+const MiniMaxResponseSchema = z.object({
   choices: z
-    .array(z.object({ message: z.object({ content: z.string().nullable().optional() }) }))
-    .min(1),
+    .array(
+      z.object({
+        finish_reason: z.string().nullable().optional(),
+        message: z.object({ content: z.string().nullable().optional() }).optional(),
+      }),
+    )
+    .optional(),
+  base_resp: z.object({ status_code: z.number(), status_msg: z.string().optional() }).optional(),
 });
 
-export interface ChatDrafterOptions {
-  /** Short provider id for the drafter's name, e.g. `openai`. */
-  provider: string;
-  /** Human-readable provider name for messages, e.g. `OpenAI`. */
-  label: string;
-  /** API root without a trailing slash, e.g. `https://api.openai.com/v1`. */
-  baseUrl: string;
+/** Reasoning tokens share this budget with the answer, so it is generous. */
+export const MINIMAX_MAX_COMPLETION_TOKENS = 8192;
+const MINIMAX = 'MiniMax';
+
+/** A reasoning model may put its thinking before the answer; only the answer is JSON. */
+export function stripThinking(content: string): string {
+  return content.replace(/^\s*<think>[\s\S]*?<\/think>/i, '').trim();
+}
+
+export interface MiniMaxDrafterOptions {
+  /** The chat completions endpoint, e.g. `https://api.minimax.io/v1/chat/completions`. */
+  url: string;
   apiKey: string;
+  /** Tried once when the primary key gets a 429. */
+  secondaryApiKey?: string;
   model: string;
   fetchImpl?: typeof fetch;
+  /** One deadline for the whole call, the retry and the body included. */
   timeoutMs?: number;
 }
 
-export function createChatProfileDrafter(options: ChatDrafterOptions): ProfileDrafter {
+/**
+ * Drafts with MiniMax, the app's LLM provider, the same way the backend's chat
+ * calls it. Owner-facing messages are fixed; provider details go to `detail`.
+ */
+export function createMiniMaxProfileDrafter(options: MiniMaxDrafterOptions): ProfileDrafter {
   const fetchImpl = options.fetchImpl ?? fetch;
-  const url = `${options.baseUrl.replace(/\/+$/, '')}/chat/completions`;
-  const { label } = options;
   const timeoutMs = options.timeoutMs ?? TIMEOUT_MS;
 
   return {
-    name: `${options.provider}:${options.model}`,
+    name: `minimax:${options.model}`,
     async draft(resumeText) {
-      let res: Response;
-      try {
-        res = await fetchImpl(url, {
+      const body = JSON.stringify({
+        model: options.model,
+        messages: [
+          { role: 'system', content: DRAFT_SYSTEM_PROMPT },
+          { role: 'user', content: draftUserPrompt(resumeText) },
+        ],
+        max_completion_tokens: MINIMAX_MAX_COMPLETION_TOKENS,
+        reasoning_effort: 'medium',
+      });
+      const signal = AbortSignal.timeout(timeoutMs);
+      const send = (key: string) =>
+        fetchImpl(options.url, {
           method: 'POST',
-          headers: {
-            Authorization: `Bearer ${options.apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: options.model,
-            temperature: 0,
-            response_format: { type: 'json_object' },
-            messages: [
-              { role: 'system', content: DRAFT_SYSTEM_PROMPT },
-              { role: 'user', content: draftUserPrompt(resumeText) },
-            ],
-          }),
-          signal: AbortSignal.timeout(timeoutMs),
+          headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+          body,
+          signal,
         });
+
+      let json: unknown;
+      try {
+        let res = await send(options.apiKey);
+        if (res.status === 429 && options.secondaryApiKey) {
+          res = await send(options.secondaryApiKey);
+        }
+        if (!res.ok) {
+          const detail = (await res.text().catch(() => '')).slice(0, 300);
+          throw new DraftError(`${MINIMAX} returned an error (status ${res.status}).`, detail);
+        }
+        try {
+          json = await res.json();
+        } catch (error) {
+          if (signal.aborted) throw error;
+          throw new DraftError(`${MINIMAX} sent a response that was not JSON.`, undefined, {
+            cause: error,
+          });
+        }
       } catch (error) {
-        const timedOut = error instanceof Error && error.name === 'TimeoutError';
+        if (error instanceof DraftError) throw error;
+        // Ask the signal: the deadline can strike while connecting or reading.
         throw new DraftError(
-          timedOut ? `${label} did not answer in time.` : `${label} could not be reached.`,
+          signal.aborted
+            ? `${MINIMAX} did not answer in time.`
+            : `${MINIMAX} could not be reached.`,
           undefined,
           { cause: error },
         );
       }
 
-      if (!res.ok) {
-        const detail = (await res.text().catch(() => '')).slice(0, 300);
-        throw new DraftError(`${label} returned an error (status ${res.status}).`, detail);
+      const parsed = MiniMaxResponseSchema.safeParse(json);
+      if (!parsed.success) throw new DraftError(`${MINIMAX} sent an unexpected response.`);
+      const { base_resp: baseResp, choices } = parsed.data;
+      if (baseResp && baseResp.status_code !== 0) {
+        throw new DraftError(
+          `${MINIMAX} returned an error (code ${baseResp.status_code}).`,
+          baseResp.status_msg,
+        );
       }
-
-      let body: unknown;
-      try {
-        body = await res.json();
-      } catch (error) {
-        throw new DraftError(`${label} sent a response that was not JSON.`, undefined, {
-          cause: error,
-        });
+      const choice = choices?.[0];
+      const content = stripThinking(choice?.message?.content ?? '');
+      if (!content) {
+        if (choice?.finish_reason === 'length') {
+          throw new DraftError(
+            `${MINIMAX} hit its token limit before answering. Try again, or shorten the resume.`,
+          );
+        }
+        throw new DraftError(`${MINIMAX} sent an empty answer.`);
       }
-      const parsed = CompletionSchema.safeParse(body);
-      const content = parsed.success ? parsed.data.choices[0]?.message.content : undefined;
-      if (!content) throw new DraftError(`${label} sent an empty answer.`);
       return toProfileData(parseModelJson(content));
     },
   };
@@ -171,12 +214,11 @@ export function createProfileDrafter(config: ProfileDrafterConfig): ProfileDraft
       return null;
     case 'stub':
       return createStubProfileDrafter();
-    case 'chat':
-      return createChatProfileDrafter({
-        provider: config.provider,
-        label: EMBEDDING_PROVIDERS[config.provider].label,
-        baseUrl: config.baseUrl,
+    case 'minimax':
+      return createMiniMaxProfileDrafter({
+        url: config.url,
         apiKey: config.apiKey,
+        secondaryApiKey: config.secondaryApiKey,
         model: config.model,
       });
   }

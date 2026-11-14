@@ -66,14 +66,18 @@ const EnvSchema = z
 
     /**
      * The chat model that drafts the structured profile from the primary
-     * resume (#86). `openai` and `openrouter` use the same API keys as the
-     * embedders. `stub` is a deterministic, offline drafter for development
-     * and tests. `none` (the default) turns drafting off; the owner can
-     * still write and publish a profile by hand.
+     * resume (#86). `minimax` is MiniMax, the app's LLM provider (the
+     * backend's chat uses it too). `stub` is a deterministic, offline drafter
+     * for development and tests. `none` (the default) turns drafting off; the
+     * owner can still write and publish a profile by hand. Drafting has its
+     * own providers (`DRAFT_PROVIDERS`), apart from the embedders.
      */
-    PROFILE_DRAFTER: z.enum(['none', 'openai', 'openrouter', 'stub']).default('none'),
+    PROFILE_DRAFTER: z.enum(['none', 'minimax', 'stub']).default('none'),
     /** Overrides the provider's default drafting model. */
     PROFILE_DRAFT_MODEL: z.string().min(1).optional(),
+    MINIMAX_API_KEY: z.string().optional(),
+    /** Optional: tried once when MiniMax answers 429 to the primary key. */
+    MINIMAX_API_KEY_SECONDARY: z.string().optional(),
 
     /** Where raw uploaded files are kept. */
     FILE_STORE: z.enum(['supabase', 'local']).default('supabase'),
@@ -171,15 +175,15 @@ const EnvSchema = z
       }
       profileDrafter = { kind: 'stub' };
     } else {
-      const provider = EMBEDDING_PROVIDERS[env.PROFILE_DRAFTER];
+      const provider = DRAFT_PROVIDERS[env.PROFILE_DRAFTER];
       const apiKey = env[provider.keyVariable];
       if (apiKey) {
         profileDrafter = {
-          kind: 'chat',
-          provider: env.PROFILE_DRAFTER,
-          baseUrl: provider.baseUrl,
+          kind: 'minimax',
+          url: provider.url,
           apiKey,
-          model: env.PROFILE_DRAFT_MODEL ?? provider.defaultDraftModel,
+          secondaryApiKey: env[provider.secondaryKeyVariable] || undefined,
+          model: env.PROFILE_DRAFT_MODEL ?? provider.defaultModel,
         };
       } else {
         ctx.addIssue({
@@ -194,28 +198,39 @@ const EnvSchema = z
     return { ...env, embedder, fileStore, profileDrafter };
   });
 
-/**
- * Providers with an OpenAI-compatible API: embeddings, and chat completions
- * for profile drafting.
- */
+/** Providers with an OpenAI-compatible embeddings API. */
 export const EMBEDDING_PROVIDERS = {
   openai: {
     label: 'OpenAI',
     baseUrl: 'https://api.openai.com/v1',
     keyVariable: 'OPENAI_API_KEY',
     defaultModel: 'text-embedding-3-small',
-    defaultDraftModel: 'gpt-4o-mini',
   },
   openrouter: {
     label: 'OpenRouter',
     baseUrl: 'https://openrouter.ai/api/v1',
     keyVariable: 'OPENROUTER_API_KEY',
     defaultModel: 'openai/text-embedding-3-small',
-    defaultDraftModel: 'openai/gpt-4o-mini',
   },
 } as const;
 
 export type EmbeddingProvider = keyof typeof EMBEDDING_PROVIDERS;
+
+/**
+ * Providers that draft the profile (#86), kept apart from the embedders so a
+ * drafting provider can never be picked as an EMBEDDER. MiniMax's chat
+ * completions API is the one the backend's chat uses
+ * (`backend/src/services/minimaxService.ts`).
+ */
+export const DRAFT_PROVIDERS = {
+  minimax: {
+    label: 'MiniMax',
+    url: 'https://api.minimax.io/v1/chat/completions',
+    keyVariable: 'MINIMAX_API_KEY',
+    secondaryKeyVariable: 'MINIMAX_API_KEY_SECONDARY',
+    defaultModel: 'MiniMax-M3',
+  },
+} as const;
 
 export type EmbedderConfig =
   | { kind: 'hashing' }
@@ -231,10 +246,12 @@ export type ProfileDrafterConfig =
   | { kind: 'none' }
   | { kind: 'stub' }
   | {
-      kind: 'chat';
-      provider: EmbeddingProvider;
-      baseUrl: string;
+      kind: 'minimax';
+      /** The chat completions endpoint. */
+      url: string;
       apiKey: string;
+      /** Tried once when the primary key gets a 429. */
+      secondaryApiKey?: string;
       model: string;
     };
 
