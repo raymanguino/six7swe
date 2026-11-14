@@ -4,6 +4,7 @@ import {
   getDefaultRetriever,
   KnowledgeRetrievalError,
   type CachedRetriever,
+  type RecordQuestion,
 } from '../services/knowledgeRetrieval';
 import type { PortfolioProfileData } from '../types/portfolio';
 
@@ -101,6 +102,24 @@ export interface KnowledgeChatContextOptions {
   /** Defaults to the retriever built from the environment. */
   retriever?: CachedRetriever | null;
   log?: ContextLogger;
+  /**
+   * The visitor's random per-session id. With it, the question is recorded
+   * for the knowledge service's evolving eval set (#85).
+   */
+  sessionId?: string;
+}
+
+/**
+ * What to ask the service to record. Only a standalone question is: the
+ * service stores the query, and a follow-up's query carries the previous
+ * turn too, which is history, not the visitor's current question.
+ */
+export function recordFor(
+  query: string,
+  options: Pick<KnowledgeChatContextOptions, 'message' | 'sessionId'>,
+): RecordQuestion | undefined {
+  if (!options.sessionId || query !== options.message.trim()) return undefined;
+  return { sessionId: options.sessionId };
 }
 
 /**
@@ -150,7 +169,9 @@ export async function getKnowledgeChatContext(
     );
   } else {
     try {
-      chunks = await retriever.retrieve(buildRetrievalQuery(options.message, options.history));
+      const query = buildRetrievalQuery(options.message, options.history);
+      const record = recordFor(query, options);
+      chunks = await (record ? retriever.retrieve(query, { record }) : retriever.retrieve(query));
     } catch (err) {
       unavailable = true;
       options.log?.warn(

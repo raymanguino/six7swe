@@ -1,3 +1,4 @@
+import { SessionIdSchema } from '@six7swe/knowledge-types';
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { INPUT_LIMITS } from '../../constants';
@@ -37,6 +38,12 @@ export const ChatRequestSchema = z.object({
     .min(1, MESSAGE_REQUIRED)
     .max(INPUT_LIMITS.chatMessage, MESSAGE_TOO_LONG),
   history: HistorySchema.optional(),
+  /**
+   * The browser's random per-session id (`sessionStorage`). It lets the
+   * knowledge service count distinct sessions for its eval set (#85); a
+   * missing or malformed one only means the question is not recorded.
+   */
+  sessionId: SessionIdSchema.optional().catch(undefined),
 });
 
 function firstError(error: z.ZodError): string {
@@ -52,9 +59,9 @@ export async function chatHandler(request: FastifyRequest, reply: FastifyReply) 
     if (!parsed.success) {
       return reply.code(400).send({ error: firstError(parsed.error) });
     }
-    const { message, history } = parsed.data;
+    const { message, history, sessionId } = parsed.data;
 
-    const response = await chatWithContext({ message, history, log: request.log });
+    const response = await chatWithContext({ message, history, sessionId, log: request.log });
 
     return reply.code(200).send({ response });
   } catch (error) {
