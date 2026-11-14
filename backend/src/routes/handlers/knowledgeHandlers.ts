@@ -6,9 +6,9 @@ import { isKnowledgeOwner } from '../../services/knowledge/ownerGate';
 import {
   forwardToKnowledge,
   UPLOAD_TIMEOUT_MS,
-  type FetchLike,
   type ProxyRequest,
 } from '../../services/knowledge/ownerProxy';
+import type { FetchLike } from '../../services/knowledge/transport';
 
 /**
  * Handlers for the knowledge owner proxy. Each one builds the service path

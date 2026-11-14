@@ -23,8 +23,6 @@ export const DEFAULT_TIMEOUT_MS = 30_000;
  */
 export const UPLOAD_TIMEOUT_MS = 120_000;
 
-export type { FetchLike };
-
 export interface ProxyRequest {
   method: 'GET' | 'POST' | 'PUT' | 'DELETE';
   /** Path on the service, starting with `/`. Built by the caller, never taken from the client. */

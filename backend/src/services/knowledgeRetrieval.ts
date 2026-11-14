@@ -39,9 +39,12 @@ import {
 export class KnowledgeRetrievalError extends Error {
   /** The HTTP status, when the service answered with one. */
   readonly status: number | undefined;
+  /** The transport failure behind it (the TS lib target has no `Error.cause`). */
+  readonly cause?: unknown;
 
-  constructor(message: string, options?: { status?: number }) {
+  constructor(message: string, options?: { status?: number; cause?: unknown }) {
     super(message);
+    this.cause = options?.cause;
     this.name = 'KnowledgeRetrievalError';
     this.status = options?.status;
   }
@@ -71,7 +74,9 @@ export function createHttpRetrievalClient(
       });
     } catch (err) {
       if (!(err instanceof KnowledgeTransportError)) throw err;
-      throw new KnowledgeRetrievalError(`Knowledge service ${path} ${err.message}`);
+      throw new KnowledgeRetrievalError(`Knowledge service ${path} ${err.message}`, {
+        cause: err,
+      });
     }
     if (reply.status < 200 || reply.status > 299) {
       throw new KnowledgeRetrievalError(`Knowledge service ${path} answered ${reply.status}`, {

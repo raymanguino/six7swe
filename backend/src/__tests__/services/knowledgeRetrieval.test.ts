@@ -397,4 +397,12 @@ describe('getKnowledgeRetrievalConfig', () => {
     expect(config?.baseUrl).toBe('http://x:3100');
     expect(config?.k).toBe(20);
   });
+
+  it('treats a URL that is not http or https as not configured', () => {
+    for (const KNOWLEDGE_URL of ['ftp://x', 'not a url']) {
+      expect(
+        getKnowledgeRetrievalConfig({ KNOWLEDGE_URL, KNOWLEDGE_SERVICE_KEY: 'key' }),
+      ).toBeNull();
+    }
+  });
 });

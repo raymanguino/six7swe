@@ -1,16 +1,25 @@
 import {
   DocumentListResponseSchema,
   DocumentTextResponseSchema,
-  SERVICE_KEY_HEADER,
   type DocumentDto,
 } from '@six7swe/knowledge-types';
 import type { z } from 'zod';
+import { normalizeKnowledgeUrl } from '../../config/knowledgeUrl';
 import type { KnowledgeDocumentSource } from '../../domain/chatEval';
-import type { FetchLike } from './ownerProxy';
+import {
+  KnowledgeTransportError,
+  parseJsonBody,
+  sendKnowledgeRequest,
+  type FetchLike,
+} from './transport';
 
 export class KnowledgeDocumentsError extends Error {
-  constructor(message: string) {
+  /** The transport failure behind it (the TS lib target has no `Error.cause`). */
+  readonly cause?: unknown;
+
+  constructor(message: string, options?: { cause?: unknown }) {
     super(message);
+    this.cause = options?.cause;
     this.name = 'KnowledgeDocumentsError';
   }
 }
@@ -22,31 +31,36 @@ export class KnowledgeDocumentsError extends Error {
  */
 export function createKnowledgeDocumentClient(
   config: { baseUrl: string; ownerKey: string; timeoutMs: number },
-  fetchFn: FetchLike = (url, init) => fetch(url, init),
+  fetchFn?: FetchLike,
 ): KnowledgeDocumentSource {
-  const baseUrl = config.baseUrl.replace(/\/+$/, '');
+  const normalized = normalizeKnowledgeUrl(config.baseUrl);
+  if (normalized === null) {
+    throw new KnowledgeDocumentsError('The knowledge service URL is not a valid http(s) URL');
+  }
+  const baseUrl: string = normalized;
 
   async function get<T>(path: string, schema: z.ZodType<T>): Promise<T> {
-    let res: Response;
+    let reply;
     try {
-      res = await fetchFn(`${baseUrl}${path}`, {
+      reply = await sendKnowledgeRequest({
+        baseUrl,
+        key: config.ownerKey,
         method: 'GET',
-        headers: { [SERVICE_KEY_HEADER]: config.ownerKey },
-        signal: AbortSignal.timeout(config.timeoutMs),
+        path,
+        timeoutMs: config.timeoutMs,
+        fetch: fetchFn,
       });
     } catch (error) {
-      throw new KnowledgeDocumentsError(
-        `Knowledge service ${path} unreachable: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      if (!(error instanceof KnowledgeTransportError)) throw error;
+      throw new KnowledgeDocumentsError(`Knowledge service ${path} ${error.message}`, {
+        cause: error,
+      });
     }
-    if (!res.ok) {
-      await res.body?.cancel().catch(() => undefined);
-      throw new KnowledgeDocumentsError(`Knowledge service ${path} answered ${res.status}`);
+    if (reply.status < 200 || reply.status > 299) {
+      throw new KnowledgeDocumentsError(`Knowledge service ${path} answered ${reply.status}`);
     }
-    let body: unknown;
-    try {
-      body = await res.json();
-    } catch {
+    const body = parseJsonBody(reply.text);
+    if (body === undefined) {
       throw new KnowledgeDocumentsError(`Knowledge service ${path} sent invalid JSON`);
     }
     const parsed = schema.safeParse(body);

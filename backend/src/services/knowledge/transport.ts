@@ -20,7 +20,9 @@ function errorField(err: unknown, field: 'name' | 'message'): string | undefined
 
 /**
  * The abort reason is a DOMException, which is not an `Error` instance in
- * every realm (Jest's sandbox, for one), so match on the name.
+ * every realm (Jest's sandbox, for one), so match on the name. `AbortError`
+ * counts as a timeout only because the transport owns the only abort signal
+ * (`AbortSignal.timeout`); a caller-supplied signal would need its own check.
  */
 export function isTimeoutError(err: unknown): boolean {
   const name = errorField(err, 'name');

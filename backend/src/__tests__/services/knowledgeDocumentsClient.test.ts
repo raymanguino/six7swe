@@ -1,6 +1,6 @@
 import type { DocumentDto } from '@six7swe/knowledge-types';
 import { createKnowledgeDocumentClient } from '../../services/knowledge/documentsClient';
-import type { FetchLike } from '../../services/knowledge/ownerProxy';
+import type { FetchLike } from '../../services/knowledge/transport';
 
 const DOC_ID = '00000000-0000-4000-8000-000000000001';
 const config = { baseUrl: 'http://127.0.0.1:3100/', ownerKey: 'o'.repeat(32), timeoutMs: 1000 };

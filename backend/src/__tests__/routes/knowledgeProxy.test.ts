@@ -8,8 +8,8 @@ import {
   DEFAULT_TIMEOUT_MS,
   forwardToKnowledge,
   UPLOAD_TIMEOUT_MS,
-  type FetchLike,
 } from '../../services/knowledge/ownerProxy';
+import type { FetchLike } from '../../services/knowledge/transport';
 import { SERVICE_KEY_HEADER } from '@six7swe/knowledge-types';
 import type { ContextUser } from '../../types';
 
@@ -112,12 +112,15 @@ describe('loadKnowledgeConfig', () => {
     ).toEqual({ ownerAuthId: null, target: null });
   });
 
-  it('needs the URL and the key together, and trims a trailing slash', () => {
-    expect(() =>
+  it('leaves the proxy off when only the URL is set (chat retrieval shares it)', () => {
+    expect(
       loadKnowledgeConfig({ OWNER_AUTH_ID: OWNER_ID, KNOWLEDGE_URL: `${SERVICE_URL}/` }),
-    ).toThrow(/KNOWLEDGE_OWNER_KEY: KNOWLEDGE_URL and KNOWLEDGE_OWNER_KEY must be set together/);
+    ).toEqual({ ownerAuthId: OWNER_ID, target: null });
+  });
+
+  it('needs the URL when the key is set, and trims a trailing slash', () => {
     expect(() => loadKnowledgeConfig({ KNOWLEDGE_OWNER_KEY: OWNER_KEY })).toThrow(
-      /KNOWLEDGE_URL: .*set together/,
+      /KNOWLEDGE_URL: KNOWLEDGE_URL is required when KNOWLEDGE_OWNER_KEY is set/,
     );
     expect(loadKnowledgeConfig({ OWNER_AUTH_ID: OWNER_ID })).toEqual({
       ownerAuthId: OWNER_ID,
