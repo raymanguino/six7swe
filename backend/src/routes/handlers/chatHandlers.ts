@@ -16,7 +16,7 @@ export async function chatHandler(request: FastifyRequest, reply: FastifyReply) 
       return reply.code(400).send({ error: `Message must be at most ${INPUT_LIMITS.chatMessage} characters` });
     }
 
-    const response = await chatWithContext({ message: trimmed, history });
+    const response = await chatWithContext({ message: trimmed, history, log: request.log });
 
     return reply.code(200).send({ response });
   } catch (error) {

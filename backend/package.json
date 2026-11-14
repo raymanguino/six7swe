@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "pnpm --filter @six7swe/knowledge-types build && tsc",
     "start": "node dist/index.js",
     "dev": "nodemon src/index.ts",
     "debug": "nodemon --inspect src/index.ts",
@@ -22,6 +22,7 @@
     "jobs:refresh": "tsx scripts/jobs-refresh.ts",
     "qa:review": "tsx scripts/review-pr.ts",
     "qa:calibration": "tsx scripts/qa-calibration.ts",
+    "chat:eval": "tsx scripts/chat-eval.ts",
     "browsers:install": "puppeteer browsers install chrome"
   },
   "keywords": [],
@@ -52,6 +53,7 @@
     "@fastify/request-context": "^6.2.1",
     "@fastify/static": "^10.1.10",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@six7swe/knowledge-types": "workspace:*",
     "dotenv": "^17.2.3",
     "drizzle-orm": "^0.45.4",
     "fastify": "^5.12.8",

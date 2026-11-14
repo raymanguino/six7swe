@@ -1,13 +1,18 @@
 /**
  * Portfolio data can be loaded from Postgres (Drizzle) or from an MCP server.
  * Set PORTFOLIO_DATA_SOURCE=mcp and configure MCP_* variables to use MCP.
+ *
+ * PORTFOLIO_DATA_SOURCE=knowledge keeps the portfolio itself on Postgres, but
+ * grounds chat in a compact profile summary plus the chunks the knowledge
+ * service retrieves for each question (see `data/chatContext.ts`).
  */
 
-export type PortfolioDataSource = 'db' | 'mcp';
+export type PortfolioDataSource = 'db' | 'mcp' | 'knowledge';
 
 export function getPortfolioDataSource(): PortfolioDataSource {
   const v = (process.env.PORTFOLIO_DATA_SOURCE || 'db').toLowerCase();
   if (v === 'mcp') return 'mcp';
+  if (v === 'knowledge') return 'knowledge';
   return 'db';
 }
 

@@ -194,9 +194,23 @@ result in memory for `PORTFOLIO_CACHE_TTL_MS` (default 10 minutes).
 `knowledge/` is a separate deployable: Fastify, Drizzle and pgvector. It holds
 the owner's professional background (resumes and supporting pdf, md and txt
 files) as embedded chunks. It is replacing both the portfolio tables above and
-the never-wired `PORTFOLIO_DATA_SOURCE=mcp` path. Until the consumers are
-switched over, the backend still reads the portfolio tables. Full details are in
+the never-wired `PORTFOLIO_DATA_SOURCE=mcp` path. Full details are in
 `knowledge/README.md`.
+
+- **Chat retrieval.** With `PORTFOLIO_DATA_SOURCE=knowledge`, the backend's chat
+  context is a compact profile summary (from `portfolio_profile`) plus the top-k
+  chunks the service retrieves for the current question and the last user turn
+  (`backend/src/data/chatContext.ts`). Retrievals are cached in memory by
+  `(corpus_version, normalized question)`
+  (`backend/src/services/knowledgeRetrieval.ts`); the version is re-read at most
+  every 30 s. If the service is down or not configured, chat answers from the
+  profile summary alone. The portfolio page, the resume and fitcheck still read
+  the portfolio tables. `pnpm --filter @six7swe/backend chat:eval` compares the
+  two contexts on the seed eval questions (`backend/src/domain/chatEval/`).
+- **Shared contract.** The wire contract is the `@six7swe/knowledge-types`
+  package (`packages/knowledge-types`), compiled to CommonJS so both the ESM
+  service and the CommonJS backend load it. The backend and service builds
+  compile it first; the root `lint` and `test` scripts do too.
 
 - **Schemas.** The service owns the `knowledge` schema, with `documents`,
   `chunks` and `corpus_state`, and keeps its own migration ledger in
