@@ -12,6 +12,7 @@ import {
 const POLL_INTERVAL_MS = 3000;
 /** Drafting calls a model; give up following it after this long. */
 const POLL_LIMIT_MS = 5 * 60 * 1000;
+const DRAFTING_TIMEOUT_MESSAGE = 'Drafting is taking longer than expected. Reload to check.';
 
 export interface KnowledgeProfile {
   state: ProfileState | null;
@@ -36,7 +37,7 @@ export interface KnowledgeProfile {
  * settles, for at most `POLL_LIMIT_MS`. `refreshKey` re-reads it from outside,
  * e.g. when a resume finishes ingesting and drafting may have started.
  */
-export function useKnowledgeProfile(enabled: boolean, refreshKey: unknown): KnowledgeProfile {
+export function useKnowledgeProfile(enabled: boolean, refreshKey: string | null): KnowledgeProfile {
   const [state, setState] = useState<ProfileState | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -81,7 +82,12 @@ export function useKnowledgeProfile(enabled: boolean, refreshKey: unknown): Know
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
     const tick = async () => {
-      if (cancelled || Date.now() - pollStartedAt > POLL_LIMIT_MS) return;
+      if (cancelled) return;
+      if (Date.now() - pollStartedAt > POLL_LIMIT_MS) {
+        // Stop following it, but say so rather than show "drafting" forever.
+        if (mounted.current) setError(DRAFTING_TIMEOUT_MESSAGE);
+        return;
+      }
       await reload();
       if (!cancelled) timer = setTimeout(() => void tick(), POLL_INTERVAL_MS);
     };
