@@ -4,7 +4,10 @@ import { ZodError } from 'zod';
 import { SERVICE_KEY_HEADER, type ErrorResponse } from './contract.js';
 import serviceAuth, { type Authenticators } from './plugins/serviceAuth.js';
 import { registerRoutes } from './routes/index.js';
+import type { ProfileRepository } from './db/api/profileRepository.js';
 import type { KnowledgeDeps } from './services/deps.js';
+import type { ProfileDrafter } from './services/profile/drafter.js';
+import { createProfileDrafting, type ProfileDrafting } from './services/profile/profiles.js';
 import {
   createIngestionQueue,
   type IngestionQueue,
@@ -15,11 +18,15 @@ declare module 'fastify' {
   interface FastifyInstance {
     /** The serial ingestion queue; the entry point re-queues work on boot and drains it on shutdown. */
     ingestionQueue: IngestionQueue;
+    /** The profile drafting queue; the entry point stops it on shutdown. */
+    profileDrafting: ProfileDrafting;
   }
 }
 
 export interface BuildAppOptions {
   deps: KnowledgeDeps;
+  /** The structured profile (#86): its storage, and the model that drafts it (null: off). */
+  profile: { repo: ProfileRepository; drafter: ProfileDrafter | null };
   /** Opens service routes only. */
   serviceKey: string;
   /** Opens owner routes only; held by the backend's owner proxy. */
@@ -59,8 +66,29 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     bodyLimit: 64 * 1024,
   });
 
+  const { deps } = options;
+  const drafting = createProfileDrafting({
+    repo: deps.repo,
+    profiles: options.profile.repo,
+    drafter: options.profile.drafter,
+    log: app.log,
+  });
+  app.decorate('profileDrafting', drafting);
+
   const queue = createIngestionQueue(
-    { ...options.deps, chunkOptions: options.chunkOptions },
+    {
+      ...deps,
+      chunkOptions: options.chunkOptions,
+      // A resume that has just become primary gets a fresh draft profile. A
+      // resume that finished but is not primary (an older one re-ingested)
+      // would only redraft from the unchanged primary, overwriting the
+      // owner's edits for nothing.
+      onResumeIngested: async (doc) => {
+        if (!options.profile.drafter) return;
+        const current = await deps.repo.getDocument(doc.ownerId, doc.id);
+        if (current?.isPrimaryResume) drafting.request(doc.ownerId);
+      },
+    },
     app.log,
   );
   app.decorate('ingestionQueue', queue);
@@ -93,6 +121,6 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     limits: { fileSize: options.maxUploadBytes, files: 1, fields: 5 },
   });
 
-  registerRoutes(app, { ...options.deps, queue });
+  registerRoutes(app, { ...deps, queue, profiles: options.profile.repo, drafting });
   return app;
 }

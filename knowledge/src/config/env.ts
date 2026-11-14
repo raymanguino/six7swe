@@ -64,6 +64,17 @@ const EnvSchema = z
     /** Overrides the provider's default model; it must output 1536 dimensions. */
     EMBEDDING_MODEL: z.string().min(1).optional(),
 
+    /**
+     * The chat model that drafts the structured profile from the primary
+     * resume (#86). `openai` and `openrouter` use the same API keys as the
+     * embedders. `stub` is a deterministic, offline drafter for development
+     * and tests. `none` (the default) turns drafting off; the owner can
+     * still write and publish a profile by hand.
+     */
+    PROFILE_DRAFTER: z.enum(['none', 'openai', 'openrouter', 'stub']).default('none'),
+    /** Overrides the provider's default drafting model. */
+    PROFILE_DRAFT_MODEL: z.string().min(1).optional(),
+
     /** Where raw uploaded files are kept. */
     FILE_STORE: z.enum(['supabase', 'local']).default('supabase'),
     SUPABASE_URL: z.url().optional(),
@@ -147,23 +158,60 @@ const EnvSchema = z
       }
     }
 
-    if (!embedder || !fileStore) return z.NEVER;
-    return { ...env, embedder, fileStore };
+    let profileDrafter: ProfileDrafterConfig | undefined;
+    if (env.PROFILE_DRAFTER === 'none') {
+      profileDrafter = { kind: 'none' };
+    } else if (env.PROFILE_DRAFTER === 'stub') {
+      if (env.NODE_ENV === 'production') {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['PROFILE_DRAFTER'],
+          message: 'PROFILE_DRAFTER=stub is for development and tests only',
+        });
+      }
+      profileDrafter = { kind: 'stub' };
+    } else {
+      const provider = EMBEDDING_PROVIDERS[env.PROFILE_DRAFTER];
+      const apiKey = env[provider.keyVariable];
+      if (apiKey) {
+        profileDrafter = {
+          kind: 'chat',
+          provider: env.PROFILE_DRAFTER,
+          baseUrl: provider.baseUrl,
+          apiKey,
+          model: env.PROFILE_DRAFT_MODEL ?? provider.defaultDraftModel,
+        };
+      } else {
+        ctx.addIssue({
+          code: 'custom',
+          path: [provider.keyVariable],
+          message: `${provider.keyVariable} is required when PROFILE_DRAFTER=${env.PROFILE_DRAFTER}`,
+        });
+      }
+    }
+
+    if (!embedder || !fileStore || !profileDrafter) return z.NEVER;
+    return { ...env, embedder, fileStore, profileDrafter };
   });
 
-/** Providers with an OpenAI-compatible embeddings API. */
+/**
+ * Providers with an OpenAI-compatible API: embeddings, and chat completions
+ * for profile drafting.
+ */
 export const EMBEDDING_PROVIDERS = {
   openai: {
     label: 'OpenAI',
     baseUrl: 'https://api.openai.com/v1',
     keyVariable: 'OPENAI_API_KEY',
     defaultModel: 'text-embedding-3-small',
+    defaultDraftModel: 'gpt-4o-mini',
   },
   openrouter: {
     label: 'OpenRouter',
     baseUrl: 'https://openrouter.ai/api/v1',
     keyVariable: 'OPENROUTER_API_KEY',
     defaultModel: 'openai/text-embedding-3-small',
+    defaultDraftModel: 'openai/gpt-4o-mini',
   },
 } as const;
 
@@ -173,6 +221,17 @@ export type EmbedderConfig =
   | { kind: 'hashing' }
   | {
       kind: 'openai-compatible';
+      provider: EmbeddingProvider;
+      baseUrl: string;
+      apiKey: string;
+      model: string;
+    };
+
+export type ProfileDrafterConfig =
+  | { kind: 'none' }
+  | { kind: 'stub' }
+  | {
+      kind: 'chat';
       provider: EmbeddingProvider;
       baseUrl: string;
       apiKey: string;

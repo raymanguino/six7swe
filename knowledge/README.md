@@ -46,8 +46,24 @@ Every route declares who may call it: `public`, `service` or `owner` (`src/plugi
 | PUT    | `/documents/:id/primary` | Makes a ready resume the primary one; 409 for anything else                                                                       |
 | DELETE | `/documents/:id`         | Deletes the document, its chunks and its file (204)                                                                               |
 | POST   | `/search`                | The same as `/retrieve`, as an owner route, for the Knowledge page's "ask as a visitor" playground                                |
+| GET    | `/profile/published`     | `{ profile, resume }`: the published profile and the primary resume (filename, `isPdf`, extracted text); either may be null       |
+| GET    | `/resume.pdf`            | The primary resume's file when it is a PDF; 404 otherwise                                                                         |
+| GET    | `/profile`               | `{ draft, published, drafting }`: both stages and the last drafting attempt, for the review screen                                |
+| PUT    | `/profile/draft`         | `{ data }`: saves the owner's edits as the draft                                                                                  |
+| POST   | `/profile/draft`         | Drafts again from the primary resume, in the background (202); 409 when drafting is off                                           |
+| DELETE | `/profile/draft`         | Discards the draft (204)                                                                                                          |
+| POST   | `/profile/publish`       | `{ draftUpdatedAt }`: publishes the draft the owner reviewed; 409 if it changed since, 404 if there is none                       |
 
-`/retrieve` and `/version` are `service` routes; `/documents/*` and `/search` are `owner` routes.
+`/retrieve`, `/version`, `/profile/published` and `/resume.pdf` are `service` routes; `/documents/*`, `/search`, `/profile`, `/profile/draft` and `/profile/publish` are `owner` routes.
+
+## Profile (#86)
+
+The landing page's structured profile (name, title, location, summary, skills, experience, projects and links) lives here, in `knowledge.profiles`: at most one `draft` and one `published` row per owner. The schema is `ProfileDataSchema` in the shared contract; links must be http(s), so a `javascript:` URL can never reach the public site.
+
+- **Drafting.** When a resume finishes ingesting and is the primary resume, the drafter (`PROFILE_DRAFTER`) writes a new draft from its extracted text, replacing any earlier draft. A resume that finishes but is not primary (an older one re-ingested) does not redraft. Drafting runs on its own serial queue, so a slow model never holds up ingestion, and its failure never fails the ingest. The model's JSON is normalized (empty strings to null, `https://` added to a bare link, invalid links and emails dropped) and then validated; anything else invalid fails the draft with a short reason the owner sees. Drafting is not durable: a restart drops a draft in progress and forgets the last status, and the owner can ask again.
+- **Review and publish.** The owner's Knowledge page shows the draft as a field-by-field diff against the published profile, lets the owner edit it, and publishes it. Publishing copies the draft over the published row and deletes the draft, in one transaction, only if the draft is still the one reviewed (`draftUpdatedAt`).
+- **The portfolio** (`PORTFOLIO_DATA_SOURCE=knowledge`) reads `/profile/published` and maps it to its `PortfolioData`, so the landing page needs no change. It caches it (stale-while-revalidate) and keeps serving the last good profile while this service is down. Publishing through the backend's proxy busts that cache. `/resume` serves `/resume.pdf`.
+- **`PROFILE_DRAFTER`**: `none` (default: drafting off; the owner can still write a profile), `openai` (uses `OPENAI_API_KEY`), `openrouter` (uses `OPENROUTER_API_KEY`) or `stub` (offline and deterministic, for development and tests; refused in production). `PROFILE_DRAFT_MODEL` overrides the model (default `gpt-4o-mini`). Production sets `openai` in `railway.ts`.
 
 **The owner gate lives in the backend (#83).** The service is private-network only, so the browser never calls it. The owner's Knowledge page (`/hunter/knowledge`) calls the backend's `/knowledge/*` proxy (`backend/src/routes/knowledge.ts`). The backend verifies the Supabase JWT as it does for every route, requires `sub === OWNER_AUTH_ID` (403 for any other signed-in user, before the body is read), and forwards the request with `KNOWLEDGE_OWNER_KEY`. It never forwards the user's token. So the owner key stays the service's owner credential, and only the backend holds it.
 
@@ -66,6 +82,7 @@ The service owns the `knowledge` schema, with these tables:
 - `documents`
 - `chunks` (embeddings in `vector(1536)`, HNSW cosine index)
 - `corpus_state`
+- `profiles` (the draft and published structured profile; see Profile above)
 
 Its migration ledger lives in a separate `knowledge_migrations` schema. Both schemas are kept apart from the backend:
 

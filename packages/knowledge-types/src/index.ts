@@ -106,3 +106,150 @@ export const DocumentTextResponseSchema = z.object({
   text: z.string().nullable(),
 });
 export type DocumentTextResponse = z.infer<typeof DocumentTextResponseSchema>;
+
+/*
+ * The structured profile (#86): the landing page's name, title, summary,
+ * skills, experience, projects and links. An LLM drafts it from the primary
+ * resume; the owner reviews, edits and publishes it. The backend maps the
+ * published one to its `PortfolioData`.
+ */
+
+export const PROFILE_STAGES = ['draft', 'published'] as const;
+export const ProfileStageSchema = z.enum(PROFILE_STAGES);
+export type ProfileStage = z.infer<typeof ProfileStageSchema>;
+
+/** Bounds that keep a profile page-sized; a model that rambles fails validation instead. */
+export const PROFILE_LIMITS = {
+  shortText: 200,
+  longText: 4000,
+  skills: 100,
+  entries: 30,
+  technologies: 30,
+} as const;
+
+const shortText = z.string().trim().min(1).max(PROFILE_LIMITS.shortText);
+const optionalShortText = z.string().trim().max(PROFILE_LIMITS.shortText);
+const longText = z.string().trim().max(PROFILE_LIMITS.longText);
+/**
+ * Links become `href`s on the public site, so only http(s) is accepted: a
+ * `javascript:` URL from a hallucinating model or a typo must never reach a
+ * visitor.
+ */
+const httpLink = z.httpUrl().max(500).nullable();
+
+export const ProfileExperienceSchema = z.strictObject({
+  title: shortText,
+  company: shortText,
+  /** Free text, e.g. "2021 - 2024"; may be empty. */
+  period: optionalShortText,
+  description: longText,
+});
+export type ProfileExperience = z.infer<typeof ProfileExperienceSchema>;
+
+export const ProfileProjectSchema = z.strictObject({
+  name: shortText,
+  description: longText,
+  technologies: z.array(shortText).max(PROFILE_LIMITS.technologies),
+});
+export type ProfileProject = z.infer<typeof ProfileProjectSchema>;
+
+/** How to reach the owner. `email` is also where the portfolio's contact form delivers. */
+export const ProfileLinksSchema = z.strictObject({
+  email: z.email().max(254).nullable(),
+  phone: z.string().trim().min(1).max(50).nullable(),
+  linkedin: httpLink,
+  github: httpLink,
+  website: httpLink,
+});
+export type ProfileLinks = z.infer<typeof ProfileLinksSchema>;
+
+/** The editable content of a profile, the same for a draft and a published one. */
+export const ProfileDataSchema = z.strictObject({
+  name: shortText,
+  title: shortText,
+  location: z.string().trim().min(1).max(PROFILE_LIMITS.shortText).nullable(),
+  summary: longText,
+  skills: z.array(shortText).max(PROFILE_LIMITS.skills),
+  experience: z.array(ProfileExperienceSchema).max(PROFILE_LIMITS.entries),
+  projects: z.array(ProfileProjectSchema).max(PROFILE_LIMITS.entries),
+  links: ProfileLinksSchema,
+});
+export type ProfileData = z.infer<typeof ProfileDataSchema>;
+
+export const ProfileDtoSchema = z.object({
+  stage: ProfileStageSchema,
+  data: ProfileDataSchema,
+  /** The resume it was drafted from; null when the owner wrote it or that resume is gone. */
+  sourceDocumentId: z.uuid().nullable(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+});
+export type ProfileDto = z.infer<typeof ProfileDtoSchema>;
+
+export const DRAFTING_STATES = ['idle', 'drafting', 'failed'] as const;
+
+/**
+ * The last drafting attempt. The service keeps it in memory, so a restart
+ * forgets it. `enabled` is false when no drafting model is configured.
+ */
+export const DraftingStatusSchema = z.object({
+  enabled: z.boolean(),
+  state: z.enum(DRAFTING_STATES),
+  /** The resume being, or last, drafted from. */
+  documentId: z.uuid().nullable(),
+  /** A short, user-facing reason when `state` is `failed`. */
+  error: z.string().nullable(),
+});
+export type DraftingStatus = z.infer<typeof DraftingStatusSchema>;
+
+/** `GET /profile` (owner): both stages and the drafting status, for the review screen. */
+export const ProfileStateResponseSchema = z.object({
+  draft: ProfileDtoSchema.nullable(),
+  published: ProfileDtoSchema.nullable(),
+  drafting: DraftingStatusSchema,
+});
+export type ProfileStateResponse = z.infer<typeof ProfileStateResponseSchema>;
+
+/** `PUT /profile/draft` (owner): replaces the draft with the owner's edits. */
+export const SaveDraftRequestSchema = z.strictObject({ data: ProfileDataSchema });
+export type SaveDraftRequest = z.infer<typeof SaveDraftRequestSchema>;
+
+/**
+ * `POST /profile/publish` (owner). `draftUpdatedAt` is the draft the owner
+ * reviewed: if the draft changed since (a new resume re-drafted it), the
+ * service answers 409 rather than publish something the owner has not seen.
+ */
+export const PublishRequestSchema = z.strictObject({ draftUpdatedAt: z.iso.datetime() });
+export type PublishRequest = z.infer<typeof PublishRequestSchema>;
+
+/** `PUT /profile/draft` and `POST /profile/publish`: the stage that was written. */
+export const ProfileResponseSchema = z.object({ profile: ProfileDtoSchema });
+export type ProfileResponse = z.infer<typeof ProfileResponseSchema>;
+
+/** `POST /profile/draft` (owner): re-drafts from the primary resume, in the background. */
+export const DraftAcceptedResponseSchema = z.object({ drafting: DraftingStatusSchema });
+export type DraftAcceptedResponse = z.infer<typeof DraftAcceptedResponseSchema>;
+
+/** The primary resume, as the public portfolio needs it. */
+export const PrimaryResumeDtoSchema = z.object({
+  documentId: z.uuid(),
+  filename: z.string(),
+  mimeType: z.string(),
+  /** True when `GET /resume.pdf` serves it. */
+  isPdf: z.boolean(),
+  /** The extracted text; null until an ingest has extracted it. */
+  text: z.string().nullable(),
+  updatedAt: z.iso.datetime(),
+});
+export type PrimaryResumeDto = z.infer<typeof PrimaryResumeDtoSchema>;
+
+/**
+ * `GET /profile/published` (service): what the public portfolio shows. Each
+ * part is null when the owner has not published a profile, or has no ready
+ * resume.
+ */
+export const PublishedProfileResponseSchema = z.object({
+  profile: ProfileDtoSchema.nullable(),
+  resume: PrimaryResumeDtoSchema.nullable(),
+});
+export type PublishedProfileResponse = z.infer<typeof PublishedProfileResponseSchema>;

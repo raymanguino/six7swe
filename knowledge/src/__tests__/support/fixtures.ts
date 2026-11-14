@@ -1,4 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
+import type { ProfileData } from '../../contract.js';
 import type { FileStore } from '../../services/storage/index.js';
 
 /**
@@ -111,6 +112,37 @@ Built the customer onboarding API in TypeScript and Fastify, serving 2M requests
 
 BSc Computer Science, University of Toronto.
 `;
+
+/** A valid profile for the same fictional person. */
+export const SAMPLE_PROFILE: ProfileData = {
+  name: 'Jordan Example',
+  title: 'Senior Software Engineer',
+  location: 'Toronto, ON',
+  summary: 'I build event-driven billing platforms.',
+  skills: ['TypeScript', 'Kafka', 'Fastify'],
+  experience: [
+    {
+      title: 'Staff Engineer',
+      company: 'Acme Corp',
+      period: '2021 - 2024',
+      description: 'Led the billing platform migration to event-driven services.',
+    },
+  ],
+  projects: [
+    {
+      name: 'Portfolio assistant',
+      description: 'A retrieval-augmented assistant.',
+      technologies: ['pgvector'],
+    },
+  ],
+  links: {
+    email: 'jordan@example.com',
+    phone: null,
+    linkedin: 'https://www.linkedin.com/in/jordan-example',
+    github: 'https://github.com/jordan-example',
+    website: null,
+  },
+};
 
 export const PROJECT_NOTES_TXT = `Side project: a retrieval-augmented portfolio assistant.
 

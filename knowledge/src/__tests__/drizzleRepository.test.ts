@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { like } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createDrizzleProfileRepository } from '../db/api/drizzleProfileRepository.js';
 import { createDrizzleRepository } from '../db/api/drizzleRepository.js';
 import type { KnowledgeRepository, NewChunk, NewDocument } from '../db/api/repository.js';
 import { createDb, type DbHandle } from '../db/index.js';
-import { corpusState, documents, EMBEDDING_DIMENSIONS } from '../db/schema.js';
+import { corpusState, documents, EMBEDDING_DIMENSIONS, profiles } from '../db/schema.js';
 import { uploadDocument } from '../services/documents.js';
 import { createHashingEmbedder, hashEmbed } from '../services/embedding/hashing.js';
 import { createIngestionQueue } from '../services/ingestion/pipeline.js';
@@ -14,9 +15,11 @@ import {
   makePdf,
   PROJECT_NOTES_TXT,
   RESUME_MD,
+  SAMPLE_PROFILE,
   silentLogger,
   utf8,
 } from './support/fixtures.js';
+import { describeProfileRepositoryContract } from './support/profileRepositoryContract.js';
 import { describeRepositoryContract } from './support/repositoryContract.js';
 
 /**
@@ -69,6 +72,7 @@ afterAll(async () => {
   if (!handle) return;
   await handle.db.delete(documents).where(like(documents.ownerId, `${RUN_PREFIX}%`));
   await handle.db.delete(corpusState).where(like(corpusState.ownerId, `${RUN_PREFIX}%`));
+  await handle.db.delete(profiles).where(like(profiles.ownerId, `${RUN_PREFIX}%`));
   await handle.close();
 });
 
@@ -78,6 +82,12 @@ describeRepositoryContract(
   {
     skip: !url,
   },
+);
+
+describeProfileRepositoryContract(
+  'drizzle (Postgres)',
+  () => ({ profiles: createDrizzleProfileRepository(db().handle.db), newOwner: freshOwner }),
+  { skip: !url },
 );
 
 describe.skipIf(!url)('Drizzle repository (Postgres + pgvector)', () => {
@@ -235,5 +245,20 @@ describe.skipIf(!url)('Drizzle repository (Postgres + pgvector)', () => {
     } finally {
       await indexed.close();
     }
+  });
+
+  it('keeps a profile when the resume it was drafted from is deleted', async () => {
+    const { repo: r, handle: h } = db();
+    const profileRepo = createDrizzleProfileRepository(h.db);
+    const o = freshOwner();
+    const { document } = await r.createDocument(newDoc(o, 'resume.txt'));
+    await profileRepo.saveDraft(o, SAMPLE_PROFILE, document.id);
+    expect((await profileRepo.getProfiles(o)).draft?.sourceDocumentId).toBe(document.id);
+
+    await r.deleteDocument(o, document.id);
+    expect((await profileRepo.getProfiles(o)).draft).toMatchObject({
+      sourceDocumentId: null,
+      data: SAMPLE_PROFILE,
+    });
   });
 });

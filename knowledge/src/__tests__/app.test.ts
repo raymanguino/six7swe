@@ -19,6 +19,7 @@ import {
   RESUME_MD,
   utf8,
 } from './support/fixtures.js';
+import { createMemoryProfileRepository } from './support/memoryProfileRepository.js';
 import { createMemoryRepository } from './support/memoryRepository.js';
 
 const KEY = 'k'.repeat(40);
@@ -37,6 +38,7 @@ beforeEach(async () => {
       files: createMemoryFileStore(),
       embedder: createHashingEmbedder(256),
     },
+    profile: { repo: createMemoryProfileRepository(), drafter: null },
     serviceKey: KEY,
     ownerKey: OWNER_KEY,
     ownerId: 'owner',
@@ -123,6 +125,7 @@ describe('pluggable authenticators', () => {
         files: createMemoryFileStore(),
         embedder: createHashingEmbedder(256),
       },
+      profile: { repo: createMemoryProfileRepository(), drafter: null },
       serviceKey: KEY,
       ownerKey: OWNER_KEY,
       ownerId: 'owner',
@@ -173,6 +176,7 @@ describe('errors', () => {
     repo.createDocument = () => Promise.reject(new ConflictError('The document conflicts'));
     const conflicted = await buildApp({
       deps: { repo, files: createMemoryFileStore(), embedder: createHashingEmbedder(256) },
+      profile: { repo: createMemoryProfileRepository(), drafter: null },
       serviceKey: KEY,
       ownerKey: OWNER_KEY,
       ownerId: 'owner',

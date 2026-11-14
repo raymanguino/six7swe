@@ -14,6 +14,11 @@ import { SerialQueue } from './queue.js';
 export interface PipelineDeps extends KnowledgeDeps {
   log: FastifyBaseLogger;
   chunkOptions?: ChunkOptions;
+  /**
+   * Called after a resume's ingest has committed (profile drafting hooks in
+   * here). Its failure is logged and never fails the ingest.
+   */
+  onResumeIngested?: (doc: DocumentRecord) => void | Promise<void>;
 }
 
 export type IngestionQueue = SerialQueue<DocumentRecord>;
@@ -124,15 +129,33 @@ export async function ingestDocument(deps: PipelineDeps, doc: DocumentRecord): P
       'Document ingested',
     );
   } catch (error) {
-    log.warn({ documentId: doc.id, err: error }, 'Document ingestion failed');
+    await recordFailure(deps, doc, error);
+    return;
+  }
+
+  // Outside the try above: the ingest has committed, so nothing here may mark it failed.
+  if (doc.kind === 'resume' && deps.onResumeIngested) {
     try {
-      await repo.failIngestion(doc.id, publicIngestionError(error));
-    } catch (recordError) {
-      log.error(
-        { documentId: doc.id, err: recordError },
-        'Could not record the ingestion failure; the document stays unfinished',
-      );
+      await deps.onResumeIngested(doc);
+    } catch (error) {
+      log.warn({ documentId: doc.id, err: error }, 'Post-ingest resume hook failed');
     }
+  }
+}
+
+async function recordFailure(
+  { repo, log }: PipelineDeps,
+  doc: DocumentRecord,
+  error: unknown,
+): Promise<void> {
+  log.warn({ documentId: doc.id, err: error }, 'Document ingestion failed');
+  try {
+    await repo.failIngestion(doc.id, publicIngestionError(error));
+  } catch (recordError) {
+    log.error(
+      { documentId: doc.id, err: recordError },
+      'Could not record the ingestion failure; the document stays unfinished',
+    );
   }
 }
 

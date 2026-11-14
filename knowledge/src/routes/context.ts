@@ -1,5 +1,7 @@
+import type { ProfileRepository } from '../db/api/profileRepository.js';
 import type { KnowledgeDeps } from '../services/deps.js';
 import type { IngestionQueue } from '../services/ingestion/pipeline.js';
+import type { ProfileDrafting } from '../services/profile/profiles.js';
 
 /**
  * What the route handlers need. Built once in `buildApp` and passed down.
@@ -7,4 +9,6 @@ import type { IngestionQueue } from '../services/ingestion/pipeline.js';
  */
 export interface KnowledgeContext extends KnowledgeDeps {
   queue: IngestionQueue;
+  profiles: ProfileRepository;
+  drafting: ProfileDrafting;
 }
