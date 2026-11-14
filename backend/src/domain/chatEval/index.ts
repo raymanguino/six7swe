@@ -1,6 +1,5 @@
 import type { DocumentDto } from '@six7swe/knowledge-types';
 import { z } from 'zod';
-import type { KnowledgeChatContext } from '../../data/chatContext';
 
 /**
  * The chat eval: canned questions answered twice, once with the stuffed
@@ -212,10 +211,14 @@ export function buildJudgeMessages(input: {
 
 export type Side = 'stuffed' | 'retrieved';
 
-/** How the retrieved side's context was built, from `getKnowledgeChatContext`. */
+/**
+ * How the retrieved side's context was built. Structurally a subset of the
+ * data layer's `KnowledgeChatContext`, which the eval script passes in as is;
+ * the domain defines its own shape so it depends on nothing outside itself.
+ */
 export type RetrievalOutcome =
-  | { mode: Extract<KnowledgeChatContext, { mode: 'retrieved' }>['mode'] }
-  | Pick<Extract<KnowledgeChatContext, { mode: 'profile-only' }>, 'mode' | 'reason'>;
+  | { mode: 'retrieved' }
+  | { mode: 'profile-only'; reason: 'unavailable' | 'no-match' };
 
 export interface EvalRow {
   question: EvalQuestion;

@@ -3,7 +3,9 @@ import {
   buildProfileSummary,
   buildRetrievalQuery,
   getKnowledgeChatContext,
+  type KnowledgeChatContext,
 } from '../../data/chatContext';
+import type { RetrievalOutcome } from '../../domain/chatEval';
 import { getPortfolioData } from '../../services/portfolioService';
 import { KnowledgeRetrievalError, type CachedRetriever } from '../../services/knowledgeRetrieval';
 import type { PortfolioData } from '../../types/portfolio';
@@ -165,5 +167,12 @@ describe('buildProfileSummary', () => {
 
   it('handles a missing profile', () => {
     expect(buildProfileSummary(null)).toContain('(No profile data available.)');
+  });
+});
+
+describe('KnowledgeChatContext and the chat eval domain', () => {
+  it('stays assignable to the eval domain RetrievalOutcome (compile-time check)', () => {
+    const assignable = (context: KnowledgeChatContext): RetrievalOutcome => context;
+    expect(assignable({ mode: 'retrieved', context: '', chunkCount: 1 }).mode).toBe('retrieved');
   });
 });
