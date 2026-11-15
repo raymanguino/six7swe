@@ -50,6 +50,7 @@
   },
   "dependencies": {
     "@fastify/cors": "^11.4.1",
+    "@fastify/rate-limit": "^10.3.0",
     "@fastify/request-context": "^6.2.1",
     "@fastify/static": "^10.1.10",
     "@modelcontextprotocol/sdk": "^1.29.0",

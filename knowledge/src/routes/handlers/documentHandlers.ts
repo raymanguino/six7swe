@@ -1,9 +1,5 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import {
-  DocumentParamsSchema,
-  UploadQuerySchema,
-  type DocumentTextResponse,
-} from '../../contract.js';
+import { IdParamsSchema, UploadQuerySchema, type DocumentTextResponse } from '../../contract.js';
 import { requireOwner } from '../../plugins/serviceAuth.js';
 import {
   deleteDocument,
@@ -22,6 +18,7 @@ export function documentHandlers(ctx: KnowledgeContext) {
     files: ctx.files,
     queue: ctx.queue,
     log: req.log,
+    onCorpusChanged: (ownerId: string) => ctx.evalRunner.corpusChanged(ownerId),
   });
 
   return {
@@ -60,7 +57,7 @@ export function documentHandlers(ctx: KnowledgeContext) {
 
     async get(req: FastifyRequest, reply: FastifyReply) {
       const ownerId = requireOwner(req);
-      const { id } = DocumentParamsSchema.parse(req.params);
+      const { id } = IdParamsSchema.parse(req.params);
       const document = await getDocument(ctx, ownerId, id);
       if (!document) return reply.code(404).send({ error: 'Document not found' });
       return { document: toDocumentDto(document) };
@@ -69,7 +66,7 @@ export function documentHandlers(ctx: KnowledgeContext) {
     /** The extracted text, for the owner's preview. */
     async text(req: FastifyRequest, reply: FastifyReply) {
       const ownerId = requireOwner(req);
-      const { id } = DocumentParamsSchema.parse(req.params);
+      const { id } = IdParamsSchema.parse(req.params);
       const found = await getDocumentText(ctx, ownerId, id);
       if (!found) return reply.code(404).send({ error: 'Document not found' });
       const body: DocumentTextResponse = { documentId: id, text: found.text };
@@ -79,7 +76,7 @@ export function documentHandlers(ctx: KnowledgeContext) {
     /** Makes a ready resume the primary one; 409 for anything else. */
     async setPrimary(req: FastifyRequest, reply: FastifyReply) {
       const ownerId = requireOwner(req);
-      const { id } = DocumentParamsSchema.parse(req.params);
+      const { id } = IdParamsSchema.parse(req.params);
       const document = await setPrimaryResume(ctx, ownerId, id);
       if (!document) return reply.code(404).send({ error: 'Document not found' });
       return { document: toDocumentDto(document) };
@@ -87,7 +84,7 @@ export function documentHandlers(ctx: KnowledgeContext) {
 
     async remove(req: FastifyRequest, reply: FastifyReply) {
       const ownerId = requireOwner(req);
-      const { id } = DocumentParamsSchema.parse(req.params);
+      const { id } = IdParamsSchema.parse(req.params);
       const deleted = await deleteDocument(deps(req), ownerId, id);
       if (!deleted) return reply.code(404).send({ error: 'Document not found' });
       return reply.code(204).send();

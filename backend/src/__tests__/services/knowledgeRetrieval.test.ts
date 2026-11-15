@@ -83,6 +83,67 @@ describe('createCachedRetriever', () => {
     expect(fresh[0]?.content).toBe('v2: kafka');
   });
 
+  describe('recording questions for the eval set (#85)', () => {
+    const record = { sessionId: 'session-aaaa' };
+
+    it('passes the session on a miss', async () => {
+      const { client } = fakeClient();
+      const retriever = createCachedRetriever(client, options);
+      await retriever.retrieve('kafka', { record });
+      expect(client.retrieve).toHaveBeenCalledWith('kafka', 4, record);
+    });
+
+    it('still records a cache hit, with one small background retrieval', async () => {
+      const { client } = fakeClient();
+      const retriever = createCachedRetriever(client, options);
+      await retriever.retrieve('kafka');
+      const hit = await retriever.retrieve('Kafka?', { record });
+      expect(hit[0]?.content).toBe('v1: kafka');
+      expect(client.retrieve).toHaveBeenCalledTimes(2);
+      expect(client.retrieve).toHaveBeenLastCalledWith('Kafka?', 1, record);
+    });
+
+    it('ignores a failed background record, which never starts a cooldown', async () => {
+      const { client } = fakeClient();
+      const retriever = createCachedRetriever(client, options);
+      await retriever.retrieve('kafka');
+      client.retrieve.mockRejectedValueOnce(new KnowledgeRetrievalError('down'));
+      await retriever.retrieve('kafka', { record });
+      await flush();
+      // A miss right after still reaches the service: no cooldown.
+      await expect(retriever.retrieve('go')).resolves.toHaveLength(1);
+    });
+
+    it('logs a failed background record without the query or the session id', async () => {
+      const { client } = fakeClient();
+      const warn = jest.fn();
+      const retriever = createCachedRetriever(client, { ...options, log: { warn } });
+      await retriever.retrieve('kafka');
+      client.retrieve.mockRejectedValueOnce(new KnowledgeRetrievalError('down', { status: 503 }));
+      await retriever.retrieve('kafka', { record });
+      await flush();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(
+        { source: 'knowledge', error: { message: 'down', status: 503 } },
+        'Recording the chat question for the eval set failed',
+      );
+      const serialized = JSON.stringify(warn.mock.calls);
+      expect(serialized).not.toContain('kafka');
+      expect(serialized).not.toContain('session-aaaa');
+    });
+
+    it('does not record a hit while the service is cooling down', async () => {
+      const { client } = fakeClient();
+      const retriever = createCachedRetriever(client, options);
+      await retriever.retrieve('kafka');
+      client.retrieve.mockRejectedValueOnce(new KnowledgeRetrievalError('down'));
+      await expect(retriever.retrieve('go')).rejects.toThrow('down');
+      const calls = client.retrieve.mock.calls.length;
+      await retriever.retrieve('kafka', { record });
+      expect(client.retrieve).toHaveBeenCalledTimes(calls);
+    });
+  });
+
   it('re-reads the version only after the TTL', async () => {
     const { client } = fakeClient();
     const retriever = createCachedRetriever(client, options);
@@ -346,6 +407,21 @@ describe('createHttpRetrievalClient', () => {
     expect(init?.method).toBe('POST');
     expect(init?.body).toBe(JSON.stringify({ query: 'kafka', k: 5 }));
     expect((init?.headers as Record<string, string>)['x-knowledge-key']).toBe('service-key');
+  });
+
+  it('asks the service to record the question when given a session (#85)', async () => {
+    const fetchFn = respond(200, { version: 7, chunks: [] });
+    const client = createHttpRetrievalClient(config, fetchFn);
+
+    await client.retrieve('kafka', 5, { sessionId: 'session-aaaa' });
+
+    const [, init] = fetchFn.mock.calls[0] ?? [];
+    expect(JSON.parse(String(init?.body))).toEqual({
+      query: 'kafka',
+      k: 5,
+      record: true,
+      sessionId: 'session-aaaa',
+    });
   });
 
   it('reads the corpus version', async () => {

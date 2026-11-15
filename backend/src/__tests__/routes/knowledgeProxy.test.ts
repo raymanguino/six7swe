@@ -362,7 +362,7 @@ describe('knowledge owner proxy routes', () => {
     expect(service.calls).toHaveLength(0);
 
     expect((await search({ query: ' kafka ' })).statusCode).toBe(200);
-    expect(JSON.parse(String(service.calls[0]?.init.body))).toEqual({ query: 'kafka' });
+    expect(JSON.parse(String(service.calls[0]?.init.body))).toEqual({ query: 'kafka', k: 6 });
   });
 
   it('answers 503 to the owner when the service is not configured', async () => {
@@ -531,5 +531,77 @@ describe('knowledge owner proxy: profile routes (#86)', () => {
     });
     expect(invalid.statusCode).toBe(400);
     expect(service.calls).toHaveLength(2);
+  });
+});
+
+describe('knowledge owner proxy: eval set routes (#85)', () => {
+  let app: FastifyInstance | undefined;
+
+  afterEach(async () => {
+    await app?.close();
+    app = undefined;
+  });
+
+  const QUESTION_ID = '33333333-3333-4333-8333-333333333333';
+
+  it('refuses a non-owner on every eval route, never calling the service', async () => {
+    const service = fakeService(() => jsonResponse(200, {}));
+    app = await buildServer({ user: stranger, fetch: service.fetch });
+    const routes: Array<{ method: 'GET' | 'POST'; url: string }> = [
+      { method: 'GET', url: '/knowledge/eval' },
+      { method: 'POST', url: '/knowledge/eval/runs' },
+      { method: 'POST', url: `/knowledge/eval/questions/${QUESTION_ID}` },
+    ];
+    for (const route of routes) {
+      const res = await app.inject(route);
+      expect({ ...route, status: res.statusCode }).toEqual({ ...route, status: 403 });
+    }
+    expect(service.calls).toHaveLength(0);
+  });
+
+  it('forwards the eval routes with the owner key', async () => {
+    const service = fakeService(({ url }) =>
+      url.endsWith('/eval/runs') ? jsonResponse(202, { running: true }) : jsonResponse(200, {}),
+    );
+    app = await buildServer({ user: owner, fetch: service.fetch });
+
+    expect((await app.inject({ method: 'GET', url: '/knowledge/eval' })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'POST', url: '/knowledge/eval/runs' })).statusCode).toBe(
+      202,
+    );
+    const act = await app.inject({
+      method: 'POST',
+      url: `/knowledge/eval/questions/${QUESTION_ID}`,
+      payload: { action: 'pin' },
+    });
+    expect(act.statusCode).toBe(200);
+
+    expect(service.calls.map((c) => `${c.init.method} ${c.url}`)).toEqual([
+      `GET ${SERVICE_URL}/eval`,
+      `POST ${SERVICE_URL}/eval/runs`,
+      `POST ${SERVICE_URL}/eval/questions/${QUESTION_ID}`,
+    ]);
+    for (const call of service.calls) {
+      expect((call.init.headers as Record<string, string>)[SERVICE_KEY_HEADER]).toBe(OWNER_KEY);
+    }
+    expect(JSON.parse(String(service.calls[2]?.init.body))).toEqual({ action: 'pin' });
+  });
+
+  it('validates the question id and the action before calling the service', async () => {
+    const service = fakeService(() => jsonResponse(200, {}));
+    app = await buildServer({ user: owner, fetch: service.fetch });
+    const payloads: Array<{ url: string; payload: Record<string, unknown> }> = [
+      { url: '/knowledge/eval/questions/not-a-uuid', payload: { action: 'pin' } },
+      { url: `/knowledge/eval/questions/${QUESTION_ID}`, payload: { action: 'delete' } },
+      {
+        url: `/knowledge/eval/questions/${QUESTION_ID}`,
+        payload: { action: 'pin', status: 'active' },
+      },
+    ];
+    for (const { url, payload } of payloads) {
+      const res = await app.inject({ method: 'POST', url, payload });
+      expect({ url, payload, status: res.statusCode }).toEqual({ url, payload, status: 400 });
+    }
+    expect(service.calls).toHaveLength(0);
   });
 });

@@ -79,6 +79,25 @@ const EnvSchema = z
     /** Optional: tried once when MiniMax answers 429 to the primary key. */
     MINIMAX_API_KEY_SECONDARY: z.string().optional(),
 
+    /**
+     * The chat model that answers each question in an eval run (#85), from
+     * the chunks retrieved for it. `none` (the default) records retrieval
+     * only; `stub` is offline and deterministic. Uses the drafter's MiniMax
+     * keys.
+     */
+    EVAL_ANSWERER: z.enum(['none', 'minimax', 'stub']).default('none'),
+    /** Overrides the provider's default answering model. */
+    EVAL_ANSWER_MODEL: z.string().min(1).optional(),
+    /**
+     * Eval thresholds that depend on the embedder (cosine similarity). An
+     * active question whose best chunk is below the gap threshold is flagged
+     * as a knowledge gap; a new visitor question below the off-topic one is
+     * flagged off-topic (never suggested to the owner for promotion). The
+     * defaults suit text-embedding-3-small.
+     */
+    EVAL_GAP_SIMILARITY: z.coerce.number().min(-1).max(1).optional(),
+    EVAL_OFF_TOPIC_SIMILARITY: z.coerce.number().min(-1).max(1).optional(),
+
     /** Where raw uploaded files are kept. */
     FILE_STORE: z.enum(['supabase', 'local']).default('supabase'),
     SUPABASE_URL: z.url().optional(),
@@ -162,40 +181,46 @@ const EnvSchema = z
       }
     }
 
-    let profileDrafter: ProfileDrafterConfig | undefined;
-    if (env.PROFILE_DRAFTER === 'none') {
-      profileDrafter = { kind: 'none' };
-    } else if (env.PROFILE_DRAFTER === 'stub') {
-      if (env.NODE_ENV === 'production') {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['PROFILE_DRAFTER'],
-          message: 'PROFILE_DRAFTER=stub is for development and tests only',
-        });
+    /** The drafter and the eval answerer pick a chat model the same way. */
+    const chatModel = (
+      variable: 'PROFILE_DRAFTER' | 'EVAL_ANSWERER',
+      modelOverride: string | undefined,
+    ): ChatModelConfig | undefined => {
+      const kind = env[variable];
+      if (kind === 'none') return { kind: 'none' };
+      if (kind === 'stub') {
+        if (env.NODE_ENV === 'production') {
+          ctx.addIssue({
+            code: 'custom',
+            path: [variable],
+            message: `${variable}=stub is for development and tests only`,
+          });
+        }
+        return { kind: 'stub' };
       }
-      profileDrafter = { kind: 'stub' };
-    } else {
-      const provider = DRAFT_PROVIDERS[env.PROFILE_DRAFTER];
+      const provider = DRAFT_PROVIDERS[kind];
       const apiKey = env[provider.keyVariable];
-      if (apiKey) {
-        profileDrafter = {
-          kind: 'minimax',
-          url: provider.url,
-          apiKey,
-          secondaryApiKey: env[provider.secondaryKeyVariable] || undefined,
-          model: env.PROFILE_DRAFT_MODEL ?? provider.defaultModel,
-        };
-      } else {
+      if (!apiKey) {
         ctx.addIssue({
           code: 'custom',
           path: [provider.keyVariable],
-          message: `${provider.keyVariable} is required when PROFILE_DRAFTER=${env.PROFILE_DRAFTER}`,
+          message: `${provider.keyVariable} is required when ${variable}=${kind}`,
         });
+        return undefined;
       }
-    }
+      return {
+        kind: 'minimax',
+        url: provider.url,
+        apiKey,
+        secondaryApiKey: env[provider.secondaryKeyVariable] || undefined,
+        model: modelOverride ?? provider.defaultModel,
+      };
+    };
+    const profileDrafter = chatModel('PROFILE_DRAFTER', env.PROFILE_DRAFT_MODEL);
+    const evalAnswerer = chatModel('EVAL_ANSWERER', env.EVAL_ANSWER_MODEL);
 
-    if (!embedder || !fileStore || !profileDrafter) return z.NEVER;
-    return { ...env, embedder, fileStore, profileDrafter };
+    if (!embedder || !fileStore || !profileDrafter || !evalAnswerer) return z.NEVER;
+    return { ...env, embedder, fileStore, profileDrafter, evalAnswerer };
   });
 
 /** Providers with an OpenAI-compatible embeddings API. */
@@ -242,7 +267,11 @@ export type EmbedderConfig =
       model: string;
     };
 
-export type ProfileDrafterConfig =
+/** The profile drafter (#86) and the eval answerer (#85) share the chat model providers. */
+export type ProfileDrafterConfig = ChatModelConfig;
+export type EvalAnswererConfig = ChatModelConfig;
+
+export type ChatModelConfig =
   | { kind: 'none' }
   | { kind: 'stub' }
   | {

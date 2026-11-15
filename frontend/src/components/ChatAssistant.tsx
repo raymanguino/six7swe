@@ -1,11 +1,14 @@
 import { useState, useRef, useEffect } from 'react';
 import { apiRequest } from '../utils/api';
+import { getChatSessionId } from '../utils/chatSession';
 import { INPUT_LIMITS } from '../constants';
 
 interface Message {
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  /** A local error notice, not a real answer; never sent back as history. */
+  isError?: boolean;
 }
 
 const EXAMPLE_QUESTIONS = [
@@ -64,10 +67,12 @@ export default function ChatAssistant() {
     setIsLoading(true);
 
     try {
-      const history = messages.map((m) => ({ role: m.role, content: m.content }));
+      const history = messages
+        .filter((m) => !m.isError)
+        .map((m) => ({ role: m.role, content: m.content }));
       const data = await apiRequest('/chat', {
         method: 'POST',
-        body: JSON.stringify({ message: userMessage, history }),
+        body: JSON.stringify({ message: userMessage, history, sessionId: getChatSessionId() }),
       });
       setMessages((prev) => [...prev, { role: 'assistant', content: data.response, timestamp: new Date() }]);
     } catch (error) {
@@ -80,6 +85,7 @@ export default function ChatAssistant() {
             ? `Sorry, I encountered an error. Please try again later. (${detail})`
             : 'Sorry, I encountered an error. Please try again later.',
           timestamp: new Date(),
+          isError: true,
         },
       ]);
     } finally {

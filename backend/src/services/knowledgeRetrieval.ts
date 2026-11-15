@@ -46,9 +46,19 @@ export class KnowledgeRetrievalError extends KnowledgeServiceError {
 const retrievalError: KnowledgeErrorFactory = (message, options) =>
   new KnowledgeRetrievalError(message, options);
 
+/**
+ * Asks the knowledge service to record the query as a visitor question for
+ * its evolving eval set (#85). Only for a query that is the visitor's current
+ * question alone: that is what the service stores.
+ */
+export interface RecordQuestion {
+  /** The browser's random per-session id. */
+  sessionId: string;
+}
+
 export interface RetrievalClient {
   getVersion(): Promise<number>;
-  retrieve(query: string, k: number): Promise<RetrieveResponse>;
+  retrieve(query: string, k: number, record?: RecordQuestion): Promise<RetrieveResponse>;
 }
 
 export function createHttpRetrievalClient(
@@ -72,13 +82,16 @@ export function createHttpRetrievalClient(
       );
       return body.version;
     },
-    async retrieve(query, k) {
+    async retrieve(query, k, record) {
+      const payload = record
+        ? { query, k, record: true, sessionId: record.sessionId }
+        : { query, k };
       return requestKnowledgeJson(
         {
           ...base,
           method: 'POST',
           path: '/retrieve',
-          body: JSON.stringify({ query, k }),
+          body: JSON.stringify(payload),
           contentType: 'application/json',
         },
         RetrieveResponseSchema,
@@ -101,16 +114,27 @@ export function normalizeQuestion(question: string): string {
     .replace(/[\s?!.]+$/, '');
 }
 
+/** Structural logger, so a Fastify child logger fits without importing Fastify here. */
+export interface RetrievalLogger {
+  warn(obj: Record<string, unknown>, msg: string): void;
+}
+
 export interface CachedRetrieverOptions {
   k: number;
   versionTtlMs: number;
   failureCooldownMs: number;
   maxEntries: number;
   now?: () => number;
+  log?: RetrievalLogger;
+}
+
+export interface RetrieveOptions {
+  /** Record the query for the eval set; see `RecordQuestion`. */
+  record?: RecordQuestion;
 }
 
 export interface CachedRetriever {
-  retrieve(query: string): Promise<RetrievedChunkDto[]>;
+  retrieve(query: string, options?: RetrieveOptions): Promise<RetrievedChunkDto[]>;
 }
 
 export function createCachedRetriever(
@@ -212,14 +236,38 @@ export function createCachedRetriever(
     }
   }
 
+  /**
+   * A cache hit never reaches the service, but the visitor's question still
+   * counts toward the eval set: one small retrieval records it, in the
+   * background. A failure is logged (never the query or session id, which are
+   * PII) and otherwise ignored, and it never touches the cooldown.
+   */
+  function recordInBackground(query: string, record: RecordQuestion): void {
+    if (coolingDown()) return;
+    client.retrieve(query, 1, record).catch((error: unknown) => {
+      const detail: { message: string; status?: number } = {
+        message: error instanceof Error ? error.message : 'Unknown error',
+      };
+      if (error instanceof KnowledgeRetrievalError && error.status !== undefined) {
+        detail.status = error.status;
+      }
+      options.log?.warn(
+        { source: 'knowledge', error: detail },
+        'Recording the chat question for the eval set failed',
+      );
+    });
+  }
+
   return {
-    async retrieve(query) {
+    async retrieve(query, retrieveOptions = {}) {
+      const { record } = retrieveOptions;
       const normalized = normalizeQuestion(query);
       const version = await currentVersion();
       const key = `${version}\u0000${normalized}`;
       const hit = entries.get(key);
       if (hit) {
         store(key, hit);
+        if (record) recordInBackground(query, record);
         return hit;
       }
       if (coolingDown()) failFast();
@@ -227,7 +275,9 @@ export function createCachedRetriever(
       let result: RetrieveResponse;
       const started = ++seq;
       try {
-        result = await client.retrieve(query, options.k);
+        result = await (record
+          ? client.retrieve(query, options.k, record)
+          : client.retrieve(query, options.k));
       } catch (error) {
         recordFailure(error);
         throw error;
@@ -242,6 +292,12 @@ export function createCachedRetriever(
 }
 
 let defaultRetriever: CachedRetriever | null | undefined;
+let retrievalLogger: RetrievalLogger | undefined;
+
+/** The server hands over its logger at startup, like `setPortfolioLogger`. */
+export function setRetrievalLogger(logger: RetrievalLogger): void {
+  retrievalLogger = logger;
+}
 
 /**
  * The process-wide retriever built from the environment, or null when
@@ -256,6 +312,7 @@ export function getDefaultRetriever(): CachedRetriever | null {
           versionTtlMs: config.versionTtlMs,
           failureCooldownMs: config.failureCooldownMs,
           maxEntries: config.cacheEntries,
+          log: retrievalLogger,
         })
       : null;
   }

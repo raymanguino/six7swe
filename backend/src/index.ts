@@ -13,6 +13,7 @@ import routes from './routes';
 import { PUBLIC_ROUTE } from './routes/access';
 import { reapStaleRefreshes } from './services/jobHunt/standalone';
 import { setPortfolioLogger } from './services/portfolioService';
+import { setRetrievalLogger } from './services/knowledgeRetrieval';
 import Fastify from 'fastify';
 import path from 'path';
 
@@ -100,6 +101,7 @@ const start = async () => {
 
     assertKnowledgeRetrievalConfigured();
     setPortfolioLogger(fastify.log.child({ module: 'portfolio' }));
+    setRetrievalLogger(fastify.log.child({ module: 'knowledge' }));
 
     // Refreshes abandoned by a previous process would otherwise stay
     // IN_PROGRESS forever, since there is no queue to recover them.

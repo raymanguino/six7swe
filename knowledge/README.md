@@ -53,8 +53,28 @@ Every route declares who may call it: `public`, `service` or `owner` (`src/plugi
 | POST   | `/profile/draft`         | Drafts again from the primary resume, in the background (202); 409 when drafting is off                                           |
 | DELETE | `/profile/draft`         | Discards the draft (204)                                                                                                          |
 | POST   | `/profile/publish`       | `{ draftUpdatedAt }`: publishes the draft the owner reviewed; 409 if it changed since, 404 if there is none                       |
+| GET    | `/eval`                  | The chat eval set: settings, questions, the latest run with its diff, and whether a run is in progress                            |
+| POST   | `/eval/runs`             | Runs the active eval questions now, in the background (202)                                                                       |
+| POST   | `/eval/questions/:id`    | `{ action }`: `pin`, `unpin`, `retire`, `promote`, `off-topic` or `on-topic`; 409 when it cannot apply                            |
 
-`/retrieve`, `/version`, `/profile/published` and `/resume.pdf` are `service` routes; `/documents/*`, `/search`, `/profile`, `/profile/draft` and `/profile/publish` are `owner` routes.
+`/retrieve`, `/version`, `/profile/published` and `/resume.pdf` are `service` routes; `/documents/*`, `/search`, `/profile`, `/profile/draft`, `/profile/publish` and `/eval/*` are `owner` routes.
+
+`/retrieve` also takes `record: true` with a `sessionId` (see the eval set below); `/search` never records.
+
+## Chat eval set (#85)
+
+A set of 10 active questions the corpus is checked against. It starts from canned questions; the owner steers it toward what visitors actually ask by promoting their questions. It lives in `knowledge.eval_questions` (with `eval_question_sessions`), and each run in `eval_runs` and `eval_results`.
+
+- **Recording.** The backend's chat sends `record: true` and the browser's random per-session id (kept in `sessionStorage`) with `/retrieve`, only when the query is the visitor's current question alone (a follow-up's query also carries the previous turn). The question is stored with emails, links, @handles and phone numbers masked, cut to 300 characters. Sessions are stored as SHA-256 hashes; no IP or chat history is stored. Recording runs in the background on its own serial queue (at most 100 waiting), so it never delays or fails the retrieval. A cache hit in the backend still records, with a background `k=1` retrieval. The owner's `/search` is strict and never records.
+- **Clustering.** The recorded question reuses the retrieval's query embedding (re-embedded only when redaction changed the text) and is compared with the owner's candidate and active questions by cosine similarity. At 0.85 or above it joins the nearest one, bumping `hit_count`, `distinct_sessions` and `last_asked_at`; below, it starts a `candidate`. Retired questions are never matched, so a question like a retired one starts a fresh candidate.
+- **Promotion is the owner's.** Recording never changes a question's status: session ids are chosen by the client, so counts can be gamed. A candidate asked in 2 or more distinct sessions, and not off-topic, is only marked _suggested_ on the Knowledge page. The owner promotes; that retires the active, unpinned questions asked least recently, in the same transaction, until the new one fits (one, unless the set was over its size). If every active question is pinned, the promotion is refused (409). Owner actions on a question are status-guarded under the same per-owner lock as promotion, so a pin never lands on a question a promotion just retired.
+- **Off-topic.** A new candidate is flagged off-topic when the corpus answered but its best chunk is below `EVAL_OFF_TOPIC_SIMILARITY` (default 0.15). The owner can flag or clear it; flagging an active question retires it. An off-topic candidate is never suggested; the owner can still promote it.
+- **Seeding and purging.** The owner's first eval view, recording or run seeds the 10 canned questions (`src/services/evalSet/canned.ts`) as active. Candidates not asked for 90 days, and visitor questions retired more than 90 days ago, are deleted. Retirement is timed by `retired_at` (set when a question is retired or evicted, cleared when it comes back), not by the last ask, so a retired question stays listed, and can be promoted again, for the full 90 days (checked at most hourly per owner, when recording or viewing; a failure is logged and retried next time, never failing either). An owner keeps at most 500 candidates; the least recently asked go first.
+- **Runs.** A run is queued after every ingest attempt and every delete, and on the owner's request; a corpus-triggered run is skipped when the newest completed run is already at the current corpus version. Up to 3 questions are worked on at once, results in order. For each active question it stores the chunk ids retrieved with the question's stored embedding, the top similarity, a gap flag (below `EVAL_GAP_SIMILARITY`, default 0.3, or nothing retrieved) and, with `EVAL_ANSWERER` set, an answer grounded in those chunks (given up after 60 s, recording retrieval only). `GET /eval` diffs the latest run against the newest completed run at an older corpus version: a result is `changed` when its chunks, gap flag or top similarity moved; a reworded answer is reported but never makes a result `changed`, since model answers vary. Runs are not durable: one cut off by a restart is marked failed on the next boot, and the old instance can no longer close it.
+- **Owner controls** are on the Knowledge page, through the backend's `/knowledge/eval*` proxy.
+- **`EVAL_ANSWERER`**: `none` (default: retrieval only), `minimax` (the drafter's MiniMax keys; `EVAL_ANSWER_MODEL` overrides the model) or `stub` (offline; refused in production). Production sets `minimax` in `railway.ts`. The thresholds depend on the embedder: the defaults suit text-embedding-3-small, and the offline `hashing` embedder scores differently.
+
+The backend rate-limits the public `/chat` endpoint (`@fastify/rate-limit`, 10 messages a minute per client, keyed by the last `X-Forwarded-For` entry, which Railway's edge appends).
 
 ## Profile (#86)
 
@@ -84,6 +104,7 @@ The service owns the `knowledge` schema, with these tables:
 - `chunks` (embeddings in `vector(1536)`, HNSW cosine index)
 - `corpus_state`
 - `profiles` (the draft and published structured profile; see Profile above)
+- `eval_questions`, `eval_question_sessions`, `eval_runs`, `eval_results` (the chat eval set; see above)
 
 Its migration ledger lives in a separate `knowledge_migrations` schema. Both schemas are kept apart from the backend:
 
@@ -187,14 +208,16 @@ The service validates its whole environment at boot and refuses to start if anyt
 
 **Leave these unset.** They are not in `railway.ts`, so an apply would delete them anyway. To change one, add it to `railway.ts` first.
 
-| Variable                   | Default                  | Notes                                                                                                                           |
-| -------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
-| `EMBEDDER`                 | `openai`                 | `openrouter` (needs `OPENROUTER_API_KEY`) also works; `hashing` is refused in production.                                       |
-| `EMBEDDING_MODEL`          | `text-embedding-3-small` | `openai/text-embedding-3-small` with `EMBEDDER=openrouter`. Must output 1536 dimensions to match the `chunks.embedding` column. |
-| `FILE_STORE`               | `supabase`               | `local` writes to the container's disk, which Railway wipes on every deploy.                                                    |
-| `STORAGE_BUCKET`           | `portfolio-files`        |                                                                                                                                 |
-| `MAX_UPLOAD_BYTES`         | `10485760` (10 MB)       | At most 50 MB; uploads are buffered in memory.                                                                                  |
-| `RESUME_INGESTION_ON_BOOT` | `true`                   | Re-queues documents a previous instance left pending or processing.                                                             |
+| Variable                    | Default                  | Notes                                                                                                                           |
+| --------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `EMBEDDER`                  | `openai`                 | `openrouter` (needs `OPENROUTER_API_KEY`) also works; `hashing` is refused in production.                                       |
+| `EMBEDDING_MODEL`           | `text-embedding-3-small` | `openai/text-embedding-3-small` with `EMBEDDER=openrouter`. Must output 1536 dimensions to match the `chunks.embedding` column. |
+| `FILE_STORE`                | `supabase`               | `local` writes to the container's disk, which Railway wipes on every deploy.                                                    |
+| `STORAGE_BUCKET`            | `portfolio-files`        |                                                                                                                                 |
+| `MAX_UPLOAD_BYTES`          | `10485760` (10 MB)       | At most 50 MB; uploads are buffered in memory.                                                                                  |
+| `RESUME_INGESTION_ON_BOOT`  | `true`                   | Re-queues documents a previous instance left pending or processing.                                                             |
+| `EVAL_GAP_SIMILARITY`       | `0.3`                    | An active eval question whose best chunk scores below this is a knowledge gap.                                                  |
+| `EVAL_OFF_TOPIC_SIMILARITY` | `0.15`                   | A new visitor question whose best chunk scores below this is flagged off-topic (never suggested).                               |
 
 Don't set `LOCAL_FILE_STORE_DIR` (local store only) or `KNOWLEDGE_TEST_DATABASE_URL` (tests only).
 

@@ -34,6 +34,7 @@ import {
   silentLogger,
   utf8,
 } from './support/fixtures.js';
+import { createMemoryEvalRepository } from './support/memoryEvalRepository.js';
 import { createMemoryProfileRepository } from './support/memoryProfileRepository.js';
 import { createMemoryRepository } from './support/memoryRepository.js';
 
@@ -62,6 +63,8 @@ afterEach(async () => {
   if (!app) return;
   await app.ingestionQueue.idle();
   await app.profileDrafting.idle();
+  await app.evalRunner.idle();
+  await app.evalSet.idle();
   await app.close();
   app = undefined;
 });
@@ -71,6 +74,7 @@ async function start(drafter: ProfileDrafter | null) {
   const built = await buildApp({
     deps: { repo: createMemoryRepository(), files, embedder: createHashingEmbedder(256) },
     profile: { repo: createMemoryProfileRepository(), drafter },
+    evaluation: { repo: createMemoryEvalRepository(), answerer: null },
     serviceKey: KEY,
     ownerKey: OWNER_KEY,
     ownerId: 'owner',

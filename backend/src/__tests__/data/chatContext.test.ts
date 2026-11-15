@@ -3,6 +3,7 @@ import {
   buildProfileSummary,
   buildRetrievalQuery,
   getKnowledgeChatContext,
+  recordFor,
   type KnowledgeChatContext,
 } from '../../data/chatContext';
 import type { RetrievalOutcome } from '../../domain/chatEval';
@@ -133,6 +134,41 @@ describe('getKnowledgeChatContext', () => {
     expect(result).toMatchObject({ mode: 'profile-only', reason: 'no-match' });
     expect(result.context).toContain('No background documents matched this question.');
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('records a standalone question for the eval set, with the session', async () => {
+    const retriever = retrieverReturning(async () => [chunk]);
+    await getKnowledgeChatContext({ message: ' Kafka? ', retriever, sessionId: 'session-aaaa' });
+    expect(retriever.retrieve).toHaveBeenCalledWith('Kafka?', {
+      record: { sessionId: 'session-aaaa' },
+    });
+  });
+
+  it('never records a follow-up (its query carries the previous turn) or a sessionless turn', async () => {
+    const retriever = retrieverReturning(async () => [chunk]);
+    await getKnowledgeChatContext({
+      message: 'How long were you there?',
+      history: [{ role: 'user', content: 'Tell me about Acme.' }],
+      retriever,
+      sessionId: 'session-aaaa',
+    });
+    await getKnowledgeChatContext({ message: 'Kafka?', retriever });
+    expect(jest.mocked(retriever.retrieve).mock.calls).toEqual([
+      ['Tell me about Acme.\nHow long were you there?'],
+      ['Kafka?'],
+    ]);
+  });
+});
+
+describe('recordFor', () => {
+  it('records only when the query is the current question alone', () => {
+    expect(recordFor('Kafka?', { message: 'Kafka?', sessionId: 's-123456' })).toEqual({
+      sessionId: 's-123456',
+    });
+    expect(
+      recordFor('Earlier\nKafka?', { message: 'Kafka?', sessionId: 's-123456' }),
+    ).toBeUndefined();
+    expect(recordFor('Kafka?', { message: 'Kafka?' })).toBeUndefined();
   });
 });
 

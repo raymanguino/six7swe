@@ -88,6 +88,10 @@ export async function registerKnowledgeRoutes(
       owner.post('/knowledge/profile/draft', PRIVATE_ROUTE, handlers.redraftProfile);
       owner.delete('/knowledge/profile/draft', PRIVATE_ROUTE, handlers.discardProfileDraft);
       owner.post('/knowledge/profile/publish', PRIVATE_ROUTE, handlers.publishProfile);
+      // The evolving chat eval set (#85): questions, runs and the owner's controls.
+      owner.get('/knowledge/eval', PRIVATE_ROUTE, handlers.getEvalSet);
+      owner.post('/knowledge/eval/runs', PRIVATE_ROUTE, handlers.runEval);
+      owner.post('/knowledge/eval/questions/:id', PRIVATE_ROUTE, handlers.actOnEvalQuestion);
     });
   });
 }

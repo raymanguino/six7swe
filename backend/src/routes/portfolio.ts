@@ -5,6 +5,7 @@ import * as resumeHandlers from './handlers/resumeHandlers';
 import * as chatHandlers from './handlers/chatHandlers';
 import * as fitcheckHandlers from './handlers/fitcheckHandlers';
 import * as contactHandlers from './handlers/contactHandlers';
+import { registerChatRoute } from './chatRateLimit';
 
 /**
  * Public portfolio product.
@@ -16,7 +17,8 @@ import * as contactHandlers from './handlers/contactHandlers';
 export async function registerPortfolioRoutes(app: FastifyInstance): Promise<void> {
   app.get('/portfolio', PUBLIC_ROUTE, portfolioHandlers.getPortfolioHandler);
   app.get('/resume', PUBLIC_ROUTE, resumeHandlers.resumeHandler);
-  app.post('/chat', PUBLIC_ROUTE, chatHandlers.chatHandler);
+  // Rate limited per client: every message is a model call.
+  await registerChatRoute(app, chatHandlers.chatHandler);
   app.post('/fitcheck', PUBLIC_ROUTE, fitcheckHandlers.fitcheckHandler);
   app.post('/contact', PUBLIC_ROUTE, contactHandlers.contactHandler);
 }

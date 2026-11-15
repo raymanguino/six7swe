@@ -13,6 +13,8 @@ export interface ChatOptions {
   history?: ChatHistory;
   /** Receives a warning when chat falls back to profile-only context. */
   log?: ContextLogger;
+  /** The visitor's random per-session id; records the question for the eval set (#85). */
+  sessionId?: string;
 }
 
 const MAX_HISTORY_MESSAGES = 10;
@@ -29,6 +31,7 @@ export async function getContextForChat(options: ChatOptions): Promise<string> {
       message: options.message,
       history: options.history,
       log: options.log,
+      sessionId: options.sessionId,
     });
     return result.context;
   }

@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import {
   boolean,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -16,6 +17,10 @@ import {
 import {
   DOCUMENT_KINDS,
   DOCUMENT_STATUSES,
+  EVAL_QUESTION_ORIGINS,
+  EVAL_QUESTION_STATUSES,
+  EVAL_RUN_STATUSES,
+  EVAL_RUN_TRIGGERS,
   PROFILE_STAGES,
   type ProfileData,
 } from '../contract.js';
@@ -151,3 +156,99 @@ export const corpusState = knowledge.table('corpus_state', {
     .defaultNow()
     .$onUpdate(() => sql`now()`),
 });
+
+export const evalQuestionStatus = knowledge.enum('eval_question_status', EVAL_QUESTION_STATUSES);
+export const evalQuestionOrigin = knowledge.enum('eval_question_origin', EVAL_QUESTION_ORIGINS);
+export const evalRunTrigger = knowledge.enum('eval_run_trigger', EVAL_RUN_TRIGGERS);
+export const evalRunStatus = knowledge.enum('eval_run_status', EVAL_RUN_STATUSES);
+
+/**
+ * The evolving chat eval set (#85). Each row is one cluster of similar
+ * visitor questions (or a canned question), kept under the first wording seen,
+ * redacted and truncated. Nothing else about the visitor is stored: no IPs,
+ * no history, and sessions only as hashes (`eval_question_sessions`).
+ *
+ * Clusters are matched by a brute-force cosine scan over the owner's rows:
+ * there are at most a few hundred (candidates expire after 90 days), so an
+ * HNSW index, with its post-filtering caveats, would not pay for itself.
+ */
+export const evalQuestions = knowledge.table(
+  'eval_questions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ownerId: varchar('owner_id', { length: 255 }).notNull(),
+    question: text('question').notNull(),
+    /** The embedding of the stored (redacted) wording; clustering compares against it. */
+    embedding: vector('embedding', { dimensions: EMBEDDING_DIMENSIONS }).notNull(),
+    status: evalQuestionStatus('status').notNull().default('candidate'),
+    origin: evalQuestionOrigin('origin').notNull().default('visitor'),
+    pinned: boolean('pinned').notNull().default(false),
+    offTopic: boolean('off_topic').notNull().default(false),
+    hitCount: integer('hit_count').notNull().default(0),
+    distinctSessions: integer('distinct_sessions').notNull().default(0),
+    lastAskedAt: timestamp('last_asked_at', { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * When the question last became `retired` (by the owner or by eviction);
+     * null while it is not retired. Retired visitor questions are purged by
+     * this, not by `last_asked_at`, so a retirement always stays visible (and
+     * reversible) for the full TTL.
+     */
+    retiredAt: timestamp('retired_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => sql`now()`),
+  },
+  (t) => [index('eval_questions_owner_status_idx').on(t.ownerId, t.status, t.lastAskedAt)],
+);
+
+/** The sessions that asked each question, as SHA-256 hashes of the browser's random id. */
+export const evalQuestionSessions = knowledge.table(
+  'eval_question_sessions',
+  {
+    questionId: uuid('question_id')
+      .notNull()
+      .references(() => evalQuestions.id, { onDelete: 'cascade' }),
+    sessionHash: varchar('session_hash', { length: 64 }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.questionId, t.sessionHash] })],
+);
+
+/** One run of the active questions against the corpus at `corpus_version`. */
+export const evalRuns = knowledge.table(
+  'eval_runs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ownerId: varchar('owner_id', { length: 255 }).notNull(),
+    corpusVersion: integer('corpus_version').notNull(),
+    trigger: evalRunTrigger('trigger').notNull(),
+    status: evalRunStatus('status').notNull().default('running'),
+    error: text('error'),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+  },
+  (t) => [index('eval_runs_owner_started_idx').on(t.ownerId, t.startedAt)],
+);
+
+/**
+ * One question's outcome in a run. The question's text is copied, so the
+ * result survives the question being purged (`question_id` is then null).
+ */
+export const evalResults = knowledge.table(
+  'eval_results',
+  {
+    runId: uuid('run_id')
+      .notNull()
+      .references(() => evalRuns.id, { onDelete: 'cascade' }),
+    /** The question's position in the run, for a stable order. */
+    ordinal: integer('ordinal').notNull(),
+    questionId: uuid('question_id').references(() => evalQuestions.id, { onDelete: 'set null' }),
+    question: text('question').notNull(),
+    answer: text('answer'),
+    chunkIds: jsonb('chunk_ids').$type<string[]>().notNull(),
+    topSimilarity: doublePrecision('top_similarity'),
+    gap: boolean('gap').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.runId, t.ordinal] })],
+);

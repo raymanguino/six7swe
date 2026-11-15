@@ -2,17 +2,19 @@ import { useState } from 'react';
 import { Navigate, useOutletContext } from 'react-router-dom';
 import type { HunterOutletContext } from '../HunterLayout';
 import DocumentTable from './DocumentTable';
+import EvalSetPanel from './EvalSetPanel';
 import ProfileReview from './ProfileReview';
 import SearchPlayground from './SearchPlayground';
 import TextPreview from './TextPreview';
 import UploadDropzone from './UploadDropzone';
+import { useEvalSet } from './useEvalSet';
 import { useKnowledgeDocuments } from './useKnowledgeDocuments';
 import { useKnowledgeProfile } from './useKnowledgeProfile';
 
 /**
  * The owner's knowledge base: upload, the document table with live status,
- * the extracted-text preview, the landing profile's review and publish, and
- * the "ask as a visitor" playground.
+ * the extracted-text preview, the landing profile's review and publish, the
+ * "ask as a visitor" playground, and the chat eval set (#85).
  *
  * Owner only. Anyone the backend says is not the owner is sent back to the
  * profiles; the backend answers 403 to their requests regardless.
@@ -27,6 +29,13 @@ export default function KnowledgePage() {
     knowledgeOwner.isOwner === true,
     primary ? `${primary.id}:${primary.updatedAt}` : null,
   );
+  // Any change to the ready documents may start an eval run, so the set is
+  // re-read when one does.
+  const readyKey = knowledge.documents
+    .filter((d) => d.status === 'ready')
+    .map((d) => `${d.id}:${d.updatedAt}`)
+    .join(',');
+  const evalSet = useEvalSet(knowledgeOwner.isOwner === true, readyKey);
   const [previewId, setPreviewId] = useState<string | null>(null);
 
   if (knowledgeOwner.failed) {
@@ -98,6 +107,8 @@ export default function KnowledgePage() {
       <ProfileReview profile={profile} />
 
       <SearchPlayground />
+
+      <EvalSetPanel evalSet={evalSet} />
     </div>
   );
 }

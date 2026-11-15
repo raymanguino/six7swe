@@ -6,6 +6,8 @@ export interface RetrievalResult {
   /** The corpus version the results were read at; a cache key for callers. */
   version: number;
   chunks: RetrievedChunk[];
+  /** The query's embedding; the eval set (#85) clusters recorded questions with it. */
+  embedding: number[];
 }
 
 export type RetrievalDeps = Pick<KnowledgeDeps, 'repo' | 'embedder'>;
@@ -36,5 +38,5 @@ export async function retrieve(
   ]);
   if (!embedding) throw new Error('Embedder returned no vector for the query');
   const chunks = await deps.repo.search(ownerId, embedding, limit);
-  return { version, chunks };
+  return { version, chunks, embedding };
 }

@@ -4,7 +4,11 @@ import { ZodError } from 'zod';
 import { SERVICE_KEY_HEADER, type ErrorResponse } from './contract.js';
 import serviceAuth, { type Authenticators } from './plugins/serviceAuth.js';
 import { registerRoutes } from './routes/index.js';
+import type { EvalRepository } from './db/api/evalRepository.js';
 import type { ProfileRepository } from './db/api/profileRepository.js';
+import type { EvalAnswerer } from './services/evalSet/answerer.js';
+import { createEvalSet, type EvalSet, type EvalSettings } from './services/evalSet/evalSet.js';
+import { createEvalRunner, type EvalRunner } from './services/evalSet/runner.js';
 import type { KnowledgeDeps } from './services/deps.js';
 import type { ProfileDrafter } from './services/profile/drafter.js';
 import { createProfileDrafting, type ProfileDrafting } from './services/profile/profiles.js';
@@ -20,6 +24,10 @@ declare module 'fastify' {
     ingestionQueue: IngestionQueue;
     /** The profile drafting queue; the entry point stops it on shutdown. */
     profileDrafting: ProfileDrafting;
+    /** The eval set's question recorder (#85); the entry point stops it on shutdown. */
+    evalSet: EvalSet;
+    /** The eval run queue (#85); the entry point stops it on shutdown. */
+    evalRunner: EvalRunner;
   }
 }
 
@@ -27,6 +35,15 @@ export interface BuildAppOptions {
   deps: KnowledgeDeps;
   /** The structured profile (#86): its storage, and the model that drafts it (null: off). */
   profile: { repo: ProfileRepository; drafter: ProfileDrafter | null };
+  /**
+   * The evolving chat eval set (#85): its storage, the model that answers
+   * each question in a run (null: retrieval only) and threshold overrides.
+   */
+  evaluation: {
+    repo: EvalRepository;
+    answerer: EvalAnswerer | null;
+    settings?: Partial<EvalSettings>;
+  };
   /** Opens service routes only. */
   serviceKey: string;
   /** Opens owner routes only; held by the backend's owner proxy. */
@@ -75,11 +92,28 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   });
   app.decorate('profileDrafting', drafting);
 
+  const evalSet = createEvalSet({
+    repo: options.evaluation.repo,
+    embedder: deps.embedder,
+    log: app.log,
+    settings: options.evaluation.settings,
+  });
+  const evalRunner = createEvalRunner({
+    evalRepo: options.evaluation.repo,
+    repo: deps.repo,
+    evalSet,
+    answerer: options.evaluation.answerer,
+    log: app.log,
+  });
+  app.decorate('evalSet', evalSet);
+  app.decorate('evalRunner', evalRunner);
+
   const queue = createIngestionQueue(
     {
       ...deps,
       chunkOptions: options.chunkOptions,
       onResumeIngested: (doc) => drafting.resumeIngested(doc),
+      onCorpusChanged: (ownerId) => evalRunner.corpusChanged(ownerId),
     },
     app.log,
   );
@@ -113,6 +147,14 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     limits: { fileSize: options.maxUploadBytes, files: 1, fields: 5 },
   });
 
-  registerRoutes(app, { ...deps, queue, profiles: options.profile.repo, drafting });
+  registerRoutes(app, {
+    ...deps,
+    queue,
+    profiles: options.profile.repo,
+    drafting,
+    evalRepo: options.evaluation.repo,
+    evalSet,
+    evalRunner,
+  });
   return app;
 }

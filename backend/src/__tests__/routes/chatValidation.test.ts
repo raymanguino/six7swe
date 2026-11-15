@@ -80,4 +80,12 @@ describe('POST /chat validation', () => {
     expect(call?.history?.[0]?.content.startsWith('10:')).toBe(true);
     expect(call?.history?.every((m) => m.content.length <= 2000)).toBe(true);
   });
+
+  it('passes a valid session id through, and drops a malformed one without failing', async () => {
+    expect((await post({ message: 'hi', sessionId: 'session-aaaa' })).statusCode).toBe(200);
+    expect(mockedChat.mock.calls[0]?.[0].sessionId).toBe('session-aaaa');
+
+    expect((await post({ message: 'hi', sessionId: 'not valid!' })).statusCode).toBe(200);
+    expect(mockedChat.mock.calls[1]?.[0].sessionId).toBeUndefined();
+  });
 });
