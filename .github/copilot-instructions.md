@@ -147,6 +147,19 @@ Rules:
 
 ---
 
+## Pull Requests
+
+- **Always close the issue the PR implements.** Put `Closes #<n>` on its own line at the top of
+  the PR description. Without a closing keyword (`Closes`, `Fixes`, `Resolves`), GitHub only
+  links the issue and leaves it open after the merge. A bare reference like `(#123)` in the
+  title, the body or the commit message does not close anything.
+- One issue per PR. If the work closes several, list each on its own line.
+- Write the description as what the change does and how it was verified: the commands run and
+  their results. Note anything the reviewer cannot see from the diff, such as a migration
+  applied to a local database or a dependency installed outside the manifest.
+
+---
+
 ## Pull Request Comments
 
 - Never write `@copilot`, or any other bot mention, in a PR comment, reply, or description.
