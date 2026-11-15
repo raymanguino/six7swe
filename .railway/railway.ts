@@ -165,6 +165,8 @@ export default defineRailway(() => {
       DATABASE_URL: preserve(),
       KNOWLEDGE_SERVICE_KEY: preserve(),
       KNOWLEDGE_OWNER_KEY: preserve(),
+      // Bearer token for the /mcp adapter; unset disables /mcp.
+      KNOWLEDGE_MCP_KEY: preserve(),
       OWNER_AUTH_ID: preserve(),
       // Embeddings only (EMBEDDER defaults to openai). Profile drafting uses MiniMax below.
       OPENAI_API_KEY: preserve(),

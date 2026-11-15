@@ -40,6 +40,17 @@ const EnvSchema = z
     KNOWLEDGE_OWNER_KEY: z.string().min(32, 'KNOWLEDGE_OWNER_KEY must be at least 32 characters'),
 
     /**
+     * Bearer token for the MCP adapter (#89), held by your own Claude
+     * clients. A key of its own, so the owner key never leaves the backend.
+     * Unset (or empty) disables `/mcp`: every request gets 401.
+     */
+    KNOWLEDGE_MCP_KEY: z
+      .string()
+      .optional()
+      .transform((v) => (v === '' ? undefined : v))
+      .pipe(z.string().min(32, 'KNOWLEDGE_MCP_KEY must be at least 32 characters').optional()),
+
+    /**
      * The Supabase auth subject that owns the knowledge base. It becomes the
      * first segment of every storage key, so it must be a safe key segment
      * (a Supabase user id, a UUID, always is).
@@ -156,6 +167,18 @@ const EnvSchema = z
         path: ['KNOWLEDGE_OWNER_KEY'],
         message: 'KNOWLEDGE_OWNER_KEY must differ from KNOWLEDGE_SERVICE_KEY',
       });
+    }
+
+    if (env.KNOWLEDGE_MCP_KEY !== undefined) {
+      for (const other of ['KNOWLEDGE_SERVICE_KEY', 'KNOWLEDGE_OWNER_KEY'] as const) {
+        if (env.KNOWLEDGE_MCP_KEY === env[other]) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['KNOWLEDGE_MCP_KEY'],
+            message: `KNOWLEDGE_MCP_KEY must differ from ${other}`,
+          });
+        }
+      }
     }
 
     let fileStore: FileStoreConfig | undefined;

@@ -188,12 +188,34 @@ export async function getPublishedView(
 
 export const isPdf = (document: DocumentRecord): boolean => document.mimeType === PDF_MIME;
 
+/** What `findPrimaryResumePdf` found: the bytes, nothing, or a file over `maxBytes`. */
+export type ResumePdfResult =
+  | { status: 'ok'; bytes: Uint8Array }
+  | { status: 'none' }
+  | { status: 'too-large'; sizeBytes: number };
+
+/**
+ * The primary resume's file when it is a PDF. With `maxBytes`, the stored size
+ * is checked before the file is fetched.
+ */
+export async function findPrimaryResumePdf(
+  deps: { repo: Pick<KnowledgeRepository, 'getPrimaryResume'>; files: FileStore },
+  ownerId: string,
+  maxBytes?: number,
+): Promise<ResumePdfResult> {
+  const resume = await deps.repo.getPrimaryResume(ownerId);
+  if (!resume || !isPdf(resume)) return { status: 'none' };
+  if (maxBytes !== undefined && resume.sizeBytes > maxBytes) {
+    return { status: 'too-large', sizeBytes: resume.sizeBytes };
+  }
+  return { status: 'ok', bytes: await deps.files.get(resume.storagePath) };
+}
+
 /** The primary resume's file, when it is a PDF; null otherwise. */
 export async function getPrimaryResumePdf(
   deps: { repo: Pick<KnowledgeRepository, 'getPrimaryResume'>; files: FileStore },
   ownerId: string,
 ): Promise<Uint8Array | null> {
-  const resume = await deps.repo.getPrimaryResume(ownerId);
-  if (!resume || !isPdf(resume)) return null;
-  return deps.files.get(resume.storagePath);
+  const found = await findPrimaryResumePdf(deps, ownerId);
+  return found.status === 'ok' ? found.bytes : null;
 }

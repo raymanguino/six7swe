@@ -65,6 +65,24 @@ describe('loadEnv', () => {
     );
   });
 
+  it('treats the MCP key as optional, but 32+ characters and distinct when set', () => {
+    const env = { ...base, EMBEDDER: 'hashing', FILE_STORE: 'local' };
+    expect(loadEnv(env).KNOWLEDGE_MCP_KEY).toBeUndefined();
+    expect(loadEnv({ ...env, KNOWLEDGE_MCP_KEY: '' }).KNOWLEDGE_MCP_KEY).toBeUndefined();
+    expect(loadEnv({ ...env, KNOWLEDGE_MCP_KEY: 'm'.repeat(32) }).KNOWLEDGE_MCP_KEY).toBe(
+      'm'.repeat(32),
+    );
+    expect(() => loadEnv({ ...env, KNOWLEDGE_MCP_KEY: 'short' })).toThrow(
+      /KNOWLEDGE_MCP_KEY must be at least 32 characters/,
+    );
+    expect(() => loadEnv({ ...env, KNOWLEDGE_MCP_KEY: base.KNOWLEDGE_OWNER_KEY })).toThrow(
+      /KNOWLEDGE_MCP_KEY must differ from KNOWLEDGE_OWNER_KEY/,
+    );
+    expect(() => loadEnv({ ...env, KNOWLEDGE_MCP_KEY: base.KNOWLEDGE_SERVICE_KEY })).toThrow(
+      /KNOWLEDGE_MCP_KEY must differ from KNOWLEDGE_SERVICE_KEY/,
+    );
+  });
+
   it('refuses the hashing embedder in production', () => {
     expect(() =>
       loadEnv({ ...base, NODE_ENV: 'production', EMBEDDER: 'hashing', FILE_STORE: 'local' }),

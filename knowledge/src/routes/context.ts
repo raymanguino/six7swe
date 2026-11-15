@@ -18,4 +18,6 @@ export interface KnowledgeContext extends KnowledgeDeps {
   evalRepo: EvalRepository;
   evalSet: EvalSet;
   evalRunner: EvalRunner;
+  /** Largest resume PDF the MCP adapter returns; its default applies when unset. */
+  mcpMaxPdfBytes?: number;
 }
