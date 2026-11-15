@@ -23,6 +23,7 @@ tests {
 
 docs {
   A job by its source and the source's own id. source_id accepts linkedin, li, indeed, glassdoor, company_website, other (400 otherwise).
+  Both values come from the first job of the listing above, so they always describe the same job: a source and an id from different jobs would not be found.
   404 until a job exists.
   Private: needs a signed-in user. With AUTH_DEV_BYPASS=true no token is needed (see api/README.md).
 }

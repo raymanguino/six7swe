@@ -12,9 +12,12 @@ get {
 
 script:post-response {
   if (res.status >= 200 && res.status < 300) {
-    const sourceJobId = res?.body?.jobs?.[0]?.sourceJobId;
-    if (sourceJobId !== undefined && sourceJobId !== null) {
-      bru.setVar("sourceJobId", sourceJobId);
+    const job = res?.body?.jobs?.[0];
+    if (job?.sourceJobId) {
+      // The source and the source id must come from the same job: a lookup
+      // that pairs one job id with another job source finds nothing.
+      bru.setVar("sourceJobId", job.sourceJobId);
+      bru.setVar("sourceId", String(job.sourceId ?? "linkedin").toLowerCase());
     }
   }
 }
