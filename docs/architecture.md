@@ -283,7 +283,21 @@ last batch has actually been scored and stored. Any failure marks the refresh
 Jobs are re-scored when their content hash changed, so an edited posting is not
 left with a stale score forever.
 
-Each job is scored against the owner's knowledge base: the published profile
+Knowledge-backed scoring is **owner-only**: it applies only to profiles whose
+user's `auth_id` is `OWNER_AUTH_ID`, decided from the profile's user row so
+background and CLI runs are gated the same way as requests. Every other
+profile is scored on its own fields (keywords, location, additional context)
+with `knowledge_version` null, its rescore answers 503 like an unconfigured
+service, and its match list and `GET /job-hunt/knowledge` carry no version,
+staleness or evidence (`{ configured: false }`). Job postings and profile
+notes are fenced in `<job_posting>` / `<profile_notes>` tags as untrusted data,
+and the matcher is told never to reproduce the Background section verbatim.
+
+Migration `0001_deep_ultimatum` adds `knowledge_version` and `evidence` and
+**irreversibly drops `profiles.resume`**: pasted resume text is deleted when
+it runs.
+
+For the owner, each job is scored against the knowledge base: the published profile
 summary plus the top-k chunks retrieved with the job description as the query
 (`services/jobHunt/profileContext.ts`). The match row records the corpus
 version the chunks came from (`profile_jobs.knowledge_version`) and the

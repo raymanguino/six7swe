@@ -58,7 +58,7 @@ function buildService(stubs: Stubs) {
       newProfileRefreshStatus: stubs.newProfileRefreshStatus,
       updateRefreshStatus: async () => true,
     } as never,
-    knowledge: null,
+    knowledge: { source: null, ownerAuthId: null },
     logger,
   });
 }

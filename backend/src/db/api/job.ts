@@ -1,4 +1,4 @@
-import { eq, and, sql, asc, isNull } from 'drizzle-orm';
+import { eq, and, sql, asc, isNull, inArray } from 'drizzle-orm';
 import { db } from '../index';
 import { jobs, type Job, type JobSource } from '../schema/jobHunt';
 import { hashData } from '../../util';
@@ -8,6 +8,7 @@ export interface JobService {
   getJobById(id: number): Promise<Job | null>;
   getJobBySourceId(sourceId: JobSource, sourceJobId: string): Promise<Job | null>;
   bulkInsertJobs(items: JobInput[]): Promise<Job[]>;
+  getJobsByIds(ids: readonly number[]): Promise<Job[]>;
 }
 
 export interface JobFilter {
@@ -56,6 +57,16 @@ export async function getJobBySourceId(
 export async function getJobById(id: number): Promise<Job | null> {
   const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
   return job ?? null;
+}
+
+/** The job rows with these ids, in id order. Ids with no row are skipped. */
+export async function getJobsByIds(ids: readonly number[]): Promise<Job[]> {
+  if (ids.length === 0) return [];
+  return await db
+    .select()
+    .from(jobs)
+    .where(inArray(jobs.id, [...ids]))
+    .orderBy(asc(jobs.id));
 }
 
 export async function bulkInsertJobs(items: JobInput[]): Promise<Job[]> {

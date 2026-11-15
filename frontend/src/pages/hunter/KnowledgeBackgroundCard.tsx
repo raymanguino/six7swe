@@ -4,7 +4,7 @@ import { apiRequest } from '../../utils/api';
 import type { KnowledgeStatus } from './types';
 
 function describe(status: KnowledgeStatus): string {
-  if (!status.configured) return 'not configured; matches are scored on this profile alone';
+  if (!status.configured) return 'not available; matches are scored on this profile alone';
   if (status.documentCount === null) return 'connected';
   const docs = `${status.documentCount} ${status.documentCount === 1 ? 'doc' : 'docs'}`;
   if (!status.updatedAt) return docs;

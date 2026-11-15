@@ -10,6 +10,24 @@ import type { Job, MatchEvidence, Profile } from '../../db/schema/jobHunt';
  * retrieved with the job description as the query.
  */
 
+/**
+ * Text a user typed or a job board served is data, never instructions. It is
+ * fenced in these tags, and the matcher's system prompt says so
+ * (`services/ai/prompts/jobMatch.ts`).
+ */
+export const PROFILE_NOTES_TAG = 'profile_notes';
+export const JOB_POSTING_TAG = 'job_posting';
+
+/**
+ * Wraps untrusted text in `<tag>` ... `</tag>`. A tag of the same name inside
+ * the text is defused first (`<` becomes `[`), so the text cannot close the
+ * fence early and carry on as if it were outside it.
+ */
+export function untrusted(tag: string, text: string): string {
+  const defused = text.replace(new RegExp(`<(\\s*/?\\s*${tag})`, 'gi'), '[$1');
+  return `<${tag}>\n${defused}\n</${tag}>`;
+}
+
 export interface CandidateBackground {
   /** The published profile summary; null when none is published. */
   profileSummary: string | null;
@@ -27,7 +45,7 @@ export function buildSearchProfileContext(
   ];
 
   if (profile.additionalContext) {
-    lines.push(`- Additional Context: ${profile.additionalContext}`);
+    lines.push('- Additional Context:', untrusted(PROFILE_NOTES_TAG, profile.additionalContext));
   }
 
   if (background.profileSummary) {
@@ -65,15 +83,21 @@ export type JobForMatching = Pick<
   'position' | 'company' | 'location' | 'description' | 'link'
 >;
 
-/** Renders a stored job row as the description text the matcher reads. */
+/**
+ * Renders a stored job row as the description text the matcher reads. Every
+ * field is scraped from the posting, so the whole block is untrusted data.
+ */
 export function buildJobDescription(job: JobForMatching): string {
-  return [
-    `- Title: ${job.position}`,
-    `- Company: ${job.company}`,
-    `- Location: ${job.location ?? 'Not specified'}`,
-    `- Description: ${job.description || 'No description provided'}`,
-    `- Link: ${job.link}`,
-  ].join('\n');
+  return untrusted(
+    JOB_POSTING_TAG,
+    [
+      `- Title: ${job.position}`,
+      `- Company: ${job.company}`,
+      `- Location: ${job.location ?? 'Not specified'}`,
+      `- Description: ${job.description || 'No description provided'}`,
+      `- Link: ${job.link}`,
+    ].join('\n'),
+  );
 }
 
 /** The text used to retrieve background for a job: what the role is and asks for. */

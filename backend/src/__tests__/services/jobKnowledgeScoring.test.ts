@@ -6,7 +6,7 @@ import {
   KnowledgeNotConfiguredError,
 } from '../../services/jobHunt/jobRefreshService';
 import type { JobKnowledgeSource } from '../../services/jobHunt/knowledgeSource';
-import type { InsertProfileJobInput, ProfileJobWithDetails } from '../../db/api/profileJob';
+import type { InsertProfileJobInput, MatchKey } from '../../db/api/profileJob';
 import type { JobInput } from '../../db/api/job';
 import type { Job, Profile } from '../../db/schema/jobHunt';
 import { matchJob } from '../../services/ai/jobMatch';
@@ -71,42 +71,22 @@ function makeJob(id: number, hash: string): Job {
   };
 }
 
+/** An existing match: the job row (with its current hash) and the match's scoring key. */
+interface ExistingMatch {
+  job: Job;
+  key: MatchKey;
+}
+
 /** `scoredHash` is the hash the match was scored at; the job row holds its current one. */
 function makeMatch(
   job: Job,
   knowledgeVersion: number | null,
   scoredHash: string = job.hash,
-): ProfileJobWithDetails {
-  return {
-    id: job.id * 10,
-    profileId: profile.id,
-    jobId: job.id,
-    jobHash: scoredHash,
-    score: 50,
-    band: 'MEDIUM',
-    explanation: null,
-    firstSkillMatch: null,
-    secondSkillMatch: null,
-    thirdSkillMatch: null,
-    summary: null,
-    knowledgeVersion,
-    evidence: [],
-    createdAt: new Date(),
-    updatedAt: new Date(),
-    job: {
-      id: job.id,
-      sourceId: job.sourceId,
-      sourceJobId: job.sourceJobId,
-      link: job.link,
-      company: job.company,
-      position: job.position,
-      description: job.description,
-      location: job.location,
-      datePosted: job.datePosted,
-      hash: job.hash,
-    },
-  };
+): ExistingMatch {
+  return { job, key: { jobId: job.id, jobHash: scoredHash, knowledgeVersion } };
 }
+
+const OWNER_SUB = 'owner-sub';
 
 function makeKnowledge(
   version: number,
@@ -152,35 +132,45 @@ function terminalStatus(failTerminalWrite: boolean): { update: jest.Mock; done: 
 function build(options: {
   knowledge: JobKnowledgeSource | null;
   fetched?: Job[];
-  existing?: ProfileJobWithDetails[];
+  existing?: ExistingMatch[];
   failTerminalWrite?: boolean;
+  /** The auth subject of the profile's user; the knowledge owner by default. */
+  profileAuthId?: string | null;
 }) {
   const status = terminalStatus(options.failTerminalWrite ?? false);
   const newProfileRefreshStatus = jest.fn(async () => ({ id: 42 }));
   const inserted: InsertProfileJobInput[] = [];
   const existing = options.existing ?? [];
+  const jobsById = new Map(existing.map((match) => [match.job.id, match.job]));
   const service = createJobRefreshService({
     jobFetchService: {
       runJobFetch: async (_keywords, _geo, onJobsFetched) => {
         await onJobsFetched((options.fetched ?? []) as unknown as JobInput[]);
       },
     },
-    jobService: { bulkInsertJobs: async () => options.fetched ?? [] } as never,
+    jobService: {
+      bulkInsertJobs: async () => options.fetched ?? [],
+      getJobsByIds: async (ids: number[]) =>
+        ids.map((id) => jobsById.get(id)).filter((job): job is Job => job !== undefined),
+    } as never,
     profileJobService: {
-      getProfileJobs: async () => existing,
-      getJobsForProfile: async () => existing,
+      getMatchKeysForProfile: async () => existing.map((match) => match.key),
       bulkInsertProfileJobs: async (rows: InsertProfileJobInput[]) => {
         inserted.push(...rows);
         return [];
       },
     } as never,
-    profileService: { getProfileById: async () => profile } as never,
+    profileService: {
+      getProfileById: async () => profile,
+      getProfileOwnerAuthId: async () =>
+        options.profileAuthId === undefined ? OWNER_SUB : options.profileAuthId,
+    } as never,
     refreshStatusService: {
       getActiveRefreshForProfile: async () => null,
       newProfileRefreshStatus,
       updateRefreshStatus: status.update,
     } as never,
-    knowledge: options.knowledge,
+    knowledge: { source: options.knowledge, ownerAuthId: OWNER_SUB },
     logger,
   });
   return { service, inserted, done: status.done, newProfileRefreshStatus };
@@ -285,6 +275,63 @@ describe('refresh scoring against the knowledge base', () => {
     expect(matchJobMock.mock.calls[0][0].profileContext).toContain(
       'No background documents are available.',
     );
+  });
+});
+
+describe('owner-only knowledge', () => {
+  it.each([
+    ['another user', 'someone-else'],
+    ['a user with no auth subject', null],
+  ])('scores %s on profile fields alone, with no knowledge calls', async (_label, authId) => {
+    const knowledge = makeKnowledge(9);
+    const { service, inserted, done } = build({
+      knowledge,
+      fetched: [makeJob(1, 'h1')],
+      // A stale-looking key must not trigger a rescore for a non-owner either.
+      existing: [makeMatch(makeJob(1, 'h1'), 3)],
+      profileAuthId: authId,
+    });
+
+    await service.start({ profileId: 1 });
+    expect(await done).toMatch(/^COMPLETED/);
+
+    expect(knowledge.getVersion).not.toHaveBeenCalled();
+    expect(knowledge.retrieve).not.toHaveBeenCalled();
+    expect(knowledge.getProfileSummary).not.toHaveBeenCalled();
+    expect(inserted).toEqual([]);
+  });
+
+  it('stores no knowledge version or evidence for a non-owner new job', async () => {
+    const knowledge = makeKnowledge(9);
+    const { service, inserted, done } = build({
+      knowledge,
+      fetched: [makeJob(1, 'h1')],
+      profileAuthId: 'someone-else',
+    });
+
+    await service.start({ profileId: 1 });
+    await done;
+
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0]).toMatchObject({ knowledge_version: null, evidence: [] });
+    const context = matchJobMock.mock.calls[0][0].profileContext;
+    expect(context).not.toContain('Builds platforms');
+    expect(context).toContain('No background documents are available.');
+  });
+
+  it('refuses a non-owner rescore like an unconfigured service', async () => {
+    const knowledge = makeKnowledge(9);
+    const { service, newProfileRefreshStatus } = build({
+      knowledge,
+      existing: [makeMatch(makeJob(1, 'h1'), 3)],
+      profileAuthId: 'someone-else',
+    });
+
+    await expect(service.rescore({ profileId: 1 })).rejects.toBeInstanceOf(
+      KnowledgeNotConfiguredError,
+    );
+    expect(knowledge.getVersion).not.toHaveBeenCalled();
+    expect(newProfileRefreshStatus).not.toHaveBeenCalled();
   });
 });
 

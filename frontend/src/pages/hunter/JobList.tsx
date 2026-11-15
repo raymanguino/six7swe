@@ -14,7 +14,6 @@ interface MatchWithDetails extends ProfileJob {
     link: string;
     company: string;
     position: string;
-    description: string;
     location: string | null;
     datePosted: string | null;
   };
@@ -240,7 +239,7 @@ export default function JobList({ profileId }: { profileId: number }) {
   return (
     <div>
       <StaleBanner
-        staleCount={knowledge?.staleCount ?? 0}
+        staleCount={knowledge?.configured ? knowledge.staleCount : 0}
         running={rescore.running}
         error={rescore.error ?? reloadError}
         onRescore={() => void rescore.start()}

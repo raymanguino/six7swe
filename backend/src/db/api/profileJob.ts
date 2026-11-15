@@ -13,6 +13,27 @@ export interface ProfileJobService {
   getProfileJobById(profileJobId: number): Promise<ProfileJob | null>;
   bulkInsertProfileJobs(items: InsertProfileJobInput[]): Promise<ProfileJob[]>;
   getJobsForProfile(profileId: number): Promise<ProfileJobWithDetails[]>;
+  getMatchKeysForProfile(profileId: number): Promise<MatchKey[]>;
+}
+
+/** What deciding whether a match needs (re)scoring reads, and nothing more. */
+export interface MatchKey {
+  jobId: number;
+  jobHash: string;
+  knowledgeVersion: number | null;
+}
+
+/** The scoring keys of a profile's matches. */
+export async function getMatchKeysForProfile(profileId: number): Promise<MatchKey[]> {
+  return await db
+    .select({
+      jobId: profileJobs.jobId,
+      jobHash: profileJobs.jobHash,
+      knowledgeVersion: profileJobs.knowledgeVersion,
+    })
+    .from(profileJobs)
+    .where(eq(profileJobs.profileId, profileId))
+    .orderBy(asc(profileJobs.id));
 }
 
 export interface InsertProfileJobInput {
@@ -104,11 +125,8 @@ export interface ProfileJobWithDetails extends ProfileJob {
     link: string;
     company: string;
     position: string;
-    description: string;
     location: string | null;
     datePosted: string | null;
-    /** The posting's current content hash (the match's `jobHash` is the one it was scored at). */
-    hash: string;
   };
 }
 
@@ -116,7 +134,8 @@ export interface ProfileJobWithDetails extends ProfileJob {
  * Matches for a profile, with the job posting they refer to.
  *
  * The job details are joined in because a match row on its own says nothing
- * about which job was scored.
+ * about which job was scored. Only what the match list shows is joined: the
+ * posting's full description stays out of the listing.
  */
 export async function getJobsForProfile(
   profileId: number
@@ -145,10 +164,8 @@ export async function getJobsForProfile(
         link: jobs.link,
         company: jobs.company,
         position: jobs.position,
-        description: jobs.description,
         location: jobs.location,
         datePosted: jobs.datePosted,
-        hash: jobs.hash,
       },
     })
     .from(profileJobs)

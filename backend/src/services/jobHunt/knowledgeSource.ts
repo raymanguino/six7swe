@@ -4,6 +4,7 @@ import { getKnowledgeRetrievalConfig } from '../../config/knowledgeRetrieval';
 import type { KnowledgeDocumentSource } from '../../domain/chatEval';
 import { createHttpRetrievalClient, type RetrievalClient } from '../knowledgeRetrieval';
 import { createKnowledgeDocumentClient } from '../knowledge/documentsClient';
+import { isKnowledgeOwner } from '../knowledge/ownerGate';
 import {
   createKnowledgeProfileClient,
   type KnowledgeProfileClient,
@@ -88,6 +89,43 @@ export function createJobKnowledgeSource(clients: {
       );
       return { documentCount: ready.length, updatedAt };
     },
+  };
+}
+
+/**
+ * The knowledge base is the owner's private background, so only the owner's
+ * own profiles are scored against it. `source` is null when the service is
+ * not configured; `ownerAuthId` is `OWNER_AUTH_ID` (null: nobody is the owner).
+ */
+export interface JobKnowledgeAccess {
+  source: JobKnowledgeSource | null;
+  ownerAuthId: string | null;
+}
+
+/**
+ * The knowledge source for a profile whose user has this auth subject, or
+ * null when that user is not the knowledge owner. Decided from the profile's
+ * user row, not the request, so background and CLI runs are gated the same
+ * way as requests.
+ */
+export function knowledgeForAuthId(
+  access: JobKnowledgeAccess,
+  authId: string | null,
+): JobKnowledgeSource | null {
+  if (!access.source) return null;
+  // isKnowledgeOwner reads only the subject; the other fields are placeholders.
+  const owner = isKnowledgeOwner(
+    { id: 0, email: null, authId: authId ?? undefined },
+    access.ownerAuthId,
+  );
+  return owner ? access.source : null;
+}
+
+/** The process-wide access built from the environment. */
+export function getDefaultJobKnowledgeAccess(): JobKnowledgeAccess {
+  return {
+    source: getDefaultJobKnowledgeSource(),
+    ownerAuthId: loadKnowledgeConfig().ownerAuthId,
   };
 }
 

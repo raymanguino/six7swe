@@ -28,7 +28,11 @@ import {
   evidenceFromChunks,
   type JobForMatching,
 } from './profileContext';
-import type { JobKnowledgeSource } from './knowledgeSource';
+import {
+  knowledgeForAuthId,
+  type JobKnowledgeAccess,
+  type JobKnowledgeSource,
+} from './knowledgeSource';
 
 /** How many jobs are scored at the same time. */
 const DEFAULT_MATCH_CONCURRENCY = 3;
@@ -95,16 +99,20 @@ export interface JobRefreshServiceOptions {
   profileService: ProfileService;
   refreshStatusService: RefreshStatusService;
   /**
-   * The owner's background. Null when the knowledge service is not
-   * configured: matches are then scored on the profile's fields alone.
+   * The owner's background and who the owner is. Only profiles whose user is
+   * the knowledge owner are scored against it; every other profile, and
+   * every profile when the service is not configured, is scored on its own
+   * fields alone.
    */
-  knowledge: JobKnowledgeSource | null;
+  knowledge: JobKnowledgeAccess;
   logger: FastifyBaseLogger;
   matchConcurrency?: number;
 }
 
 /** What every job in a run is scored against. */
 interface RunBackground {
+  /** The knowledge source this profile may use; null when it may use none. */
+  source: JobKnowledgeSource | null;
   /** The corpus version when the run started; null without the knowledge service. */
   version: number | null;
   profileSummary: string | null;
@@ -159,6 +167,17 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
     return profile;
   }
 
+  /**
+   * The knowledge source a profile may be scored against: only the knowledge
+   * owner's own profiles get one. Decided from the profile's user row, since
+   * background and CLI runs have no request to read it from.
+   */
+  async function knowledgeFor(profile: Profile): Promise<JobKnowledgeSource | null> {
+    if (!knowledge.source) return null;
+    const authId = await profileService.getProfileOwnerAuthId(profile.id);
+    return knowledgeForAuthId(knowledge, authId);
+  }
+
   async function start(input: { profileId: number }): Promise<{ refreshStatusId: number }> {
     const { profileId } = input;
     const profile = await loadProfile(profileId);
@@ -185,23 +204,26 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
     profileId: number;
   }): Promise<{ refreshStatusId: number | null }> {
     const { profileId } = input;
-    if (!knowledge) {
+    const profile = await loadProfile(profileId);
+    // A profile that may not use the knowledge base gets the same answer as
+    // when the service is not configured: there is nothing to rescore against.
+    const source = await knowledgeFor(profile);
+    if (!source) {
       throw new KnowledgeNotConfiguredError();
     }
-    const profile = await loadProfile(profileId);
 
     // Nothing stale means nothing to do, so no refresh row is claimed. The
     // run checks again, since the corpus may change before it starts.
-    const version = await knowledge.getVersion();
-    const matches = await profileJobService.getJobsForProfile(profileId);
-    if (!matches.some((match) => isScoreStale(match.knowledgeVersion, version))) {
+    const version = await source.getVersion();
+    const keys = await profileJobService.getMatchKeysForProfile(profileId);
+    if (!keys.some((key) => isScoreStale(key.knowledgeVersion, version))) {
       return { refreshStatusId: null };
     }
 
     const refreshId = await claimRefresh(profileId);
 
     // Like a refresh, failures land on the row; the catch is a last resort.
-    runRescore(refreshId, profile).catch((error: unknown) => {
+    runRescore(refreshId, profile, source).catch((error: unknown) => {
       logger.error({ err: error, refreshId, profileId }, 'Job rescore crashed');
     });
 
@@ -271,17 +293,17 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
    * scores are stale, so the run fails. The profile summary is optional, but
    * a failure to read it marks the run as degraded.
    */
-  async function loadBackground(): Promise<RunBackground> {
-    if (!knowledge) {
-      return { version: null, profileSummary: null, degraded: false };
+  async function loadBackground(source: JobKnowledgeSource | null): Promise<RunBackground> {
+    if (!source) {
+      return { source: null, version: null, profileSummary: null, degraded: false };
     }
-    const version = await knowledge.getVersion();
+    const version = await source.getVersion();
     try {
-      const profileSummary = await knowledge.getProfileSummary();
-      return { version, profileSummary, degraded: false };
+      const profileSummary = await source.getProfileSummary();
+      return { source, version, profileSummary, degraded: false };
     } catch (error) {
       logger.warn({ err: error }, 'Could not read the published profile; scoring without it');
-      return { version, profileSummary: null, degraded: true };
+      return { source, version, profileSummary: null, degraded: true };
     }
   }
 
@@ -299,13 +321,14 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
 
       await transition({ type: 'STARTED' }, 'Started job fetch.');
 
-      if (!knowledge) {
-        logger.warn(
+      const source = await knowledgeFor(profile);
+      if (!source) {
+        logger.info(
           { refreshId, profileId: profile.id },
-          'Knowledge service not configured; scoring without background',
+          'No knowledge base for this profile; scoring on its fields alone',
         );
       }
-      const background = await loadBackground();
+      const background = await loadBackground(source);
 
       await jobFetchService.runJobFetch(
         query.keywords,
@@ -331,26 +354,30 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
     }
   }
 
-  async function runRescore(refreshId: number, profile: Profile): Promise<void> {
+  async function runRescore(
+    refreshId: number,
+    profile: Profile,
+    source: JobKnowledgeSource,
+  ): Promise<void> {
     const transition = makeTransition(refreshId);
     try {
       await transition({ type: 'STARTED' }, 'Checking for stale matches.');
-      const background = await loadBackground();
+      const background = await loadBackground(source);
 
-      const matches = await profileJobService.getJobsForProfile(profile.id);
-      const stale = matches.filter((match) =>
-        isScoreStale(match.knowledgeVersion, background.version),
+      const keys = await profileJobService.getMatchKeysForProfile(profile.id);
+      const staleIds = keys
+        .filter((key) => isScoreStale(key.knowledgeVersion, background.version))
+        .map((key) => key.jobId);
+
+      await transition(
+        { type: 'FILTERING_STARTED' },
+        `Rescoring ${staleIds.length} stale match(es).`,
       );
 
-      await transition({ type: 'FILTERING_STARTED' }, `Rescoring ${stale.length} stale match(es).`);
-
-      // `match.job` carries the posting's current hash, so the row records
-      // the hash of the text actually scored.
-      const result = await scoreJobs(
-        profile,
-        background,
-        stale.map((match) => ({ ...match.job, id: match.jobId })),
-      );
+      // The current job rows: the posting text to score, and the hash the
+      // row records for that text.
+      const staleJobs = await jobService.getJobsByIds(staleIds);
+      const result = await scoreJobs(profile, background, staleJobs);
 
       if (result.scored === 0 && result.failed > 0) {
         throw new Error(
@@ -373,21 +400,15 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
     background: RunBackground,
     fetchedJobs: Array<JobInput>,
   ): Promise<ScoredBatch> {
-    const savedJobs = await jobService.bulkInsertJobs(fetchedJobs);
-
-    const existingMatches = await profileJobService.getProfileJobs(profile.id);
+    // Independent: the keys of this profile's matches do not depend on the insert.
+    const [savedJobs, matchKeys] = await Promise.all([
+      jobService.bulkInsertJobs(fetchedJobs),
+      profileJobService.getMatchKeysForProfile(profile.id),
+    ]);
 
     // Jobs already scored for this profile are skipped unless their content
     // changed or their score is stale against the current knowledge version.
-    const toScore = selectJobsToScore(
-      savedJobs,
-      existingMatches.map((match) => ({
-        jobId: match.jobId,
-        jobHash: match.jobHash,
-        knowledgeVersion: match.knowledgeVersion,
-      })),
-      background.version,
-    );
+    const toScore = selectJobsToScore(savedJobs, matchKeys, background.version);
 
     return scoreJobs(profile, background, toScore);
   }
@@ -409,8 +430,8 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
         try {
           // A job whose background cannot be retrieved fails on its own,
           // rather than being scored as if the candidate had none.
-          const retrieved = knowledge
-            ? await knowledge.retrieve(buildJobRetrievalQuery(job))
+          const retrieved = background.source
+            ? await background.source.retrieve(buildJobRetrievalQuery(job))
             : null;
           const chunks = retrieved?.chunks ?? [];
 

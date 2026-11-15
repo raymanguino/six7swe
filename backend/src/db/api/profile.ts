@@ -1,6 +1,6 @@
 import { eq, and, asc, sql } from 'drizzle-orm';
 import { db } from '../index';
-import { profiles, type Profile } from '../schema/jobHunt';
+import { profiles, users, type Profile } from '../schema/jobHunt';
 
 export interface ProfileService {
   getAllProfiles(): Promise<Profile[]>;
@@ -11,6 +11,22 @@ export interface ProfileService {
   createProfile(input: CreateProfileInput): Promise<Profile>;
   updateProfile(id: number, userId: number, input: UpdateProfileInput): Promise<Profile | null>;
   deleteProfile(id: number, userId: number): Promise<boolean>;
+  getProfileOwnerAuthId(profileId: number): Promise<string | null>;
+}
+
+/**
+ * The auth subject (`users.auth_id`) of the user who owns the profile; null
+ * when the profile does not exist or its user has none. Background runs have
+ * no request, so owner-only features are decided from this.
+ */
+export async function getProfileOwnerAuthId(profileId: number): Promise<string | null> {
+  const [row] = await db
+    .select({ authId: users.authId })
+    .from(profiles)
+    .innerJoin(users, eq(profiles.userId, users.id))
+    .where(eq(profiles.id, profileId))
+    .limit(1);
+  return row?.authId ?? null;
 }
 
 export interface CreateProfileInput {

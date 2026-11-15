@@ -378,6 +378,7 @@ Tables are split by product: `src/db/schema/portfolio.ts` and
 - `keywords` - Text array
 - `location` - LinkedIn numeric region id (geoId), not a city name
 - `additional_context` - Additional profile information (the candidate's background comes from the knowledge base, not from the profile)
+- The old `resume` column was dropped by migration `0001_deep_ultimatum`. **The drop is irreversible**: resume text pasted into a profile is deleted when the migration runs and cannot be restored from the database afterwards. Copy any you want to keep before migrating.
 - `created_at` / `updated_at` - Timestamps
 
 ### `jobs`
