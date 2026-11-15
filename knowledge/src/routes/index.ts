@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify';
-import { OWNER_ROUTE, PUBLIC_ROUTE, SERVICE_ROUTE } from '../plugins/serviceAuth.js';
+import { MCP_ROUTE, OWNER_ROUTE, PUBLIC_ROUTE, SERVICE_ROUTE } from '../plugins/serviceAuth.js';
 import type { KnowledgeContext } from './context.js';
 import { documentHandlers } from './handlers/documentHandlers.js';
 import { evalHandlers } from './handlers/evalHandlers.js';
+import { mcpHandlers } from './handlers/mcpHandlers.js';
 import { profileHandlers } from './handlers/profileHandlers.js';
 import { retrievalHandlers } from './handlers/retrievalHandlers.js';
 
@@ -18,6 +19,7 @@ export function registerRoutes(app: FastifyInstance, ctx: KnowledgeContext): voi
   const retrieval = retrievalHandlers(ctx);
   const profile = profileHandlers(ctx);
   const evaluation = evalHandlers(ctx);
+  const mcp = mcpHandlers(ctx);
 
   app.get('/health', PUBLIC_ROUTE, async () => ({ status: 'ok' }));
 
@@ -53,4 +55,9 @@ export function registerRoutes(app: FastifyInstance, ctx: KnowledgeContext): voi
   app.post('/profile/draft', OWNER_ROUTE, profile.redraft);
   app.delete('/profile/draft', OWNER_ROUTE, profile.discardDraft);
   app.post('/profile/publish', OWNER_ROUTE, profile.publish);
+
+  // MCP adapter for personal Claude clients (#89): the owner key as a bearer token.
+  app.post('/mcp', MCP_ROUTE, mcp.handle);
+  app.get('/mcp', MCP_ROUTE, mcp.notAllowed);
+  app.delete('/mcp', MCP_ROUTE, mcp.notAllowed);
 }

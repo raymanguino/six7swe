@@ -11,6 +11,10 @@ import { isSafeKeySegment } from '../lib/storageKeys.js';
  * - `owner`: the knowledge base's owner, through the backend's owner proxy,
  *   with the owner key.
  *
+ * - `mcp`: personal Claude clients through the MCP adapter (#89). It accepts
+ *   the owner key, but as `Authorization: Bearer` (what MCP clients send)
+ *   and never alongside a query string.
+ *
  * Each mode accepts only its own key: the service key gets a 401 on owner
  * routes and the owner key gets a 401 on service routes. Both keys travel in
  * the same `x-knowledge-key` header. The route, not the header, decides
@@ -26,7 +30,7 @@ import { isSafeKeySegment } from '../lib/storageKeys.js';
  * already holds the key. A future caller with its own credential (the MCP
  * adapter, #89) can replace the `owner` entry through `authenticators`.
  */
-export type RouteAccess = 'public' | 'service' | 'owner';
+export type RouteAccess = 'public' | 'service' | 'owner' | 'mcp';
 
 declare module 'fastify' {
   interface FastifyContextConfig {
@@ -42,6 +46,7 @@ declare module 'fastify' {
 export const PUBLIC_ROUTE = { config: { access: 'public' } } as const;
 export const SERVICE_ROUTE = { config: { access: 'service' } } as const;
 export const OWNER_ROUTE = { config: { access: 'owner' } } as const;
+export const MCP_ROUTE = { config: { access: 'mcp' } } as const;
 
 /** Compares in constant time; hashing first makes the lengths equal. */
 export function keysMatch(provided: string, expected: string): boolean {
@@ -85,6 +90,22 @@ export function keyAuthenticator(key: string, ownerId: string): Authenticator {
   };
 }
 
+/**
+ * For MCP clients: the owner key as `Authorization: Bearer <key>`. A request
+ * with any query string is rejected outright, so a key passed as `?key=...`
+ * (which would end up in access logs and history) never works, even beside a
+ * valid header.
+ */
+export function bearerAuthenticator(key: string, ownerId: string): Authenticator {
+  return (req) => {
+    if (req.url.includes('?')) return null;
+    const header = req.headers.authorization;
+    if (typeof header !== 'string') return null;
+    const token = /^Bearer (\S+)$/i.exec(header)?.[1];
+    return token !== undefined && keysMatch(token, key) ? ownerId : null;
+  };
+}
+
 export interface ServiceAuthOptions {
   /** Opens `service` routes only. */
   serviceKey: string;
@@ -106,6 +127,7 @@ const serviceAuth: FastifyPluginAsync<ServiceAuthOptions> = async (app, options)
     service: keyAuthenticator(options.serviceKey, options.ownerId),
     // The backend checks the owner's JWT, then forwards with this key.
     owner: keyAuthenticator(options.ownerKey, options.ownerId),
+    mcp: bearerAuthenticator(options.ownerKey, options.ownerId),
     ...options.authenticators,
   };
 

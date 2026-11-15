@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@fastify/multipart": "^10.1.8",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@six7swe/knowledge-types": "workspace:*",
     "@supabase/supabase-js": "^2.119.0",
     "drizzle-orm": "^0.45.4",
