@@ -17,6 +17,7 @@ import type { Job, MatchEvidence, Profile } from '../../db/schema/jobHunt';
  */
 export const PROFILE_NOTES_TAG = 'profile_notes';
 export const JOB_POSTING_TAG = 'job_posting';
+export const BACKGROUND_TAG = 'background';
 
 /**
  * Wraps untrusted text in `<tag>` ... `</tag>`. A tag of the same name inside
@@ -24,7 +25,8 @@ export const JOB_POSTING_TAG = 'job_posting';
  * fence early and carry on as if it were outside it.
  */
 export function untrusted(tag: string, text: string): string {
-  const defused = text.replace(new RegExp(`<(\\s*/?\\s*${tag})`, 'gi'), '[$1');
+  const normalized = text.normalize('NFKC').replace(/[\u200B-\u200F\u2060\uFEFF]/g, '');
+  const defused = normalized.replace(new RegExp(`<(\\s*/?\\s*${tag})`, 'gi'), '[$1');
   return `<${tag}>\n${defused}\n</${tag}>`;
 }
 
@@ -48,19 +50,21 @@ export function buildSearchProfileContext(
     lines.push('- Additional Context:', untrusted(PROFILE_NOTES_TAG, profile.additionalContext));
   }
 
+  const backgroundLines: string[] = [];
   if (background.profileSummary) {
-    lines.push('', 'Profile Summary:', background.profileSummary);
+    backgroundLines.push('Profile Summary:', background.profileSummary, '');
   }
-
-  lines.push('', "Background (excerpts from the candidate's documents, most relevant first):");
+  backgroundLines.push("Excerpts from the candidate's documents, most relevant first:");
   if (background.chunks.length === 0) {
-    lines.push('No background documents are available.');
+    backgroundLines.push('No background documents are available.');
   } else {
     background.chunks.forEach((chunk, index) => {
       const heading = chunk.heading ? ` - ${chunk.heading}` : '';
-      lines.push(`[${index + 1}] ${chunk.filename}${heading}`, chunk.content.trim(), '');
+      backgroundLines.push(`[${index + 1}] ${chunk.filename}${heading}`, chunk.content.trim(), '');
     });
   }
+
+  lines.push('', 'Background:', untrusted(BACKGROUND_TAG, backgroundLines.join('\n').trimEnd()));
 
   return lines.join('\n').trimEnd();
 }

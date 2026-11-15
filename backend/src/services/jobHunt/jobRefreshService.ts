@@ -92,6 +92,17 @@ export class KnowledgeNotConfiguredError extends Error {
   }
 }
 
+/** Thrown when a rescore is asked for but the configured knowledge service does not answer. */
+export class KnowledgeUnavailableError extends Error {
+  readonly cause: unknown;
+
+  constructor(options?: { cause?: unknown }) {
+    super('The knowledge service did not answer, so the rescore could not start');
+    this.cause = options?.cause;
+    this.name = 'KnowledgeUnavailableError';
+  }
+}
+
 export interface JobRefreshServiceOptions {
   jobFetchService: JobFetchService;
   jobService: JobService;
@@ -214,7 +225,12 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
 
     // Nothing stale means nothing to do, so no refresh row is claimed. The
     // run checks again, since the corpus may change before it starts.
-    const version = await source.getVersion();
+    let version: number;
+    try {
+      version = await source.getVersion();
+    } catch (error) {
+      throw new KnowledgeUnavailableError({ cause: error });
+    }
     const keys = await profileJobService.getMatchKeysForProfile(profileId);
     if (!keys.some((key) => isScoreStale(key.knowledgeVersion, version))) {
       return { refreshStatusId: null };

@@ -9,6 +9,7 @@ import {
   RefreshInProgressError,
   InvalidProfileLocationError,
   KnowledgeNotConfiguredError,
+  KnowledgeUnavailableError,
 } from '../../services/jobHunt/jobRefreshService';
 import {
   knowledgeForAuthId,
@@ -166,6 +167,12 @@ export async function runRescoreForProfile(
     }
     if (error instanceof KnowledgeNotConfiguredError) {
       return reply.code(503).send({ error: 'The knowledge base is not available.' });
+    }
+    if (error instanceof KnowledgeUnavailableError) {
+      request.log.warn({ err: error }, 'The knowledge service is unreachable for a rescore');
+      return reply
+        .code(503)
+        .send({ error: 'The knowledge service is unavailable. Try again shortly.' });
     }
     request.log.error({ err: error }, 'Error starting a rescore');
     return reply.code(500).send({ error: 'Failed to start the rescore.' });

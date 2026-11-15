@@ -4,6 +4,7 @@ import type { RetrieveResponse, RetrievedChunkDto } from '@six7swe/knowledge-typ
 import {
   createJobRefreshService,
   KnowledgeNotConfiguredError,
+  KnowledgeUnavailableError,
 } from '../../services/jobHunt/jobRefreshService';
 import type { JobKnowledgeSource } from '../../services/jobHunt/knowledgeSource';
 import type { InsertProfileJobInput, MatchKey } from '../../db/api/profileJob';
@@ -448,6 +449,20 @@ describe('rescore', () => {
       'FAILED: Rescore failed: none of the 2 stale match(es) could be evaluated.',
     );
     expect(inserted).toEqual([]);
+  });
+
+  it('is refused with a distinct error when the knowledge service does not answer', async () => {
+    const knowledge = makeKnowledge(9);
+    knowledge.getVersion.mockRejectedValue(new Error('connect ECONNREFUSED'));
+    const { service, newProfileRefreshStatus } = build({
+      knowledge,
+      existing: [makeMatch(makeJob(1, 'h1'), 3)],
+    });
+
+    await expect(service.rescore({ profileId: 1 })).rejects.toBeInstanceOf(
+      KnowledgeUnavailableError,
+    );
+    expect(newProfileRefreshStatus).not.toHaveBeenCalled();
   });
 
   it('is refused when the knowledge service is not configured', async () => {
