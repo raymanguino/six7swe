@@ -1,7 +1,11 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { DEFAULT_RETRIEVE_K, type EvalRunTrigger } from '../../contract.js';
-import type { EvalRepository, EvalResultRecord } from '../../db/api/evalRepository.js';
-import type { KnowledgeRepository } from '../../db/api/repository.js';
+import type {
+  EvalQuestionWithEmbedding,
+  EvalRepository,
+  EvalResultRecord,
+} from '../../db/api/evalRepository.js';
+import type { KnowledgeRepository, RetrievedChunk } from '../../db/api/repository.js';
 import { SerialQueue } from '../ingestion/queue.js';
 import { ModelError } from '../llm/minimax.js';
 import type { EvalAnswerer } from './answerer.js';
@@ -17,7 +21,8 @@ import type { EvalSet } from './evalSet.js';
  * one at a time, at most one waiting per owner: a burst of uploads costs one
  * run at the end, at the version it then reads. A corpus-triggered run is
  * skipped when the newest completed run is already at the current version
- * (a failed first ingest, for one, does not change the corpus).
+ * (a failed first ingest, for one, does not change the corpus). Within a run,
+ * a few questions are worked on at once; results keep the questions' order.
  *
  * Not durable: a run cut off by a restart is marked failed on the next boot
  * (`abandonRunning`), and the next corpus change or the owner runs it again.
@@ -25,6 +30,10 @@ import type { EvalSet } from './evalSet.js';
 
 const RUN_FAILED = 'The eval run failed unexpectedly. Run it again.';
 export const RUN_INTERRUPTED = 'Interrupted by a restart. Run it again.';
+/** One answer may take this long; then the question records retrieval only. */
+export const DEFAULT_ANSWER_TIMEOUT_MS = 60_000;
+/** Questions worked on at once: enough to hide model latency, few enough for rate limits. */
+export const DEFAULT_RUN_CONCURRENCY = 3;
 
 export interface EvalRunnerDeps {
   evalRepo: EvalRepository;
@@ -34,6 +43,8 @@ export interface EvalRunnerDeps {
   log: FastifyBaseLogger;
   /** Chunks retrieved per question; the chat's default. */
   k?: number;
+  answerTimeoutMs?: number;
+  concurrency?: number;
 }
 
 export interface EvalRunner {
@@ -45,15 +56,40 @@ export interface EvalRunner {
   corpusChanged(ownerId: string): void;
   /** True while a run for the owner is waiting or in progress. */
   isRunning(ownerId: string): boolean;
-  /** Runs one now, outside the queue; tests and the queue's worker use it. */
-  run(ownerId: string, trigger: EvalRunTrigger): Promise<void>;
   idle(): Promise<void>;
   stop(): Promise<number>;
+}
+
+class AnswerTimeoutError extends Error {
+  constructor(ms: number) {
+    super(`The answer took longer than ${ms} ms`);
+    this.name = 'AnswerTimeoutError';
+  }
+}
+
+/** `run` over `items` with at most `limit` at once; results in the items' order. */
+async function mapBounded<T, R>(
+  items: readonly T[],
+  limit: number,
+  run: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    for (let i = next++; i < items.length; i = next++) {
+      const item = items[i] as T;
+      results[i] = await run(item);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
+  return results;
 }
 
 export function createEvalRunner(deps: EvalRunnerDeps): EvalRunner {
   const { evalRepo, repo, evalSet, answerer, log } = deps;
   const k = deps.k ?? DEFAULT_RETRIEVE_K;
+  const answerTimeoutMs = deps.answerTimeoutMs ?? DEFAULT_ANSWER_TIMEOUT_MS;
+  const concurrency = deps.concurrency ?? DEFAULT_RUN_CONCURRENCY;
 
   // The trigger of the run waiting for each owner. A manual request while a
   // corpus run waits upgrades it, so the owner's run is never skipped.
@@ -77,15 +113,42 @@ export function createEvalRunner(deps: EvalRunnerDeps): EvalRunner {
     return true;
   }
 
-  async function answer(question: string, chunks: Parameters<EvalAnswerer['answer']>[1]) {
+  async function answer(question: string, chunks: RetrievedChunk[]): Promise<string | null> {
     if (!answerer) return null;
+    let timer: NodeJS.Timeout | undefined;
     try {
-      return await answerer.answer(question, chunks);
+      return await Promise.race([
+        answerer.answer(question, chunks),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new AnswerTimeoutError(answerTimeoutMs)),
+            answerTimeoutMs,
+          );
+        }),
+      ]);
     } catch (error) {
       const detail = error instanceof ModelError ? error.detail : undefined;
       log.warn({ err: error, detail }, 'Eval answer failed; recording retrieval only');
       return null;
+    } finally {
+      clearTimeout(timer);
     }
+  }
+
+  async function evaluate(
+    ownerId: string,
+    q: EvalQuestionWithEmbedding,
+  ): Promise<EvalResultRecord> {
+    const chunks = await repo.search(ownerId, q.embedding, k);
+    const topSimilarity = chunks[0]?.similarity ?? null;
+    return {
+      questionId: q.id,
+      question: q.question,
+      answer: await answer(q.question, chunks),
+      chunkIds: chunks.map((c) => c.chunkId),
+      topSimilarity,
+      gap: topSimilarity === null || topSimilarity < evalSet.settings.gapSimilarity,
+    };
   }
 
   async function run(ownerId: string, trigger: EvalRunTrigger): Promise<void> {
@@ -100,20 +163,16 @@ export function createEvalRunner(deps: EvalRunnerDeps): EvalRunner {
     const runRecord = await evalRepo.createRun(ownerId, version, trigger);
     try {
       const questions = await evalRepo.listActiveWithEmbeddings(ownerId);
-      const results: EvalResultRecord[] = [];
-      for (const q of questions) {
-        const chunks = await repo.search(ownerId, q.embedding, k);
-        const topSimilarity = chunks[0]?.similarity ?? null;
-        results.push({
-          questionId: q.id,
-          question: q.question,
-          answer: await answer(q.question, chunks),
-          chunkIds: chunks.map((c) => c.chunkId),
-          topSimilarity,
-          gap: topSimilarity === null || topSimilarity < evalSet.settings.gapSimilarity,
-        });
+      const results = await mapBounded(questions, concurrency, (q) => evaluate(ownerId, q));
+      const stored = await evalRepo.finishRun(runRecord.id, {
+        status: 'completed',
+        error: null,
+        results,
+      });
+      if (!stored) {
+        log.warn({ runId: runRecord.id }, 'Eval run was closed meanwhile; results dropped');
+        return;
       }
-      await evalRepo.finishRun(runRecord.id, { status: 'completed', error: null, results });
       log.info(
         {
           runId: runRecord.id,
@@ -127,7 +186,16 @@ export function createEvalRunner(deps: EvalRunnerDeps): EvalRunner {
       );
     } catch (error) {
       log.warn({ runId: runRecord.id, err: error }, 'Eval run failed');
-      await evalRepo.finishRun(runRecord.id, { status: 'failed', error: RUN_FAILED, results: [] });
+      try {
+        await evalRepo.finishRun(runRecord.id, {
+          status: 'failed',
+          error: RUN_FAILED,
+          results: [],
+        });
+      } catch (closeError) {
+        // The run stays `running` until the next boot marks it failed.
+        log.error({ runId: runRecord.id, err: closeError }, 'Could not record the failed eval run');
+      }
     }
   }
 
@@ -138,7 +206,6 @@ export function createEvalRunner(deps: EvalRunnerDeps): EvalRunner {
       request(ownerId, 'corpus');
     },
     isRunning: (ownerId) => queue.has(ownerId),
-    run,
     idle: () => queue.idle(),
     async stop() {
       const dropped = await queue.stop();

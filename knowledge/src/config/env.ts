@@ -92,7 +92,8 @@ const EnvSchema = z
      * Eval thresholds that depend on the embedder (cosine similarity). An
      * active question whose best chunk is below the gap threshold is flagged
      * as a knowledge gap; a new visitor question below the off-topic one is
-     * never promoted automatically. The defaults suit text-embedding-3-small.
+     * flagged off-topic (never suggested to the owner for promotion). The
+     * defaults suit text-embedding-3-small.
      */
     EVAL_GAP_SIMILARITY: z.coerce.number().min(-1).max(1).optional(),
     EVAL_OFF_TOPIC_SIMILARITY: z.coerce.number().min(-1).max(1).optional(),

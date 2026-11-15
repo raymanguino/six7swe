@@ -1,7 +1,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import {
   EvalQuestionActionRequestSchema,
-  EvalQuestionParamsSchema,
+  IdParamsSchema,
   type EvalQuestionResponse,
   type EvalRunAcceptedResponse,
   type EvalStateResponse,
@@ -42,12 +42,12 @@ export function evalHandlers(ctx: KnowledgeContext) {
     /** Pin, unpin, retire, promote, or flag a question off-topic (or clear the flag). */
     async act(req: FastifyRequest): Promise<EvalQuestionResponse> {
       const ownerId = requireOwner(req);
-      const { id } = EvalQuestionParamsSchema.parse(req.params);
+      const { id } = IdParamsSchema.parse(req.params);
       const { action } = EvalQuestionActionRequestSchema.parse(req.body);
       const { question, evicted } = await ctx.evalSet.act(ownerId, id, action);
       return {
         question: toEvalQuestionDto(question),
-        evicted: evicted && toEvalQuestionDto(evicted),
+        evicted: evicted.map(toEvalQuestionDto),
       };
     },
   };

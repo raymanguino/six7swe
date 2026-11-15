@@ -4,10 +4,16 @@ import {
   EVAL_ACTIVE_SIZE,
   EVAL_CANDIDATE_TTL_DAYS,
   EVAL_CLUSTER_SIMILARITY,
-  EVAL_PROMOTE_SESSIONS,
+  EVAL_MAX_CANDIDATES,
+  EVAL_SUGGEST_SESSIONS,
   type EvalQuestionAction,
+  type EvalQuestionStatus,
 } from '../../contract.js';
-import type { EvalQuestionRecord, EvalRepository } from '../../db/api/evalRepository.js';
+import type {
+  EvalQuestionPatch,
+  EvalQuestionRecord,
+  EvalRepository,
+} from '../../db/api/evalRepository.js';
 import { ConflictError } from '../../db/api/repository.js';
 import type { Embedder } from '../embedding/index.js';
 import { SerialQueue } from '../ingestion/queue.js';
@@ -16,33 +22,39 @@ import { redactQuestion } from './redact.js';
 
 /**
  * The evolving chat eval set (#85): which questions it holds, and how visitor
- * questions get in.
+ * questions reach it.
  *
  * - **Clustering.** A recorded question reuses the embedding retrieval just
- *   made for it and is compared with the owner's existing questions. At or
- *   above `clusterSimilarity` it joins the nearest one (bumping its hit count,
- *   distinct sessions and last-asked time); below, it starts a `candidate`.
- * - **Promotion.** A candidate asked in `promoteSessions` distinct sessions,
- *   and not flagged off-topic, becomes `active`.
- * - **Eviction.** When the active set is full, the active, unpinned question
- *   asked least recently is `retired` to make room. If every active question
- *   is pinned, the candidate waits.
+ *   made for it and is compared with the owner's candidate and active
+ *   questions. At or above `clusterSimilarity` it joins the nearest one
+ *   (bumping its hit count, distinct sessions and last-asked time); below,
+ *   it starts a `candidate`. Retired questions are never matched.
+ * - **Promotion is the owner's.** Recording never changes a question's
+ *   status: session ids are chosen by the client, so ask counts can be
+ *   gamed. A candidate asked in `suggestSessions` distinct sessions, and not
+ *   off-topic, is only suggested to the owner.
+ * - **Eviction** happens only as part of an owner promotion: the active,
+ *   unpinned questions asked least recently are retired to make room. If
+ *   every active question is pinned, the promotion is refused.
  * - **Off-topic.** A new candidate is flagged off-topic when the corpus has
  *   chunks but the best one is below `offTopicSimilarity`; the owner can set
- *   or clear the flag. Retired questions are never promoted automatically; the
- *   owner can promote any question.
- * - **Purge.** Candidates not asked for `candidateTtlDays` are deleted.
+ *   or clear the flag.
+ * - **Purge.** Candidates, and retired visitor questions, not asked for
+ *   `candidateTtlDays` are deleted, and an owner keeps at most
+ *   `maxCandidates` candidates.
  */
 
 export interface EvalSettings {
   activeSize: number;
   clusterSimilarity: number;
-  promoteSessions: number;
+  /** A UI hint: candidates asked in this many distinct sessions are suggested for promotion. */
+  suggestSessions: number;
   /** An active question whose best chunk is below this is a knowledge gap. */
   gapSimilarity: number;
   /** A new question whose best chunk is below this is flagged off-topic. */
   offTopicSimilarity: number;
   candidateTtlDays: number;
+  maxCandidates: number;
 }
 
 /**
@@ -54,10 +66,11 @@ export interface EvalSettings {
 export const DEFAULT_EVAL_SETTINGS: EvalSettings = {
   activeSize: EVAL_ACTIVE_SIZE,
   clusterSimilarity: EVAL_CLUSTER_SIMILARITY,
-  promoteSessions: EVAL_PROMOTE_SESSIONS,
+  suggestSessions: EVAL_SUGGEST_SESSIONS,
   gapSimilarity: 0.3,
   offTopicSimilarity: 0.15,
   candidateTtlDays: EVAL_CANDIDATE_TTL_DAYS,
+  maxCandidates: EVAL_MAX_CANDIDATES,
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -80,14 +93,12 @@ export interface RecordInput {
 export interface RecordOutcome {
   kind: 'joined' | 'created';
   question: EvalQuestionRecord;
-  /** True when this ask promoted the question to active. */
-  promoted: boolean;
-  evicted: EvalQuestionRecord | null;
 }
 
 export interface ActionOutcome {
   question: EvalQuestionRecord;
-  evicted: EvalQuestionRecord | null;
+  /** The questions a promotion retired to make room. */
+  evicted: EvalQuestionRecord[];
 }
 
 /** The question does not exist, or belongs to someone else. Maps to 404. */
@@ -112,7 +123,7 @@ export interface EvalSet {
   readonly settings: EvalSettings;
   /** Seeds the canned questions when the owner has no eval question yet. */
   ensureSeeded(ownerId: string): Promise<void>;
-  /** Records one visitor question; see the module comment for the rules. */
+  /** Records one visitor question as a candidate (new or bumped); never promotes. */
   record(input: RecordInput): Promise<RecordOutcome>;
   /**
    * `record`, in the background and one at a time, so a slow write never
@@ -120,9 +131,9 @@ export interface EvalSet {
    * cannot both start a cluster. Failures are logged.
    */
   enqueueRecord(input: RecordInput): void;
-  /** The owner's questions, after purging expired candidates (at most hourly). */
+  /** The owner's questions, after purging stale ones (at most hourly; a failure is logged). */
   list(ownerId: string): Promise<EvalQuestionRecord[]>;
-  /** Deletes candidates not asked within the TTL. Returns how many. */
+  /** Deletes stale candidates and retired visitor questions. Returns how many. */
   purge(ownerId: string): Promise<number>;
   /** One of the owner's controls. Throws a 404 or 409 error when it cannot apply. */
   act(ownerId: string, id: string, action: EvalQuestionAction): Promise<ActionOutcome>;
@@ -134,6 +145,11 @@ export interface EvalSet {
 export function hashSessionId(sessionId: string): string {
   return createHash('sha256').update(sessionId).digest('hex');
 }
+
+const PIN_CONFLICT = 'Only active questions can be pinned. Promote it first.';
+const FULL_CONFLICT =
+  'Every active question is pinned. Unpin or retire one, then promote this one.';
+const CHANGED_CONFLICT = 'The question changed meanwhile. Reload and try again.';
 
 export function createEvalSet(deps: EvalSetDeps): EvalSet {
   const settings: EvalSettings = { ...DEFAULT_EVAL_SETTINGS, ...deps.settings };
@@ -176,28 +192,23 @@ export function createEvalSet(deps: EvalSetDeps): EvalSet {
   }
 
   async function purge(ownerId: string): Promise<number> {
-    lastPurge.set(ownerId, Date.now());
-    const before = new Date(now().getTime() - settings.candidateTtlDays * DAY_MS);
-    const purged = await repo.purgeCandidates(ownerId, before);
-    if (purged > 0) log.info({ ownerId, purged }, 'Purged stale eval candidates');
+    const at = now();
+    const before = new Date(at.getTime() - settings.candidateTtlDays * DAY_MS);
+    const purged = await repo.purgeStale(ownerId, before);
+    // Only after it worked, so a failure is retried on the next call.
+    lastPurge.set(ownerId, at.getTime());
+    if (purged > 0) log.info({ ownerId, purged }, 'Purged stale eval questions');
     return purged;
   }
 
+  /** Housekeeping must never fail a recording or the owner's view. */
   async function maybePurge(ownerId: string): Promise<void> {
     const last = lastPurge.get(ownerId);
-    if (last !== undefined && Date.now() - last < PURGE_INTERVAL_MS) return;
-    await purge(ownerId);
-  }
-
-  async function promote(ownerId: string, id: string): Promise<ActionOutcome | null> {
-    const outcome = await repo.promote(ownerId, id, settings.activeSize);
-    switch (outcome.status) {
-      case 'not-found':
-        throw new EvalQuestionNotFoundError();
-      case 'full':
-        return null;
-      case 'promoted':
-        return { question: outcome.question, evicted: outcome.evicted };
+    if (last !== undefined && now().getTime() - last < PURGE_INTERVAL_MS) return;
+    try {
+      await purge(ownerId);
+    } catch (error) {
+      log.warn({ ownerId, err: error }, 'Could not purge stale eval questions');
     }
   }
 
@@ -220,45 +231,40 @@ export function createEvalSet(deps: EvalSetDeps): EvalSet {
 
     const nearest = await repo.nearestQuestion(ownerId, embedding);
     // A cluster purged between the lookup and the write is simply started again.
-    let question =
+    const joined =
       nearest && nearest.similarity >= settings.clusterSimilarity
         ? await repo.recordAsk(nearest.question.id, sessionHash, at)
         : null;
-    const kind: RecordOutcome['kind'] = question ? 'joined' : 'created';
-    question ??= await repo.createCandidate({
+    if (joined) return { kind: 'joined', question: joined };
+    const created = await repo.createCandidate({
       ownerId,
       question: stored,
       embedding,
       offTopic: input.topSimilarity !== null && input.topSimilarity < settings.offTopicSimilarity,
       sessionHash,
       now: at,
+      maxCandidates: settings.maxCandidates,
     });
-
-    if (
-      question.status === 'candidate' &&
-      !question.offTopic &&
-      question.distinctSessions >= settings.promoteSessions
-    ) {
-      const promoted = await promote(ownerId, question.id);
-      if (promoted) {
-        log.info(
-          { questionId: question.id, evicted: promoted.evicted?.id ?? null },
-          'Promoted a visitor question to the eval set',
-        );
-        return { kind, question: promoted.question, promoted: true, evicted: promoted.evicted };
-      }
-    }
-    return { kind, question, promoted: false, evicted: null };
+    return { kind: 'created', question: created };
   }
 
+  /** A status-guarded update: 404 when gone, 409 (with `conflict`) when the status moved. */
   async function update(
     ownerId: string,
     id: string,
-    patch: Parameters<EvalRepository['updateQuestion']>[2],
+    patch: EvalQuestionPatch,
+    onlyIf?: readonly EvalQuestionStatus[],
+    conflict = CHANGED_CONFLICT,
   ): Promise<ActionOutcome> {
-    const question = await repo.updateQuestion(ownerId, id, patch);
-    if (!question) throw new EvalQuestionNotFoundError();
-    return { question, evicted: null };
+    const outcome = await repo.updateQuestion(ownerId, id, patch, onlyIf);
+    switch (outcome.status) {
+      case 'not-found':
+        throw new EvalQuestionNotFoundError();
+      case 'conflict':
+        throw new ConflictError(conflict);
+      case 'updated':
+        return { question: outcome.question, evicted: [] };
+    }
   }
 
   async function act(
@@ -266,39 +272,48 @@ export function createEvalSet(deps: EvalSetDeps): EvalSet {
     id: string,
     action: EvalQuestionAction,
   ): Promise<ActionOutcome> {
-    const current = await repo.getQuestion(ownerId, id);
-    if (!current) throw new EvalQuestionNotFoundError();
     switch (action) {
       case 'pin':
-        if (current.status !== 'active') {
-          throw new ConflictError('Only active questions can be pinned. Promote it first.');
-        }
-        return update(ownerId, id, { pinned: true });
+        return update(ownerId, id, { pinned: true }, ['active'], PIN_CONFLICT);
       case 'unpin':
         return update(ownerId, id, { pinned: false });
       case 'retire':
         return update(ownerId, id, { status: 'retired', pinned: false });
       case 'promote': {
-        const promoted = await promote(ownerId, id);
-        if (!promoted) {
-          throw new ConflictError(
-            'Every active question is pinned. Unpin or retire one, then promote this one.',
-          );
+        const outcome = await repo.promote(ownerId, id, settings.activeSize);
+        switch (outcome.status) {
+          case 'not-found':
+            throw new EvalQuestionNotFoundError();
+          case 'full':
+            throw new ConflictError(FULL_CONFLICT);
+          case 'promoted':
+            if (outcome.evicted.length > 0) {
+              log.info(
+                { questionId: id, evicted: outcome.evicted.map((q) => q.id) },
+                'Promoted an eval question; retired the least recently asked',
+              );
+            }
+            return { question: outcome.question, evicted: outcome.evicted };
         }
-        return promoted;
+        break;
       }
-      case 'off-topic':
-        // An off-topic question has no place in the active set.
-        return update(
-          ownerId,
-          id,
-          current.status === 'active'
-            ? { offTopic: true, status: 'retired', pinned: false }
-            : { offTopic: true },
-        );
+      case 'off-topic': {
+        // An off-topic question has no place in the active set. Each update
+        // is guarded by the status it assumes; a promotion landing between
+        // the two is caught by the second guard.
+        try {
+          return await update(ownerId, id, { offTopic: true, status: 'retired', pinned: false }, [
+            'active',
+          ]);
+        } catch (error) {
+          if (!(error instanceof ConflictError)) throw error;
+        }
+        return update(ownerId, id, { offTopic: true }, ['candidate', 'retired']);
+      }
       case 'on-topic':
         return update(ownerId, id, { offTopic: false });
     }
+    throw new Error(`Unknown eval question action: ${String(action)}`);
   }
 
   return {

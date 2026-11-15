@@ -56,11 +56,22 @@ export const RetrieveRequestSchema = z
   });
 export type RetrieveRequest = z.infer<typeof RetrieveRequestSchema>;
 
+/**
+ * `POST /search` (owner): the "ask as a visitor" playground. The same query
+ * and `k` as `/retrieve`, strict, and never recorded.
+ */
+export const SearchRequestSchema = z.strictObject({
+  query: z.string().trim().min(1).max(MAX_RETRIEVE_QUERY_CHARS),
+  k: z.number().int().min(1).max(MAX_RETRIEVE_K).default(DEFAULT_RETRIEVE_K),
+});
+export type SearchRequest = z.infer<typeof SearchRequestSchema>;
+
 export const UploadQuerySchema = z.object({
   kind: DocumentKindSchema.default('supporting'),
 });
 
-export const DocumentParamsSchema = z.object({ id: z.uuid() });
+/** `:id` route params (documents, eval questions): a UUID. */
+export const IdParamsSchema = z.object({ id: z.uuid() });
 
 export const DocumentDtoSchema = z.object({
   id: z.uuid(),
@@ -278,21 +289,28 @@ export type PublishedProfileResponse = z.infer<typeof PublishedProfileResponseSc
 
 /*
  * The evolving chat eval set (#85). A small set of active questions, seeded
- * from canned ones, that drifts toward what visitors actually ask: similar
- * visitor questions are clustered, a cluster asked in enough distinct sessions
- * is promoted, and the least recently asked unpinned active question is
- * retired to make room. The set is re-run whenever the corpus changes, and a
- * question whose best chunk is a poor match is flagged as a knowledge gap.
+ * from canned ones, that the owner steers toward what visitors actually ask:
+ * similar visitor questions are clustered into candidates with ask and
+ * session counts, and the owner promotes the ones worth keeping, which
+ * retires the least recently asked unpinned active question to make room.
+ * Nothing is promoted automatically: session ids are chosen by the client,
+ * so counts can be gamed. The set is re-run whenever the corpus changes, and
+ * a question whose best chunk is a poor match is flagged as a knowledge gap.
  */
 
 /** How many questions are active at once. */
 export const EVAL_ACTIVE_SIZE = 10;
 /** A question at or above this cosine similarity to a cluster joins it. */
 export const EVAL_CLUSTER_SIMILARITY = 0.85;
-/** A candidate asked in this many distinct sessions is promoted. */
-export const EVAL_PROMOTE_SESSIONS = 2;
-/** Candidates not asked for this long are deleted. */
+/**
+ * A candidate asked in this many distinct sessions is suggested to the owner
+ * for promotion (a UI hint only; promotion is always the owner's call).
+ */
+export const EVAL_SUGGEST_SESSIONS = 2;
+/** Candidates, and retired visitor questions, not asked for this long are deleted. */
 export const EVAL_CANDIDATE_TTL_DAYS = 90;
+/** At most this many candidates per owner; the least recently asked go first. */
+export const EVAL_MAX_CANDIDATES = 500;
 /** The longest stored question; longer ones are cut (after redaction). */
 export const EVAL_MAX_QUESTION_CHARS = 300;
 
@@ -322,7 +340,7 @@ export const EvalQuestionDtoSchema = z.object({
   origin: EvalQuestionOriginSchema,
   /** Pinned questions are never evicted. Only active questions can be pinned. */
   pinned: z.boolean(),
-  /** An off-topic question is never promoted automatically. */
+  /** Flagged off-topic (automatically, or by the owner); never suggested for promotion. */
   offTopic: z.boolean(),
   /** Times asked, near-duplicates included. */
   hitCount: z.number().int().nonnegative(),
@@ -334,13 +352,20 @@ export type EvalQuestionDto = z.infer<typeof EvalQuestionDtoSchema>;
 
 /** How one question's result moved since the previous corpus version's run. */
 export const EvalResultDiffSchema = z.object({
-  /** `new`: the question was not in the previous run. */
+  /**
+   * `new`: the question was not in the previous run. `changed`: its chunks,
+   * gap flag or top similarity moved.
+   */
   change: z.enum(['new', 'unchanged', 'changed']),
   previousTopSimilarity: z.number().nullable(),
   /** Current minus previous; null when either is missing. */
   topSimilarityDelta: z.number().nullable(),
   chunksChanged: z.boolean(),
   previousGap: z.boolean().nullable(),
+  /**
+   * Informational only: model answers vary from run to run, so a different
+   * answer alone never makes a result `changed`.
+   */
   answerChanged: z.boolean(),
 });
 export type EvalResultDiff = z.infer<typeof EvalResultDiffSchema>;
@@ -381,10 +406,12 @@ export type EvalRunDto = z.infer<typeof EvalRunDtoSchema>;
 export const EvalSettingsDtoSchema = z.object({
   activeSize: z.number().int().positive(),
   clusterSimilarity: z.number(),
-  promoteSessions: z.number().int().positive(),
+  /** Candidates asked in at least this many distinct sessions are suggested for promotion. */
+  suggestSessions: z.number().int().positive(),
   gapSimilarity: z.number(),
   offTopicSimilarity: z.number(),
   candidateTtlDays: z.number().int().positive(),
+  maxCandidates: z.number().int().positive(),
   /** False when no answering model is configured: runs record retrieval only. */
   answering: z.boolean(),
 });
@@ -417,12 +444,13 @@ export const EvalQuestionActionRequestSchema = z.strictObject({
 });
 export type EvalQuestionActionRequest = z.infer<typeof EvalQuestionActionRequestSchema>;
 
-export const EvalQuestionParamsSchema = z.object({ id: z.uuid() });
-
 export const EvalQuestionResponseSchema = z.object({
   question: EvalQuestionDtoSchema,
-  /** The question retired to make room, when a promotion needed one. */
-  evicted: EvalQuestionDtoSchema.nullable(),
+  /**
+   * The questions retired to make room when a promotion needed it: usually
+   * none or one, more only if the active set was somehow over its size.
+   */
+  evicted: z.array(EvalQuestionDtoSchema),
 });
 export type EvalQuestionResponse = z.infer<typeof EvalQuestionResponseSchema>;
 

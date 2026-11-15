@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { EVAL_ACTIVE_SIZE, EVAL_MAX_QUESTION_CHARS } from '../contract.js';
 import type { EvalQuestionRecord } from '../db/api/evalRepository.js';
 import { CANNED_EVAL_QUESTIONS } from '../services/evalSet/canned.js';
@@ -8,7 +8,13 @@ import {
   hashSessionId,
   type RecordInput,
 } from '../services/evalSet/evalSet.js';
-import { EMAIL_MASK, PHONE_MASK, redactQuestion } from '../services/evalSet/redact.js';
+import {
+  EMAIL_MASK,
+  HANDLE_MASK,
+  LINK_MASK,
+  PHONE_MASK,
+  redactQuestion,
+} from '../services/evalSet/redact.js';
 import { silentLogger } from './support/fixtures.js';
 import { createMemoryEvalRepository } from './support/memoryEvalRepository.js';
 import { axis, createStubEmbedder, near } from './support/stubEmbedder.js';
@@ -79,7 +85,7 @@ describe('eval set: clustering', () => {
   it('bumps the existing cluster for a near-duplicate question', async () => {
     const { ask, repo, byText } = setup();
     const first = await ask(NOVEL, 'session-aaaa');
-    expect(first).toMatchObject({ kind: 'created', promoted: false });
+    expect(first).toMatchObject({ kind: 'created' });
 
     const again = await ask(NEAR_NOVEL, 'session-aaaa');
     expect(again.kind).toBe('joined');
@@ -105,7 +111,7 @@ describe('eval set: clustering', () => {
     const { ask, repo } = setup();
     const canned = CANNED_EVAL_QUESTIONS[3] ?? '';
     const outcome = await ask(canned, 'session-aaaa');
-    expect(outcome).toMatchObject({ kind: 'joined', promoted: false });
+    expect(outcome).toMatchObject({ kind: 'joined' });
     expect(outcome.question).toMatchObject({ origin: 'canned', status: 'active', hitCount: 1 });
     expect([...repo.questions.values()].filter((q) => q.origin === 'visitor')).toHaveLength(0);
   });
@@ -119,7 +125,7 @@ describe('eval set: clustering', () => {
   });
 });
 
-describe('eval set: promotion and eviction', () => {
+describe('eval set: candidates and owner promotion', () => {
   it('keeps a novel question asked from one session a candidate', async () => {
     const { ask, byText } = setup();
     await ask(NOVEL, 'session-aaaa');
@@ -132,17 +138,30 @@ describe('eval set: promotion and eviction', () => {
     });
   });
 
-  it('promotes a novel question asked from two sessions, evicting the least recently asked', async () => {
-    const { ask, byText, active, touchAllCannedButFirst } = setup();
-    await touchAllCannedButFirst();
-    const lru = CANNED_EVAL_QUESTIONS[0] ?? '';
-
+  it('never promotes on its own: a question from two sessions stays a candidate', async () => {
+    const { ask, byText, active } = setup();
     await ask(NOVEL, 'session-aaaa');
     const second = await ask(NEAR_NOVEL, 'session-bbbb');
+    // Even many sessions (client-chosen ids) cannot push a question in.
+    for (const s of ['session-cccc', 'session-dddd', 'session-eeee']) await ask(NOVEL, s);
 
-    expect(second.promoted).toBe(true);
-    expect(second.question).toMatchObject({ question: NOVEL, status: 'active' });
-    expect(second.evicted?.question).toBe(lru);
+    expect(second.question).toMatchObject({ question: NOVEL, status: 'candidate' });
+    expect(await byText(NOVEL)).toMatchObject({ status: 'candidate', distinctSessions: 5 });
+    expect(await active()).toEqual(expect.not.arrayContaining([NOVEL]));
+    expect(await active()).toHaveLength(EVAL_ACTIVE_SIZE);
+  });
+
+  it('an owner promote evicts the least recently asked unpinned question', async () => {
+    const { ask, evalSet, byText, active, touchAllCannedButFirst } = setup();
+    await touchAllCannedButFirst();
+    const lru = CANNED_EVAL_QUESTIONS[0] ?? '';
+    await ask(NOVEL, 'session-aaaa');
+    const { question } = await ask(NOVEL, 'session-bbbb');
+    expect(question).toMatchObject({ status: 'candidate', distinctSessions: 2 });
+
+    const promoted = await evalSet.act(OWNER, question.id, 'promote');
+    expect(promoted.question).toMatchObject({ question: NOVEL, status: 'active' });
+    expect(promoted.evicted.map((q) => q.question)).toEqual([lru]);
     expect(await byText(lru)).toMatchObject({ status: 'retired' });
     const now = await active();
     expect(now).toHaveLength(EVAL_ACTIVE_SIZE);
@@ -157,9 +176,10 @@ describe('eval set: promotion and eviction', () => {
     if (!first) throw new Error('not seeded');
     await evalSet.act(OWNER, first.id, 'retire');
 
-    await ask(NOVEL, 'session-aaaa');
-    const second = await ask(NOVEL, 'session-bbbb');
-    expect(second).toMatchObject({ promoted: true, evicted: null });
+    const { question } = await ask(NOVEL, 'session-aaaa');
+    const promoted = await evalSet.act(OWNER, question.id, 'promote');
+    expect(promoted).toMatchObject({ evicted: [] });
+    expect(promoted.question.status).toBe('active');
   });
 
   it('never evicts a pinned question', async () => {
@@ -169,31 +189,45 @@ describe('eval set: promotion and eviction', () => {
     if (!lru) throw new Error('not seeded');
     await evalSet.act(OWNER, lru.id, 'pin');
 
-    await ask(NOVEL, 'session-aaaa');
-    const promoted = await ask(NOVEL, 'session-bbbb');
-    expect(promoted.promoted).toBe(true);
+    const { question } = await ask(NOVEL, 'session-aaaa');
+    const promoted = await evalSet.act(OWNER, question.id, 'promote');
     // The next least recently asked unpinned question goes instead.
-    expect(promoted.evicted?.question).toBe(CANNED_EVAL_QUESTIONS[1]);
+    expect(promoted.evicted.map((q) => q.question)).toEqual([CANNED_EVAL_QUESTIONS[1]]);
     expect(await byText(CANNED_EVAL_QUESTIONS[0] ?? '')).toMatchObject({
       status: 'active',
       pinned: true,
     });
   });
 
-  it('leaves the candidate waiting when every active question is pinned', async () => {
+  it('refuses to promote when every active question is pinned', async () => {
     const { ask, evalSet, repo, byText } = setup();
     await evalSet.ensureSeeded(OWNER);
     for (const q of await repo.listQuestions(OWNER)) await evalSet.act(OWNER, q.id, 'pin');
-
-    await ask(NOVEL, 'session-aaaa');
-    const outcome = await ask(NOVEL, 'session-bbbb');
-    expect(outcome).toMatchObject({ promoted: false, evicted: null });
-    expect(await byText(NOVEL)).toMatchObject({ status: 'candidate', distinctSessions: 2 });
+    const { question } = await ask(NOVEL, 'session-aaaa');
+    await expect(evalSet.act(OWNER, question.id, 'promote')).rejects.toMatchObject({
+      statusCode: 409,
+    });
+    expect(await byText(NOVEL)).toMatchObject({ status: 'candidate' });
     const all = await repo.listQuestions(OWNER);
     expect(all.filter((q) => q.status === 'active' && q.pinned)).toHaveLength(EVAL_ACTIVE_SIZE);
   });
 
-  it('never promotes an off-topic question', async () => {
+  it('evicts enough to get back under the size when the set is over it', async () => {
+    const { ask, evalSet, repo } = setup();
+    await evalSet.ensureSeeded(OWNER);
+    // Two questions too many active (e.g. a smaller size configured later).
+    for (const text of [NOVEL, OTHER_NOVEL]) {
+      const { question } = await ask(text, 'session-aaaa');
+      await repo.updateQuestion(OWNER, question.id, { status: 'active' });
+    }
+    const { question } = await ask(OFF_TOPIC, 'session-aaaa', 0.5);
+    const promoted = await evalSet.act(OWNER, question.id, 'promote');
+    expect(promoted.evicted).toHaveLength(3);
+    const active = (await repo.listQuestions(OWNER)).filter((q) => q.status === 'active');
+    expect(active).toHaveLength(EVAL_ACTIVE_SIZE);
+  });
+
+  it('flags a question off-topic when the corpus answered poorly; it is never suggested', async () => {
     const { ask, byText } = setup();
     // The corpus answered, but its best chunk is far below the off-topic threshold.
     const first = await ask(OFF_TOPIC, 'session-aaaa', 0.02);
@@ -213,15 +247,42 @@ describe('eval set: promotion and eviction', () => {
     expect(outcome.question.offTopic).toBe(false);
   });
 
-  it('does not promote a retired question again on its own', async () => {
-    const { ask, evalSet, byText } = setup();
-    await ask(NOVEL, 'session-aaaa');
-    await ask(NOVEL, 'session-bbbb');
-    const promoted = await byText(NOVEL);
-    if (!promoted) throw new Error('missing');
-    await evalSet.act(OWNER, promoted.id, 'retire');
-    await ask(NOVEL, 'session-cccc');
-    expect(await byText(NOVEL)).toMatchObject({ status: 'retired', distinctSessions: 3 });
+  it('never absorbs new asks into a retired question; they start a fresh candidate', async () => {
+    const { ask, evalSet, repo } = setup();
+    const { question } = await ask(NOVEL, 'session-aaaa');
+    await evalSet.act(OWNER, question.id, 'retire');
+    const again = await ask(NEAR_NOVEL, 'session-bbbb');
+    expect(again.kind).toBe('created');
+    expect(again.question).toMatchObject({ status: 'candidate', question: NEAR_NOVEL });
+    expect((await repo.getQuestion(OWNER, question.id))?.hitCount).toBe(1);
+  });
+
+  it('keeps at most the configured number of candidates, dropping the least recently asked', async () => {
+    const repo = createMemoryEvalRepository();
+    const embedder = createStubEmbedder(VECTORS, DIMS);
+    let clock = Date.parse('2026-11-01T00:00:00Z');
+    const evalSet = createEvalSet({
+      repo,
+      embedder,
+      log: silentLogger,
+      now: () => new Date((clock += 60_000)),
+      settings: { maxCandidates: 2 },
+    });
+    for (const text of [NOVEL, OTHER_NOVEL, OFF_TOPIC]) {
+      const [embedding] = await embedder.embed([text]);
+      if (!embedding) throw new Error('no embedding');
+      await evalSet.record({
+        ownerId: OWNER,
+        question: text,
+        sessionId: 'session-aaaa',
+        embedding,
+        topSimilarity: 0.5,
+      });
+    }
+    const candidates = (await repo.listQuestions(OWNER))
+      .filter((q) => q.status === 'candidate')
+      .map((q) => q.question);
+    expect(candidates.sort()).toEqual([OFF_TOPIC, OTHER_NOVEL].sort());
   });
 });
 
@@ -234,7 +295,7 @@ describe('eval set: owner controls', () => {
     });
     const promoted = await evalSet.act(OWNER, question.id, 'promote');
     expect(promoted.question).toMatchObject({ status: 'active', offTopic: false });
-    expect(promoted.evicted).not.toBeNull();
+    expect(promoted.evicted).toHaveLength(1);
     const pinned = await evalSet.act(OWNER, question.id, 'pin');
     expect(pinned.question.pinned).toBe(true);
   });
@@ -251,14 +312,22 @@ describe('eval set: owner controls', () => {
     expect(cleared.question.offTopic).toBe(false);
   });
 
-  it('refuses to promote when every active question is pinned', async () => {
-    const { ask, evalSet, repo } = setup();
-    await evalSet.ensureSeeded(OWNER);
-    for (const q of await repo.listQuestions(OWNER)) await evalSet.act(OWNER, q.id, 'pin');
+  it('flags a candidate off-topic without changing its status', async () => {
+    const { ask, evalSet } = setup();
     const { question } = await ask(NOVEL, 'session-aaaa');
-    await expect(evalSet.act(OWNER, question.id, 'promote')).rejects.toMatchObject({
-      statusCode: 409,
-    });
+    const flagged = await evalSet.act(OWNER, question.id, 'off-topic');
+    expect(flagged.question).toMatchObject({ status: 'candidate', offTopic: true });
+  });
+
+  it('refuses a pin when the question was retired meanwhile (status-guarded)', async () => {
+    const { evalSet, repo } = setup();
+    await evalSet.ensureSeeded(OWNER);
+    const first = (await repo.listQuestions(OWNER))[0];
+    if (!first) throw new Error('not seeded');
+    // As if a concurrent promotion had just evicted it.
+    await repo.updateQuestion(OWNER, first.id, { status: 'retired' });
+    await expect(evalSet.act(OWNER, first.id, 'pin')).rejects.toMatchObject({ statusCode: 409 });
+    expect((await repo.getQuestion(OWNER, first.id))?.pinned).toBe(false);
   });
 
   it('answers 404 for a question of another owner', async () => {
@@ -267,10 +336,62 @@ describe('eval set: owner controls', () => {
     await expect(evalSet.act('someone-else', question.id, 'retire')).rejects.toBeInstanceOf(
       EvalQuestionNotFoundError,
     );
+    await expect(evalSet.act('someone-else', question.id, 'promote')).rejects.toBeInstanceOf(
+      EvalQuestionNotFoundError,
+    );
   });
 });
 
 describe('eval set: purge', () => {
+  it('deletes stale retired visitor questions too, never canned or active ones', async () => {
+    const repo = createMemoryEvalRepository();
+    const embedder = createStubEmbedder(VECTORS, DIMS);
+    let clock = Date.parse('2026-01-01T00:00:00Z');
+    const evalSet = createEvalSet({
+      repo,
+      embedder,
+      log: silentLogger,
+      now: () => new Date(clock),
+    });
+    const [embedding] = await embedder.embed([NOVEL]);
+    if (!embedding) throw new Error('no embedding');
+    const { question } = await evalSet.record({
+      ownerId: OWNER,
+      question: NOVEL,
+      sessionId: 'session-aaaa',
+      embedding,
+      topSimilarity: 0.5,
+    });
+    await evalSet.act(OWNER, question.id, 'retire');
+    const canned = (await repo.listQuestions(OWNER))[0];
+    if (!canned) throw new Error('not seeded');
+    await evalSet.act(OWNER, canned.id, 'retire');
+    clock += 91 * 24 * 60 * 60 * 1000;
+
+    expect(await evalSet.purge(OWNER)).toBe(1);
+    expect(await repo.getQuestion(OWNER, question.id)).toBeNull();
+    expect(await repo.getQuestion(OWNER, canned.id)).not.toBeNull();
+  });
+
+  it('never fails the owner view when purging fails, and retries next time', async () => {
+    const repo = createMemoryEvalRepository();
+    const evalSet = createEvalSet({
+      repo,
+      embedder: createStubEmbedder(VECTORS, DIMS),
+      log: silentLogger,
+    });
+    await evalSet.ensureSeeded(OWNER);
+    const purgeStale = vi
+      .spyOn(repo, 'purgeStale')
+      .mockRejectedValueOnce(new Error('database hiccup'));
+    expect(await evalSet.list(OWNER)).toHaveLength(CANNED_EVAL_QUESTIONS.length);
+    await evalSet.list(OWNER);
+    expect(purgeStale).toHaveBeenCalledTimes(2);
+    // Succeeded the second time: throttled from now on.
+    await evalSet.list(OWNER);
+    expect(purgeStale).toHaveBeenCalledTimes(2);
+  });
+
   it('deletes candidates not asked within 90 days, and nothing else', async () => {
     const repo = createMemoryEvalRepository();
     const embedder = createStubEmbedder(VECTORS, DIMS);
@@ -316,6 +437,18 @@ describe('eval set: redaction', () => {
     );
     expect(redactQuestion('Did you serve 2,000,000 requests?')).toBe(
       'Did you serve 2,000,000 requests?',
+    );
+    // Links and handles (defense in depth).
+    expect(redactQuestion('See https://example.com/u/jane?id=42 first')).toBe(
+      `See ${LINK_MASK} first`,
+    );
+    expect(redactQuestion('my profile: linkedin.com/in/jane-doe')).toBe(`my profile: ${LINK_MASK}`);
+    expect(redactQuestion('DM @jane_doe or (@jd) on X')).toBe(
+      `DM ${HANDLE_MASK} or (${HANDLE_MASK}) on X`,
+    );
+    // Not links or handles.
+    expect(redactQuestion('Do you use Node.js/Express or C#?')).toBe(
+      'Do you use Node.js/Express or C#?',
     );
     const long = redactQuestion(`${'a'.repeat(EVAL_MAX_QUESTION_CHARS)} jane@example.com`);
     expect(Array.from(long)).toHaveLength(EVAL_MAX_QUESTION_CHARS);

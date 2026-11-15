@@ -48,15 +48,14 @@ export function diffRuns(
         ? null
         : round(result.topSimilarity - old.topSimilarity);
     const chunksChanged = !sameIds(result.chunkIds, old.chunkIds);
+    // Informational only: model answers vary between runs on the same chunks.
     const answerChanged = (result.answer ?? null) !== (old.answer ?? null);
     const similarityChanged =
       (result.topSimilarity === null) !== (old.topSimilarity === null) ||
       (delta !== null && delta !== 0);
     return {
       change:
-        chunksChanged || answerChanged || similarityChanged || result.gap !== old.gap
-          ? 'changed'
-          : 'unchanged',
+        chunksChanged || similarityChanged || result.gap !== old.gap ? 'changed' : 'unchanged',
       previousTopSimilarity: old.topSimilarity === null ? null : round(old.topSimilarity),
       topSimilarityDelta: delta,
       chunksChanged,

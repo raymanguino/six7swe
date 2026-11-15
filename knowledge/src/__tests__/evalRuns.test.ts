@@ -4,6 +4,7 @@ import { buildApp } from '../app.js';
 import {
   EvalQuestionResponseSchema,
   EvalStateResponseSchema,
+  type EvalRunTrigger,
   type EvalStateResponse,
 } from '../contract.js';
 import type { EvalResultRecord } from '../db/api/evalRepository.js';
@@ -17,7 +18,11 @@ import { CANNED_EVAL_QUESTIONS } from '../services/evalSet/canned.js';
 import { diffRuns } from '../services/evalSet/diff.js';
 import { createEvalSet } from '../services/evalSet/evalSet.js';
 import { EMAIL_MASK } from '../services/evalSet/redact.js';
-import { createEvalRunner } from '../services/evalSet/runner.js';
+import {
+  createEvalRunner,
+  type EvalRunner,
+  type EvalRunnerDeps,
+} from '../services/evalSet/runner.js';
 import { ModelError } from '../services/llm/minimax.js';
 import { createMemoryFileStore, multipartFile, silentLogger, utf8 } from './support/fixtures.js';
 import { createMemoryEvalRepository } from './support/memoryEvalRepository.js';
@@ -54,7 +59,10 @@ async function addDocument(repo: KnowledgeRepository, name: string, axes: number
   return document;
 }
 
-function runnerSetup(answerer: EvalAnswerer | null = createStubEvalAnswerer()) {
+function runnerSetup(
+  answerer: EvalAnswerer | null = createStubEvalAnswerer(),
+  options: Pick<EvalRunnerDeps, 'answerTimeoutMs' | 'concurrency'> = {},
+) {
   const repo = createMemoryRepository();
   const evalRepo = createMemoryEvalRepository();
   const embedder = createStubEmbedder(CANNED_VECTORS, DIMS);
@@ -66,8 +74,15 @@ function runnerSetup(answerer: EvalAnswerer | null = createStubEvalAnswerer()) {
     answerer,
     log: silentLogger,
     k: 3,
+    ...options,
   });
   return { repo, evalRepo, evalSet, runner };
+}
+
+/** Queues a run and waits for it, as the routes and the corpus hooks do. */
+async function runOnce(runner: EvalRunner, trigger: EvalRunTrigger): Promise<void> {
+  runner.request(OWNER, trigger);
+  await runner.idle();
 }
 
 describe('eval runs', () => {
@@ -75,7 +90,7 @@ describe('eval runs', () => {
     const { repo, evalRepo, runner } = runnerSetup();
     // The corpus covers the first two canned questions only.
     await addDocument(repo, 'resume', [0, 1]);
-    await runner.run(OWNER, 'manual');
+    await runOnce(runner, 'manual');
 
     const run = await evalRepo.getLatestRun(OWNER);
     expect(run).toMatchObject({ status: 'completed', corpusVersion: 1, trigger: 'manual' });
@@ -93,7 +108,7 @@ describe('eval runs', () => {
 
   it('flags every question as a gap on an empty corpus', async () => {
     const { evalRepo, runner } = runnerSetup();
-    await runner.run(OWNER, 'manual');
+    await runOnce(runner, 'manual');
     const run = await evalRepo.getLatestRun(OWNER);
     expect(run?.results.every((r) => r.gap && r.topSimilarity === null)).toBe(true);
     expect(run?.results[0]?.answer).toBe(NO_EXCERPTS_ANSWER);
@@ -107,7 +122,7 @@ describe('eval runs', () => {
     for (const answerer of [failing, null]) {
       const { repo, evalRepo, runner } = runnerSetup(answerer);
       await addDocument(repo, 'resume', [0]);
-      await runner.run(OWNER, 'manual');
+      await runOnce(runner, 'manual');
       const run = await evalRepo.getLatestRun(OWNER);
       expect(run?.status).toBe('completed');
       const first = run?.results.find((r) => r.question === CANNED_EVAL_QUESTIONS[0]);
@@ -115,21 +130,63 @@ describe('eval runs', () => {
     }
   });
 
+  it('gives up on a slow answer and records retrieval only', async () => {
+    const slow: EvalAnswerer = { name: 'slow', answer: () => new Promise(() => undefined) };
+    const { repo, evalRepo, runner } = runnerSetup(slow, { answerTimeoutMs: 20 });
+    await addDocument(repo, 'resume', [0]);
+    await runOnce(runner, 'manual');
+    const run = await evalRepo.getLatestRun(OWNER);
+    expect(run?.status).toBe('completed');
+    expect(run?.results.every((r) => r.answer === null)).toBe(true);
+  });
+
+  it('works on a few questions at once and keeps their order', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const tracking: EvalAnswerer = {
+      name: 'tracking',
+      async answer(question) {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight--;
+        return `answer to ${question}`;
+      },
+    };
+    const { evalRepo, runner } = runnerSetup(tracking, { concurrency: 3 });
+    await runOnce(runner, 'manual');
+    const run = await evalRepo.getLatestRun(OWNER);
+    const active = await evalRepo.listActiveWithEmbeddings(OWNER);
+    expect(run?.results.map((r) => r.question)).toEqual(active.map((q) => q.question));
+    expect(run?.results.every((r) => r.answer === `answer to ${r.question}`)).toBe(true);
+    expect(peak).toBe(3);
+  });
+
+  it('never overwrites a run abandoned meanwhile', async () => {
+    const { evalRepo } = runnerSetup();
+    const run = await evalRepo.createRun(OWNER, 1, 'manual');
+    await evalRepo.abandonRunning('restarted');
+    expect(
+      await evalRepo.finishRun(run.id, { status: 'completed', error: null, results: [] }),
+    ).toBe(false);
+    expect(await evalRepo.getLatestRun(OWNER)).toMatchObject({ status: 'failed' });
+  });
+
   it('skips a corpus-triggered run at an unchanged version, but not a manual one', async () => {
     const { repo, evalRepo, runner } = runnerSetup();
     await addDocument(repo, 'resume', [0]);
-    await runner.run(OWNER, 'corpus');
-    await runner.run(OWNER, 'corpus');
+    await runOnce(runner, 'corpus');
+    await runOnce(runner, 'corpus');
     const count = () => [...evalRepo.runs.values()].filter((r) => r.ownerId === OWNER).length;
     expect(count()).toBe(1);
-    await runner.run(OWNER, 'manual');
+    await runOnce(runner, 'manual');
     expect(count()).toBe(2);
   });
 
   it('queues at most one run per owner, and a manual request upgrades a waiting one', async () => {
     const { repo, evalRepo, runner } = runnerSetup();
     await addDocument(repo, 'resume', [0]);
-    await runner.run(OWNER, 'corpus');
+    await runOnce(runner, 'corpus');
 
     expect(runner.request(OWNER, 'corpus')).toBe(true);
     expect(runner.isRunning(OWNER)).toBe(true);
@@ -189,6 +246,11 @@ describe('eval run diff', () => {
     });
     expect(diffs[2]).toMatchObject({ change: 'new', previousTopSimilarity: null });
     expect(removed.map((r) => r.question)).toEqual(['q3']);
+  });
+
+  it('reports a different answer alone, without calling the result changed', () => {
+    const { diffs } = diffRuns([result({ answer: 'reworded' })], [result({ answer: 'a' })]);
+    expect(diffs[0]).toMatchObject({ change: 'unchanged', answerChanged: true });
   });
 
   it('matches a purged question by its text', () => {
@@ -261,7 +323,12 @@ describe('eval set over HTTP', () => {
     const body = await state(a);
     expect(body.questions).toHaveLength(CANNED_EVAL_QUESTIONS.length);
     expect(body.questions.every((q) => q.status === 'active')).toBe(true);
-    expect(body.settings).toMatchObject({ activeSize: 10, promoteSessions: 2, answering: true });
+    expect(body.settings).toMatchObject({
+      activeSize: 10,
+      suggestSessions: 2,
+      maxCandidates: 500,
+      answering: true,
+    });
     expect(body.latestRun).toBeNull();
   });
 
@@ -269,10 +336,12 @@ describe('eval set over HTTP', () => {
     const a = await start();
     const question = 'Do you have experience with Rust?';
     expect((await retrieve(a, { query: question })).statusCode).toBe(200);
+    // The playground is strict: it cannot be asked to record.
+    expect((await retrieve(a, { query: question }, '/search')).statusCode).toBe(200);
     expect(
       (await retrieve(a, { query: question, record: true, sessionId: 'abcdefgh' }, '/search'))
         .statusCode,
-    ).toBe(200);
+    ).toBe(400);
     await settle(a);
     expect((await state(a)).questions.some((q) => q.status === 'candidate')).toBe(false);
 
@@ -304,6 +373,30 @@ describe('eval set over HTTP', () => {
     await settle(a);
     const stored = (await state(a)).questions.find((q) => q.origin === 'visitor');
     expect(stored?.question).toBe(`Can I send the offer to ${EMAIL_MASK}?`);
+  });
+
+  it('only the owner promotes: visitor asks from many sessions leave a candidate', async () => {
+    const a = await start();
+    const question = 'Do you have experience with Rust?';
+    for (const sessionId of ['session-aaaa', 'session-bbbb', 'session-cccc']) {
+      await retrieve(a, { query: question, record: true, sessionId });
+    }
+    await settle(a);
+    const before = await state(a);
+    const candidate = before.questions.find((q) => q.question === question);
+    expect(candidate).toMatchObject({ status: 'candidate', distinctSessions: 3 });
+    expect(before.questions.filter((q) => q.status === 'active')).toHaveLength(10);
+
+    const res = await a.inject({
+      method: 'POST',
+      url: `/eval/questions/${candidate?.id ?? ''}`,
+      headers: ownerAuth,
+      payload: { action: 'promote' },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = EvalQuestionResponseSchema.parse(res.json());
+    expect(body.question.status).toBe('active');
+    expect(body.evicted).toHaveLength(1);
   });
 
   it('runs on every corpus change and diffs against the previous version', async () => {

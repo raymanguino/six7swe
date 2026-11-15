@@ -56,6 +56,14 @@ export function createMemoryEvalRepository(): EvalRepository & {
         b.startedAt.getTime() - a.startedAt.getTime() ||
         (runSeq.get(b.id) ?? 0) - (runSeq.get(a.id) ?? 0),
     )[0] ?? null;
+  /** Deletes a question; its sessions go with it and results keep the text (as in Postgres). */
+  const remove = (id: string) => {
+    questions.delete(id);
+    sessions.delete(id);
+    for (const run of runs.values()) {
+      for (const r of run.results) if (r.questionId === id) r.questionId = null;
+    }
+  };
   const copyRun = (run: EvalRunWithResults | null) =>
     run && { ...run, results: run.results.map((r) => ({ ...r, chunkIds: [...r.chunkIds] })) };
 
@@ -89,6 +97,7 @@ export function createMemoryEvalRepository(): EvalRepository & {
     async nearestQuestion(ownerId, embedding) {
       let best: { question: EvalQuestionRecord; similarity: number } | null = null;
       for (const q of ownerQuestions(ownerId)) {
+        if (q.status === 'retired') continue;
         const similarity = cosine(q.embedding, embedding);
         if (!best || similarity > best.similarity) best = { question: strip(q), similarity };
       }
@@ -113,6 +122,11 @@ export function createMemoryEvalRepository(): EvalRepository & {
       };
       questions.set(id, record);
       sessions.set(id, new Set([input.sessionHash]));
+      const excess = ownerQuestions(input.ownerId)
+        .filter((q) => q.status === 'candidate')
+        .sort((a, b) => lru(b, a))
+        .slice(input.maxCandidates);
+      for (const q of excess) remove(q.id);
       return strip(record);
     },
 
@@ -137,28 +151,32 @@ export function createMemoryEvalRepository(): EvalRepository & {
       const target = questions.get(id);
       if (!target || target.ownerId !== ownerId) return { status: 'not-found' };
       if (target.status === 'active') {
-        return { status: 'promoted', question: strip(target), evicted: null };
+        return { status: 'promoted', question: strip(target), evicted: [] };
       }
       const active = ownerQuestions(ownerId).filter((q) => q.status === 'active');
-      let evicted: EvalQuestionRecord | null = null;
-      if (active.length >= maxActive) {
-        const victim = active.filter((q) => !q.pinned && q.id !== id).sort(lru)[0];
-        if (!victim) return { status: 'full' };
+      const needed = Math.max(0, active.length - maxActive + 1);
+      const victims = active
+        .filter((q) => !q.pinned && q.id !== id)
+        .sort(lru)
+        .slice(0, needed);
+      if (victims.length < needed) return { status: 'full' };
+      const evicted = victims.map((victim) => {
         const retired = { ...victim, status: 'retired' as const };
         questions.set(victim.id, retired);
-        evicted = strip(retired);
-      }
+        return strip(retired);
+      });
       const promoted = { ...target, status: 'active' as const, offTopic: false };
       questions.set(id, promoted);
       return { status: 'promoted', question: strip(promoted), evicted };
     },
 
-    async updateQuestion(ownerId, id, patch) {
+    async updateQuestion(ownerId, id, patch, onlyIf) {
       const q = questions.get(id);
-      if (!q || q.ownerId !== ownerId) return null;
+      if (!q || q.ownerId !== ownerId) return { status: 'not-found' };
+      if (onlyIf && !onlyIf.includes(q.status)) return { status: 'conflict', question: strip(q) };
       const updated = { ...q, ...patch };
       questions.set(id, updated);
-      return strip(updated);
+      return { status: 'updated', question: strip(updated) };
     },
 
     async getQuestion(ownerId, id) {
@@ -184,15 +202,13 @@ export function createMemoryEvalRepository(): EvalRepository & {
         .map((q) => ({ ...q, embedding: [...q.embedding] }));
     },
 
-    async purgeCandidates(ownerId, before) {
+    async purgeStale(ownerId, before) {
       let count = 0;
       for (const q of ownerQuestions(ownerId)) {
-        if (q.status === 'candidate' && q.lastAskedAt < before) {
-          questions.delete(q.id);
-          sessions.delete(q.id);
-          for (const run of runs.values()) {
-            for (const r of run.results) if (r.questionId === q.id) r.questionId = null;
-          }
+        const stale =
+          q.status === 'candidate' || (q.status === 'retired' && q.origin === 'visitor');
+        if (stale && q.lastAskedAt < before) {
+          remove(q.id);
           count++;
         }
       }
@@ -220,7 +236,7 @@ export function createMemoryEvalRepository(): EvalRepository & {
 
     async finishRun(runId, outcome) {
       const run = runs.get(runId);
-      if (!run) return;
+      if (!run || run.status !== 'running') return false;
       runs.set(runId, {
         ...run,
         status: outcome.status,
@@ -231,6 +247,7 @@ export function createMemoryEvalRepository(): EvalRepository & {
           chunkIds: [...r.chunkIds],
         })),
       });
+      return true;
     },
 
     async abandonRunning(reason) {
