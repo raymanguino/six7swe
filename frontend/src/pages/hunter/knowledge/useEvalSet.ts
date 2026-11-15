@@ -20,10 +20,12 @@ export interface EvalSetState {
   loading: boolean;
   /** The last read or action failed, with why; cleared by the next success. */
   error: string | null;
+  /** Not an error: the run is taking longer than the page follows it. */
+  notice: string | null;
   /** The id of the question an action is in flight for, or `run` while queuing a run. */
   busy: string | null;
-  /** The question retired to make room by the last promotion, if any. */
-  lastEvicted: EvalQuestion | null;
+  /** The questions the last promotion retired to make room; cleared when the next action starts. */
+  lastEvicted: EvalQuestion[];
   reload: () => Promise<void>;
   runNow: () => Promise<void>;
   act: (question: EvalQuestion, action: EvalQuestionAction) => Promise<void>;
@@ -40,7 +42,8 @@ export function useEvalSet(enabled: boolean, refreshKey: string | null): EvalSet
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [lastEvicted, setLastEvicted] = useState<EvalQuestion | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [lastEvicted, setLastEvicted] = useState<EvalQuestion[]>([]);
   const [pollStartedAt, setPollStartedAt] = useState<number | null>(null);
   const mounted = useRef(true);
   const loadSeq = useRef(0);
@@ -71,10 +74,15 @@ export function useEvalSet(enabled: boolean, refreshKey: string | null): EvalSet
     if (enabled) void reload();
   }, [enabled, reload, refreshKey]);
 
+  // The poll window restarts whenever a new run shows up while running (a
+  // corpus change queued another one), so a long series of runs is followed
+  // to its end rather than for POLL_LIMIT_MS from the first.
   const running = state?.running === true;
+  const latestRunId = state?.latestRun?.id ?? null;
   useEffect(() => {
     setPollStartedAt(running ? Date.now() : null);
-  }, [running]);
+    if (!running) setNotice(null);
+  }, [running, latestRunId]);
 
   useEffect(() => {
     if (!enabled || pollStartedAt === null) return;
@@ -83,7 +91,7 @@ export function useEvalSet(enabled: boolean, refreshKey: string | null): EvalSet
     const tick = async () => {
       if (cancelled) return;
       if (Date.now() - pollStartedAt > POLL_LIMIT_MS) {
-        if (mounted.current) setError(RUN_TIMEOUT_MESSAGE);
+        if (mounted.current) setNotice(RUN_TIMEOUT_MESSAGE);
         return;
       }
       await reload();
@@ -114,6 +122,7 @@ export function useEvalSet(enabled: boolean, refreshKey: string | null): EvalSet
   const act = useCallback(
     async (question: EvalQuestion, action: EvalQuestionAction) => {
       setBusy(question.id);
+      setLastEvicted([]);
       let failure: string | null = null;
       try {
         const result = parseEvalQuestionResponse(
@@ -135,5 +144,5 @@ export function useEvalSet(enabled: boolean, refreshKey: string | null): EvalSet
     [reload],
   );
 
-  return { state, loading, error, busy, lastEvicted, reload, runNow, act };
+  return { state, loading, error, notice, busy, lastEvicted, reload, runNow, act };
 }

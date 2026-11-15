@@ -2,8 +2,10 @@ import { requestContext } from '@fastify/request-context';
 import { FastifyReply, FastifyRequest } from 'fastify';
 import {
   EvalQuestionActionRequestSchema,
+  IdParamsSchema,
   PublishRequestSchema,
   SaveDraftRequestSchema,
+  SearchRequestSchema,
 } from '@six7swe/knowledge-types';
 import { z } from 'zod';
 import type { KnowledgeConfig } from '../../config/knowledge';
@@ -23,16 +25,8 @@ import type { FetchLike } from '../../services/knowledge/transport';
  * run when these are called.
  */
 
-const DocumentParamsSchema = z.object({ id: z.uuid() });
 /** Mirrors the service's document kinds; the service validates again. */
 const UploadQuerySchema = z.object({ kind: z.enum(['resume', 'supporting']).optional() });
-/** Mirrors the service's retrieve request (query up to 2000 characters, k from 1 to 20). */
-const SearchBodySchema = z
-  .object({
-    query: z.string().trim().min(1).max(2000),
-    k: z.number().int().min(1).max(20).optional(),
-  })
-  .strict();
 
 export interface KnowledgeHandlerDeps {
   config: KnowledgeConfig;
@@ -96,7 +90,7 @@ export function knowledgeHandlers(deps: KnowledgeHandlerDeps) {
   /** Validates `:id` as a UUID (400 otherwise) and builds the request from it. */
   function withDocumentId(build: (id: string) => ProxyRequest): Handler {
     return async (req, reply) => {
-      const parsed = DocumentParamsSchema.safeParse(req.params);
+      const parsed = IdParamsSchema.safeParse(req.params);
       if (!parsed.success) return badRequest(reply, parsed.error);
       return forward(req, reply, build(encodeURIComponent(parsed.data.id)));
     };
@@ -143,7 +137,7 @@ export function knowledgeHandlers(deps: KnowledgeHandlerDeps) {
 
     /** The "ask as a visitor" playground: the same retrieval the chat will use. */
     async search(req: FastifyRequest, reply: FastifyReply) {
-      const body = SearchBodySchema.safeParse(req.body);
+      const body = SearchRequestSchema.safeParse(req.body);
       if (!body.success) return badRequest(reply, body.error);
       return forward(req, reply, {
         method: 'POST',
@@ -194,7 +188,7 @@ export function knowledgeHandlers(deps: KnowledgeHandlerDeps) {
 
     /** Pin, unpin, retire, promote, or flag an eval question off-topic. */
     async actOnEvalQuestion(req: FastifyRequest, reply: FastifyReply) {
-      const params = DocumentParamsSchema.safeParse(req.params);
+      const params = IdParamsSchema.safeParse(req.params);
       if (!params.success) return badRequest(reply, params.error);
       const body = EvalQuestionActionRequestSchema.safeParse(req.body);
       if (!body.success) return badRequest(reply, body.error);

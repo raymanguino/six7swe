@@ -362,7 +362,7 @@ describe('knowledge owner proxy routes', () => {
     expect(service.calls).toHaveLength(0);
 
     expect((await search({ query: ' kafka ' })).statusCode).toBe(200);
-    expect(JSON.parse(String(service.calls[0]?.init.body))).toEqual({ query: 'kafka' });
+    expect(JSON.parse(String(service.calls[0]?.init.body))).toEqual({ query: 'kafka', k: 6 });
   });
 
   it('answers 503 to the owner when the service is not configured', async () => {

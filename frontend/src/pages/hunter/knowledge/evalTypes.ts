@@ -56,7 +56,8 @@ export interface EvalRun {
 export interface EvalSettings {
   activeSize: number;
   clusterSimilarity: number;
-  promoteSessions: number;
+  suggestSessions: number;
+  maxCandidates: number;
   gapSimilarity: number;
   offTopicSimilarity: number;
   candidateTtlDays: number;
@@ -122,7 +123,7 @@ const isRun = (value: unknown): value is EvalRun =>
 const isSettings = (value: unknown): value is EvalSettings =>
   isRecord(value) &&
   typeof value.activeSize === 'number' &&
-  typeof value.promoteSessions === 'number' &&
+  typeof value.suggestSessions === 'number' &&
   typeof value.gapSimilarity === 'number' &&
   typeof value.candidateTtlDays === 'number' &&
   typeof value.answering === 'boolean';
@@ -154,12 +155,14 @@ export function parseEvalState(data: unknown): EvalState {
 /** `POST /knowledge/eval/questions/:id`. */
 export function parseEvalQuestionResponse(data: unknown): {
   question: EvalQuestion;
-  evicted: EvalQuestion | null;
+  /** The questions a promotion retired to make room. */
+  evicted: EvalQuestion[];
 } {
   if (
     !isRecord(data) ||
     !isQuestion(data.question) ||
-    !(data.evicted === null || isQuestion(data.evicted))
+    !Array.isArray(data.evicted) ||
+    !data.evicted.every(isQuestion)
   ) {
     return invalid('eval question');
   }

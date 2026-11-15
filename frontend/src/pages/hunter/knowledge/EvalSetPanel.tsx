@@ -6,7 +6,8 @@ import type { EvalSetState } from './useEvalSet';
  * knowledge gaps and what changed since the previous version, then the
  * active questions, the visitor candidates with their counts, and the retired
  * ones. The owner can pin, retire and promote questions, and flag one
- * off-topic.
+ * off-topic. Only the owner promotes: visitor session ids are client-chosen,
+ * so counts only mark a candidate as suggested.
  */
 
 const BUTTON =
@@ -50,7 +51,8 @@ function ResultRow({ result }: { result: EvalResult }) {
         {fixed && <Badge tone="green">gap closed</Badge>}
         {result.diff?.change === 'new' && <Badge tone="gray">new</Badge>}
         {result.diff?.chunksChanged && <Badge tone="amber">chunks changed</Badge>}
-        {result.diff?.answerChanged && <Badge tone="amber">answer changed</Badge>}
+        {/* Informational: model answers vary between runs on the same chunks. */}
+        {result.diff?.answerChanged && <Badge tone="gray">answer reworded</Badge>}
       </div>
       {result.answer && (
         <details className="mt-1">
@@ -109,9 +111,19 @@ interface QuestionListProps {
   busy: string | null;
   actions: (q: EvalQuestion) => Array<{ action: EvalQuestionAction; label: string }>;
   onAct: (q: EvalQuestion, action: EvalQuestionAction) => void;
+  /** Marks questions worth the owner's look (a hint; nothing is promoted automatically). */
+  suggested?: (q: EvalQuestion) => boolean;
 }
 
-function QuestionList({ title, empty, questions, busy, actions, onAct }: QuestionListProps) {
+function QuestionList({
+  title,
+  empty,
+  questions,
+  busy,
+  actions,
+  onAct,
+  suggested,
+}: QuestionListProps) {
   return (
     <div>
       <h4 className="text-sm font-semibold text-gray-900 dark:text-white">
@@ -129,6 +141,7 @@ function QuestionList({ title, empty, questions, busy, actions, onAct }: Questio
                   ? 'canned'
                   : `${q.hitCount} asks, ${q.distinctSessions} session${q.distinctSessions === 1 ? '' : 's'}`}
               </span>
+              {suggested?.(q) && <Badge tone="amber">suggested</Badge>}
               {q.pinned && <Badge tone="green">pinned</Badge>}
               {q.offTopic && <Badge tone="gray">off-topic</Badge>}
               {actions(q).map(({ action, label }) => (
@@ -151,12 +164,17 @@ function QuestionList({ title, empty, questions, busy, actions, onAct }: Questio
 }
 
 export default function EvalSetPanel({ evalSet }: { evalSet: EvalSetState }) {
-  const { state, loading, error, busy, lastEvicted, runNow, act } = evalSet;
+  const { state, loading, error, notice, busy, lastEvicted, runNow, act } = evalSet;
   const questions = state?.questions ?? [];
-  const active = questions.filter((q) => q.status === 'active');
-  const candidates = questions.filter((q) => q.status === 'candidate');
-  const retired = questions.filter((q) => q.status === 'retired');
   const settings = state?.settings;
+  const isSuggested = (q: EvalQuestion) =>
+    settings !== undefined && !q.offTopic && q.distinctSessions >= settings.suggestSessions;
+  const active = questions.filter((q) => q.status === 'active');
+  // Suggested candidates first; otherwise most recently asked first, as listed.
+  const candidates = questions
+    .filter((q) => q.status === 'candidate')
+    .sort((a, b) => Number(isSuggested(b)) - Number(isSuggested(a)));
+  const retired = questions.filter((q) => q.status === 'retired');
 
   return (
     <section className="space-y-6 rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-800">
@@ -165,7 +183,7 @@ export default function EvalSetPanel({ evalSet }: { evalSet: EvalSetState }) {
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Chat eval set</h3>
           <p className="mt-1 max-w-3xl text-sm text-gray-600 dark:text-gray-300">
             {settings
-              ? `Up to ${settings.activeSize} questions, re-run whenever the documents change. A visitor question asked in ${settings.promoteSessions} separate sessions joins the set, replacing the least recently asked question that is not pinned. A question whose best chunk scores below ${settings.gapSimilarity.toFixed(2)} is a knowledge gap. Candidates not asked for ${settings.candidateTtlDays} days are dropped.`
+              ? `Up to ${settings.activeSize} questions, re-run whenever the documents change. Visitor questions collect here as candidates; one asked in ${settings.suggestSessions} or more separate sessions is marked suggested. Only you promote: promoting replaces the least recently asked question that is not pinned. A question whose best chunk scores below ${settings.gapSimilarity.toFixed(2)} is a knowledge gap. Candidates not asked for ${settings.candidateTtlDays} days are dropped, and at most ${settings.maxCandidates} are kept.`
               : 'The questions the chat is checked against.'}
             {settings &&
               !settings.answering &&
@@ -187,9 +205,10 @@ export default function EvalSetPanel({ evalSet }: { evalSet: EvalSetState }) {
           {error}
         </p>
       )}
-      {lastEvicted && (
+      {notice && <p className="text-sm text-amber-700 dark:text-amber-300">{notice}</p>}
+      {lastEvicted.length > 0 && (
         <p className="text-sm text-gray-600 dark:text-gray-300">
-          Retired to make room: &ldquo;{lastEvicted.question}&rdquo;
+          Retired to make room: {lastEvicted.map((q) => `“${q.question}”`).join(', ')}
         </p>
       )}
 
@@ -225,6 +244,7 @@ export default function EvalSetPanel({ evalSet }: { evalSet: EvalSetState }) {
             empty="No visitor questions waiting."
             questions={candidates}
             busy={busy}
+            suggested={isSuggested}
             onAct={(q, a) => void act(q, a)}
             actions={(q) => [
               { action: 'promote', label: 'Promote' },
