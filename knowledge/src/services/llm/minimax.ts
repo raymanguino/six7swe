@@ -58,6 +58,8 @@ export interface MiniMaxOptions {
   fetchImpl?: typeof fetch;
   /** One deadline for the whole call, the retry and the body included. */
   timeoutMs?: number;
+  /** Stops the call early as well (the caller's own timeout, or its work being abandoned). */
+  signal?: AbortSignal;
 }
 
 export interface ChatMessage {
@@ -79,7 +81,8 @@ export async function completeWithMiniMax(
     max_completion_tokens: MINIMAX_MAX_COMPLETION_TOKENS,
     reasoning_effort: 'medium',
   });
-  const signal = AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const deadline = AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const signal = options.signal ? AbortSignal.any([deadline, options.signal]) : deadline;
   const send = (key: string) =>
     fetchImpl(options.url, {
       method: 'POST',

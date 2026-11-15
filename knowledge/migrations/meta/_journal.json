@@ -36,6 +36,13 @@
       "when": 1794693492055,
       "tag": "0004_eval_set",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794706130717,
+      "tag": "0005_eval_retired_at",
+      "breakpoints": true
     }
   ]
 }

@@ -90,7 +90,7 @@ export function describeEvalRepositoryContract(
       await evalRepo.recordAsk(q0.id, 'c'.repeat(64), at(30));
       await evalRepo.recordAsk(q2.id, 'c'.repeat(64), at(20));
       await evalRepo.recordAsk(q1.id, 'c'.repeat(64), at(1));
-      await evalRepo.updateQuestion(owner, q1.id, { pinned: true });
+      await evalRepo.updateQuestion(owner, q1.id, { pinned: true }, undefined, at(3));
 
       const candidate = await evalRepo.createCandidate({
         ownerId: owner,
@@ -101,7 +101,7 @@ export function describeEvalRepositoryContract(
         now: at(40),
         maxCandidates: 500,
       });
-      const outcome = await evalRepo.promote(owner, candidate.id, 3);
+      const outcome = await evalRepo.promote(owner, candidate.id, 3, at(70));
       expect(outcome.status).toBe('promoted');
       if (outcome.status !== 'promoted') return;
       expect(outcome.question).toMatchObject({ status: 'active', offTopic: false });
@@ -109,14 +109,16 @@ export function describeEvalRepositoryContract(
       expect(outcome.evicted[0]?.status).toBe('retired');
 
       // Promoting an active question changes nothing.
-      const again = await evalRepo.promote(owner, candidate.id, 3);
+      const again = await evalRepo.promote(owner, candidate.id, 3, at(70));
       expect(again).toMatchObject({ status: 'promoted', evicted: [] });
 
       // Room left: no eviction.
-      const roomy = await evalRepo.promote(owner, q2.id, 4);
+      const roomy = await evalRepo.promote(owner, q2.id, 4, at(70));
       expect(roomy).toMatchObject({ status: 'promoted', evicted: [] });
 
-      expect(await evalRepo.promote('someone-else', q2.id, 4)).toEqual({ status: 'not-found' });
+      expect(await evalRepo.promote('someone-else', q2.id, 4, at(70))).toEqual({
+        status: 'not-found',
+      });
     });
 
     it('evicts as many as needed when the active set is over its size', async () => {
@@ -131,7 +133,7 @@ export function describeEvalRepositoryContract(
         maxCandidates: 500,
       });
       // Four active, room for two: three must go so the new one fits.
-      const outcome = await evalRepo.promote(owner, candidate.id, 2);
+      const outcome = await evalRepo.promote(owner, candidate.id, 2, at(70));
       expect(outcome.status).toBe('promoted');
       if (outcome.status !== 'promoted') return;
       expect(outcome.evicted).toHaveLength(3);
@@ -149,7 +151,7 @@ export function describeEvalRepositoryContract(
       const { evalRepo, owner, questions } = await seeded(2);
       const target0 = questions.find((q) => q.question === 'canned question number 0');
       if (!target0) throw new Error('not seeded');
-      await evalRepo.updateQuestion(owner, target0.id, { status: 'retired' });
+      await evalRepo.updateQuestion(owner, target0.id, { status: 'retired' }, undefined, at(3));
       const nearest = await evalRepo.nearestQuestion(owner, embed('canned question number 0'));
       expect(nearest?.question.id).not.toBe(target0.id);
     });
@@ -158,14 +160,85 @@ export function describeEvalRepositoryContract(
       const { evalRepo, owner, questions } = await seeded(1);
       const first = questions[0];
       if (!first) throw new Error('not seeded');
-      await evalRepo.updateQuestion(owner, first.id, { status: 'retired' });
-      const refused = await evalRepo.updateQuestion(owner, first.id, { pinned: true }, ['active']);
+      await evalRepo.updateQuestion(owner, first.id, { status: 'retired' }, undefined, at(3));
+      const refused = await evalRepo.updateQuestion(
+        owner,
+        first.id,
+        { pinned: true },
+        ['active'],
+        at(3),
+      );
       expect(refused).toMatchObject({ status: 'conflict', question: { status: 'retired' } });
       expect((await evalRepo.getQuestion(owner, first.id))?.pinned).toBe(false);
-      const applied = await evalRepo.updateQuestion(owner, first.id, { offTopic: true }, [
-        'retired',
-      ]);
+      const applied = await evalRepo.updateQuestion(
+        owner,
+        first.id,
+        { offTopic: true },
+        ['retired'],
+        at(4),
+      );
       expect(applied).toMatchObject({ status: 'updated', question: { offTopic: true } });
+    });
+
+    it('tracks when a question was retired, and clears it when it comes back', async () => {
+      const { evalRepo, owner, questions } = await seeded(2);
+      const [q0, q1] = questions;
+      if (!q0 || !q1) throw new Error('not seeded');
+      expect(q0.retiredAt).toBeNull();
+
+      const retired = await evalRepo.updateQuestion(
+        owner,
+        q0.id,
+        { status: 'retired' },
+        undefined,
+        at(10),
+      );
+      expect(retired).toMatchObject({ status: 'updated', question: { retiredAt: at(10) } });
+      // Retiring again (or flagging) keeps the original time.
+      const again = await evalRepo.updateQuestion(
+        owner,
+        q0.id,
+        { status: 'retired', offTopic: true },
+        undefined,
+        at(20),
+      );
+      expect(again).toMatchObject({ question: { retiredAt: at(10) } });
+
+      // Promoted back: cleared. Its eviction victim gets the promotion's time.
+      const promoted = await evalRepo.promote(owner, q0.id, 2, at(30));
+      expect(promoted).toMatchObject({ status: 'promoted', question: { retiredAt: null } });
+      const candidate = await evalRepo.createCandidate({
+        ownerId: owner,
+        question: 'pushes one out',
+        embedding: embed('pushes one out'),
+        offTopic: false,
+        sessionHash: 'a'.repeat(64),
+        now: at(31),
+        maxCandidates: 500,
+      });
+      const evicting = await evalRepo.promote(owner, candidate.id, 2, at(40));
+      expect(evicting.status).toBe('promoted');
+      if (evicting.status !== 'promoted') return;
+      expect(evicting.evicted[0]?.retiredAt).toEqual(at(40));
+    });
+
+    it('purges a retired visitor question by its retirement time, not its last ask', async () => {
+      const { evalRepo, newOwner } = target();
+      const owner = newOwner();
+      const old = await evalRepo.createCandidate({
+        ownerId: owner,
+        question: 'asked long ago',
+        embedding: embed('asked long ago'),
+        offTopic: false,
+        sessionHash: 'a'.repeat(64),
+        now: at(1),
+        maxCandidates: 500,
+      });
+      // Retired recently, although last asked long before the cutoff.
+      await evalRepo.updateQuestion(owner, old.id, { status: 'retired' }, undefined, at(100));
+      expect(await evalRepo.purgeStale(owner, at(50))).toBe(0);
+      expect((await evalRepo.getQuestion(owner, old.id))?.status).toBe('retired');
+      expect(await evalRepo.purgeStale(owner, at(200))).toBe(1);
     });
 
     it('caps the candidates per owner, dropping the least recently asked', async () => {
@@ -188,7 +261,8 @@ export function describeEvalRepositoryContract(
 
     it('refuses to promote when every active question is pinned', async () => {
       const { evalRepo, owner, questions } = await seeded(2);
-      for (const q of questions) await evalRepo.updateQuestion(owner, q.id, { pinned: true });
+      for (const q of questions)
+        await evalRepo.updateQuestion(owner, q.id, { pinned: true }, undefined, at(3));
       const candidate = await evalRepo.createCandidate({
         ownerId: owner,
         question: 'waiting',
@@ -198,7 +272,7 @@ export function describeEvalRepositoryContract(
         now: at(5),
         maxCandidates: 500,
       });
-      expect(await evalRepo.promote(owner, candidate.id, 2)).toEqual({ status: 'full' });
+      expect(await evalRepo.promote(owner, candidate.id, 2, at(70))).toEqual({ status: 'full' });
       expect((await evalRepo.getQuestion(owner, candidate.id))?.status).toBe('candidate');
     });
 
@@ -206,12 +280,14 @@ export function describeEvalRepositoryContract(
       const { evalRepo, owner, questions } = await seeded(2);
       const first = questions[0];
       if (!first) throw new Error('not seeded');
-      expect(await evalRepo.updateQuestion('someone-else', first.id, { pinned: true })).toEqual({
+      expect(
+        await evalRepo.updateQuestion('someone-else', first.id, { pinned: true }, undefined, at(3)),
+      ).toEqual({
         status: 'not-found',
       });
       expect(await evalRepo.getQuestion('someone-else', first.id)).toBeNull();
 
-      await evalRepo.updateQuestion(owner, first.id, { status: 'retired' });
+      await evalRepo.updateQuestion(owner, first.id, { status: 'retired' }, undefined, at(3));
       await evalRepo.createCandidate({
         ownerId: owner,
         question: 'candidate',
@@ -233,7 +309,7 @@ export function describeEvalRepositoryContract(
       const canned = questions[0];
       if (!canned) throw new Error('not seeded');
       // A retired canned question stays however old; a retired visitor one goes.
-      await evalRepo.updateQuestion(owner, canned.id, { status: 'retired' });
+      await evalRepo.updateQuestion(owner, canned.id, { status: 'retired' }, undefined, at(3));
       const retiredVisitor = await evalRepo.createCandidate({
         ownerId: owner,
         question: 'retired visitor',
@@ -243,7 +319,13 @@ export function describeEvalRepositoryContract(
         now: at(2),
         maxCandidates: 500,
       });
-      await evalRepo.updateQuestion(owner, retiredVisitor.id, { status: 'retired' });
+      await evalRepo.updateQuestion(
+        owner,
+        retiredVisitor.id,
+        { status: 'retired' },
+        undefined,
+        at(3),
+      );
       const stale = await evalRepo.createCandidate({
         ownerId: owner,
         question: 'stale',

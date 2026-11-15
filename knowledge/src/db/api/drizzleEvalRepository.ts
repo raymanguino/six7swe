@@ -22,8 +22,19 @@ const questionColumns = {
   hitCount: evalQuestions.hitCount,
   distinctSessions: evalQuestions.distinctSessions,
   lastAskedAt: evalQuestions.lastAskedAt,
+  retiredAt: evalQuestions.retiredAt,
   createdAt: evalQuestions.createdAt,
 };
+
+/** `retired_at` for a status change: set on becoming retired, kept if already retired, else cleared. */
+function retiredAtFor(
+  current: EvalQuestionRecord,
+  status: EvalQuestionRecord['status'],
+  now: Date,
+): Date | null {
+  if (status !== 'retired') return null;
+  return current.status === 'retired' ? current.retiredAt : now;
+}
 
 /** Least recently asked first; ties go to the oldest, then the lowest id, so the order is total. */
 const leastRecentlyAsked = [
@@ -120,6 +131,8 @@ export function createDrizzleEvalRepository(db: KnowledgeDb): EvalRepository {
 
     async createCandidate(input) {
       return db.transaction(async (tx) => {
+        // The promotion lock: the cap below never races an owner promoting a candidate.
+        await lockEvalSet(tx, input.ownerId);
         const [row] = await tx
           .insert(evalQuestions)
           .values({
@@ -153,10 +166,14 @@ export function createDrizzleEvalRepository(db: KnowledgeDb): EvalRepository {
           )
           .offset(input.maxCandidates);
         if (excess.length > 0) {
+          // Still a candidate at delete time, belt and braces with the lock.
           await tx.delete(evalQuestions).where(
-            inArray(
-              evalQuestions.id,
-              excess.map((e) => e.id),
+            and(
+              inArray(
+                evalQuestions.id,
+                excess.map((e) => e.id),
+              ),
+              eq(evalQuestions.status, 'candidate'),
             ),
           );
         }
@@ -192,7 +209,7 @@ export function createDrizzleEvalRepository(db: KnowledgeDb): EvalRepository {
       });
     },
 
-    async promote(ownerId, id, maxActive): Promise<PromoteOutcome> {
+    async promote(ownerId, id, maxActive, now): Promise<PromoteOutcome> {
       return db.transaction(async (tx) => {
         await lockEvalSet(tx, ownerId);
         const target = await findQuestion(tx, ownerId, id);
@@ -226,7 +243,7 @@ export function createDrizzleEvalRepository(db: KnowledgeDb): EvalRepository {
           if (victims.length < needed) return { status: 'full' };
           evicted = await tx
             .update(evalQuestions)
-            .set({ status: 'retired' })
+            .set({ status: 'retired', retiredAt: now })
             .where(
               inArray(
                 evalQuestions.id,
@@ -238,7 +255,7 @@ export function createDrizzleEvalRepository(db: KnowledgeDb): EvalRepository {
 
         const [promoted] = await tx
           .update(evalQuestions)
-          .set({ status: 'active', offTopic: false })
+          .set({ status: 'active', offTopic: false, retiredAt: null })
           .where(eq(evalQuestions.id, id))
           .returning(questionColumns);
         if (!promoted) throw new Error('eval question promotion returned no row');
@@ -246,7 +263,7 @@ export function createDrizzleEvalRepository(db: KnowledgeDb): EvalRepository {
       });
     },
 
-    async updateQuestion(ownerId, id, patch, onlyIf): Promise<UpdateOutcome> {
+    async updateQuestion(ownerId, id, patch, onlyIf, now): Promise<UpdateOutcome> {
       return db.transaction(async (tx) => {
         // The same lock as promotion, so the status checked here is the one written over.
         await lockEvalSet(tx, ownerId);
@@ -256,9 +273,13 @@ export function createDrizzleEvalRepository(db: KnowledgeDb): EvalRepository {
           return { status: 'conflict', question: current };
         }
         if (Object.keys(patch).length === 0) return { status: 'updated', question: current };
+        const set =
+          patch.status === undefined
+            ? patch
+            : { ...patch, retiredAt: retiredAtFor(current, patch.status, now) };
         const [row] = await tx
           .update(evalQuestions)
-          .set(patch)
+          .set(set)
           .where(eq(evalQuestions.id, id))
           .returning(questionColumns);
         if (!row) throw new Error('eval question update returned no row');
@@ -296,10 +317,13 @@ export function createDrizzleEvalRepository(db: KnowledgeDb): EvalRepository {
         .where(
           and(
             eq(evalQuestions.ownerId, ownerId),
-            lt(evalQuestions.lastAskedAt, before),
             or(
-              eq(evalQuestions.status, 'candidate'),
-              and(eq(evalQuestions.status, 'retired'), eq(evalQuestions.origin, 'visitor')),
+              and(eq(evalQuestions.status, 'candidate'), lt(evalQuestions.lastAskedAt, before)),
+              and(
+                eq(evalQuestions.status, 'retired'),
+                eq(evalQuestions.origin, 'visitor'),
+                lt(evalQuestions.retiredAt, before),
+              ),
             ),
           ),
         )

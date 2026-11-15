@@ -39,9 +39,9 @@ import { redactQuestion } from './redact.js';
  * - **Off-topic.** A new candidate is flagged off-topic when the corpus has
  *   chunks but the best one is below `offTopicSimilarity`; the owner can set
  *   or clear the flag.
- * - **Purge.** Candidates, and retired visitor questions, not asked for
- *   `candidateTtlDays` are deleted, and an owner keeps at most
- *   `maxCandidates` candidates.
+ * - **Purge.** Candidates not asked for `candidateTtlDays`, and visitor
+ *   questions retired more than `candidateTtlDays` ago (by `retired_at`), are
+ *   deleted, and an owner keeps at most `maxCandidates` candidates.
  */
 
 export interface EvalSettings {
@@ -256,7 +256,7 @@ export function createEvalSet(deps: EvalSetDeps): EvalSet {
     onlyIf?: readonly EvalQuestionStatus[],
     conflict = CHANGED_CONFLICT,
   ): Promise<ActionOutcome> {
-    const outcome = await repo.updateQuestion(ownerId, id, patch, onlyIf);
+    const outcome = await repo.updateQuestion(ownerId, id, patch, onlyIf, now());
     switch (outcome.status) {
       case 'not-found':
         throw new EvalQuestionNotFoundError();
@@ -280,7 +280,7 @@ export function createEvalSet(deps: EvalSetDeps): EvalSet {
       case 'retire':
         return update(ownerId, id, { status: 'retired', pinned: false });
       case 'promote': {
-        const outcome = await repo.promote(ownerId, id, settings.activeSize);
+        const outcome = await repo.promote(ownerId, id, settings.activeSize, now());
         switch (outcome.status) {
           case 'not-found':
             throw new EvalQuestionNotFoundError();

@@ -67,21 +67,34 @@ class AnswerTimeoutError extends Error {
   }
 }
 
-/** `run` over `items` with at most `limit` at once; results in the items' order. */
-async function mapBounded<T, R>(
+/**
+ * `run` over `items` with at most `limit` at once; results in the items'
+ * order. The first failure aborts `controller`: no worker takes another item
+ * after it, and work in flight sees the signal (an answer's model call stops).
+ */
+export async function mapBounded<T, R>(
   items: readonly T[],
   limit: number,
-  run: (item: T) => Promise<R>,
+  controller: AbortController,
+  run: (item: T, signal: AbortSignal) => Promise<R>,
 ): Promise<R[]> {
   const results = new Array<R>(items.length);
   let next = 0;
   const worker = async () => {
-    for (let i = next++; i < items.length; i = next++) {
-      const item = items[i] as T;
-      results[i] = await run(item);
+    while (!controller.signal.aborted && next < items.length) {
+      const i = next++;
+      try {
+        results[i] = await run(items[i] as T, controller.signal);
+      } catch (error) {
+        controller.abort(error);
+        throw error;
+      }
     }
   };
-  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
+  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker);
+  const settled = await Promise.allSettled(workers);
+  const failed = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected');
+  if (failed) throw failed.reason;
   return results;
 }
 
@@ -113,12 +126,23 @@ export function createEvalRunner(deps: EvalRunnerDeps): EvalRunner {
     return true;
   }
 
-  async function answer(question: string, chunks: RetrievedChunk[]): Promise<string | null> {
+  /**
+   * The answer, or null on failure or after `answerTimeoutMs`. The signal
+   * (the run's, plus the timeout) reaches the model call, so a timed-out or
+   * abandoned answer stops instead of running on; the race only covers an
+   * answerer that ignores it.
+   */
+  async function answer(
+    question: string,
+    chunks: RetrievedChunk[],
+    runSignal: AbortSignal,
+  ): Promise<string | null> {
     if (!answerer) return null;
+    const signal = AbortSignal.any([runSignal, AbortSignal.timeout(answerTimeoutMs)]);
     let timer: NodeJS.Timeout | undefined;
     try {
       return await Promise.race([
-        answerer.answer(question, chunks),
+        answerer.answer(question, chunks, signal),
         new Promise<never>((_, reject) => {
           timer = setTimeout(
             () => reject(new AnswerTimeoutError(answerTimeoutMs)),
@@ -127,6 +151,7 @@ export function createEvalRunner(deps: EvalRunnerDeps): EvalRunner {
         }),
       ]);
     } catch (error) {
+      if (runSignal.aborted) throw error;
       const detail = error instanceof ModelError ? error.detail : undefined;
       log.warn({ err: error, detail }, 'Eval answer failed; recording retrieval only');
       return null;
@@ -138,13 +163,14 @@ export function createEvalRunner(deps: EvalRunnerDeps): EvalRunner {
   async function evaluate(
     ownerId: string,
     q: EvalQuestionWithEmbedding,
+    signal: AbortSignal,
   ): Promise<EvalResultRecord> {
     const chunks = await repo.search(ownerId, q.embedding, k);
     const topSimilarity = chunks[0]?.similarity ?? null;
     return {
       questionId: q.id,
       question: q.question,
-      answer: await answer(q.question, chunks),
+      answer: await answer(q.question, chunks, signal),
       chunkIds: chunks.map((c) => c.chunkId),
       topSimilarity,
       gap: topSimilarity === null || topSimilarity < evalSet.settings.gapSimilarity,
@@ -163,7 +189,9 @@ export function createEvalRunner(deps: EvalRunnerDeps): EvalRunner {
     const runRecord = await evalRepo.createRun(ownerId, version, trigger);
     try {
       const questions = await evalRepo.listActiveWithEmbeddings(ownerId);
-      const results = await mapBounded(questions, concurrency, (q) => evaluate(ownerId, q));
+      const results = await mapBounded(questions, concurrency, new AbortController(), (q, signal) =>
+        evaluate(ownerId, q, signal),
+      );
       const stored = await evalRepo.finishRun(runRecord.id, {
         status: 'completed',
         error: null,

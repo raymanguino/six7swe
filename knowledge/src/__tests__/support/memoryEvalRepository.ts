@@ -88,6 +88,7 @@ export function createMemoryEvalRepository(): EvalRepository & {
           hitCount: 0,
           distinctSessions: 0,
           lastAskedAt: now,
+          retiredAt: null,
           createdAt: now,
         });
       }
@@ -118,6 +119,7 @@ export function createMemoryEvalRepository(): EvalRepository & {
         hitCount: 1,
         distinctSessions: 1,
         lastAskedAt: input.now,
+        retiredAt: null,
         createdAt: input.now,
       };
       questions.set(id, record);
@@ -147,7 +149,7 @@ export function createMemoryEvalRepository(): EvalRepository & {
       return strip(updated);
     },
 
-    async promote(ownerId, id, maxActive) {
+    async promote(ownerId, id, maxActive, now) {
       const target = questions.get(id);
       if (!target || target.ownerId !== ownerId) return { status: 'not-found' };
       if (target.status === 'active') {
@@ -161,20 +163,33 @@ export function createMemoryEvalRepository(): EvalRepository & {
         .slice(0, needed);
       if (victims.length < needed) return { status: 'full' };
       const evicted = victims.map((victim) => {
-        const retired = { ...victim, status: 'retired' as const };
+        const retired = { ...victim, status: 'retired' as const, retiredAt: now };
         questions.set(victim.id, retired);
         return strip(retired);
       });
-      const promoted = { ...target, status: 'active' as const, offTopic: false };
+      const promoted = {
+        ...target,
+        status: 'active' as const,
+        offTopic: false,
+        retiredAt: null,
+      };
       questions.set(id, promoted);
       return { status: 'promoted', question: strip(promoted), evicted };
     },
 
-    async updateQuestion(ownerId, id, patch, onlyIf) {
+    async updateQuestion(ownerId, id, patch, onlyIf, now) {
       const q = questions.get(id);
       if (!q || q.ownerId !== ownerId) return { status: 'not-found' };
       if (onlyIf && !onlyIf.includes(q.status)) return { status: 'conflict', question: strip(q) };
-      const updated = { ...q, ...patch };
+      const retiredAt =
+        patch.status === undefined
+          ? q.retiredAt
+          : patch.status !== 'retired'
+            ? null
+            : q.status === 'retired'
+              ? q.retiredAt
+              : now;
+      const updated = { ...q, ...patch, retiredAt };
       questions.set(id, updated);
       return { status: 'updated', question: strip(updated) };
     },
@@ -206,8 +221,12 @@ export function createMemoryEvalRepository(): EvalRepository & {
       let count = 0;
       for (const q of ownerQuestions(ownerId)) {
         const stale =
-          q.status === 'candidate' || (q.status === 'retired' && q.origin === 'visitor');
-        if (stale && q.lastAskedAt < before) {
+          (q.status === 'candidate' && q.lastAskedAt < before) ||
+          (q.status === 'retired' &&
+            q.origin === 'visitor' &&
+            q.retiredAt !== null &&
+            q.retiredAt < before);
+        if (stale) {
           remove(q.id);
           count++;
         }

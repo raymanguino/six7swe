@@ -29,6 +29,8 @@ export interface EvalQuestionRecord {
   hitCount: number;
   distinctSessions: number;
   lastAskedAt: Date;
+  /** When it last became retired; null while it is not retired. */
+  retiredAt: Date | null;
   createdAt: Date;
 }
 
@@ -141,19 +143,22 @@ export interface EvalRepository {
    * transaction, retires the active, unpinned questions asked least recently
    * (ties: the oldest, then the lowest id) until the active set has room for
    * it under `maxActive`. An already active question is returned unchanged.
+   * The evicted get `retired_at = now`; the promoted one's is cleared.
    */
-  promote(ownerId: string, id: string, maxActive: number): Promise<PromoteOutcome>;
+  promote(ownerId: string, id: string, maxActive: number, now: Date): Promise<PromoteOutcome>;
 
   /**
    * Applies the patch, provided the question's status is one of `onlyIf`
    * (any status when omitted), checked and written atomically with respect
-   * to promotions.
+   * to promotions. A status change to `retired` sets `retired_at = now` (an
+   * already retired question keeps its time); any other status clears it.
    */
   updateQuestion(
     ownerId: string,
     id: string,
     patch: EvalQuestionPatch,
-    onlyIf?: readonly EvalQuestionStatus[],
+    onlyIf: readonly EvalQuestionStatus[] | undefined,
+    now: Date,
   ): Promise<UpdateOutcome>;
 
   getQuestion(ownerId: string, id: string): Promise<EvalQuestionRecord | null>;
@@ -165,8 +170,10 @@ export interface EvalRepository {
   listActiveWithEmbeddings(ownerId: string): Promise<EvalQuestionWithEmbedding[]>;
 
   /**
-   * Deletes candidates, and retired visitor questions, last asked before
-   * `before`. Canned questions and active ones stay. Returns how many.
+   * Deletes candidates last asked before `before`, and visitor questions
+   * retired before `before` (by `retired_at`, so a recently evicted
+   * question stays listed for the full TTL however long ago it was asked).
+   * Canned questions and active ones stay. Returns how many.
    */
   purgeStale(ownerId: string, before: Date): Promise<number>;
 

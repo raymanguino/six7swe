@@ -218,7 +218,7 @@ describe('eval set: candidates and owner promotion', () => {
     // Two questions too many active (e.g. a smaller size configured later).
     for (const text of [NOVEL, OTHER_NOVEL]) {
       const { question } = await ask(text, 'session-aaaa');
-      await repo.updateQuestion(OWNER, question.id, { status: 'active' });
+      await repo.updateQuestion(OWNER, question.id, { status: 'active' }, undefined, new Date());
     }
     const { question } = await ask(OFF_TOPIC, 'session-aaaa', 0.5);
     const promoted = await evalSet.act(OWNER, question.id, 'promote');
@@ -325,7 +325,7 @@ describe('eval set: owner controls', () => {
     const first = (await repo.listQuestions(OWNER))[0];
     if (!first) throw new Error('not seeded');
     // As if a concurrent promotion had just evicted it.
-    await repo.updateQuestion(OWNER, first.id, { status: 'retired' });
+    await repo.updateQuestion(OWNER, first.id, { status: 'retired' }, undefined, new Date());
     await expect(evalSet.act(OWNER, first.id, 'pin')).rejects.toMatchObject({ statusCode: 409 });
     expect((await repo.getQuestion(OWNER, first.id))?.pinned).toBe(false);
   });

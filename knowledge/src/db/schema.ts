@@ -187,6 +187,13 @@ export const evalQuestions = knowledge.table(
     hitCount: integer('hit_count').notNull().default(0),
     distinctSessions: integer('distinct_sessions').notNull().default(0),
     lastAskedAt: timestamp('last_asked_at', { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * When the question last became `retired` (by the owner or by eviction);
+     * null while it is not retired. Retired visitor questions are purged by
+     * this, not by `last_asked_at`, so a retirement always stays visible (and
+     * reversible) for the full TTL.
+     */
+    retiredAt: timestamp('retired_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()
