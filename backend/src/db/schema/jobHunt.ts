@@ -9,6 +9,7 @@ import {
   unique,
   uniqueIndex,
   index,
+  jsonb,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
@@ -72,7 +73,9 @@ export const profiles = pgTable('profiles', {
   keywords: varchar('keywords', { length: 255 }).array(),
   location: varchar('location', { length: 255 }),
   additionalContext: text('additional_context'),
-  resume: text('resume'),
+  // The candidate's background is no longer pasted into each profile: matches
+  // are scored against the owner's knowledge base (see
+  // services/jobHunt/candidateContext.ts), so `resume` was dropped.
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 }, (table) => ({
@@ -125,6 +128,12 @@ export const refreshStatus = pgTable('refresh_status', {
     .where(sql`${table.status} in ('PENDING', 'IN_PROGRESS')`),
 }));
 
+/** A knowledge document cited as evidence for a match. */
+export interface MatchEvidence {
+  documentId: string;
+  filename: string;
+}
+
 export const profileJobs = pgTable('profile_jobs', {
   id: serial('id').primaryKey(),
   profileId: integer('profile_id')
@@ -141,6 +150,13 @@ export const profileJobs = pgTable('profile_jobs', {
   secondSkillMatch: text('second_skill_match'),
   thirdSkillMatch: text('third_skill_match'),
   summary: text('summary'),
+  // The knowledge corpus version (`corpus_version` in the knowledge service)
+  // this match was scored against. Null when it was scored without the
+  // knowledge base. A match whose version differs from the current one is
+  // stale and is rescored (domain/jobHunt/filtering.ts).
+  knowledgeVersion: integer('knowledge_version'),
+  // The documents whose chunks were retrieved as background for this match.
+  evidence: jsonb('evidence').$type<MatchEvidence[]>().notNull().default([]),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 }, (table) => ({

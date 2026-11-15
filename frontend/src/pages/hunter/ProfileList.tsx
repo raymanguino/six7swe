@@ -74,7 +74,7 @@ export default function ProfileList() {
       <section>
         <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Search profiles</h2>
         <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
-          Each profile defines what you are looking for: keywords, location and resume.
+          Each profile defines what you are looking for: keywords, location and any extra context.
         </p>
       </section>
 

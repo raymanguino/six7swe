@@ -253,9 +253,11 @@ sequenceDiagram
   participant S as jobRefreshService
   participant F as jobFetchers (Puppeteer)
   participant M as canonical matcher
+  participant K as knowledge service
   participant D as PostgreSQL
 
   C->>S: start(profileId)
+  S->>K: /version, /profile/published
   S->>D: create refresh_status row (PENDING)
   S->>D: check for an existing active refresh
   S-->>C: refreshStatusId (202)
@@ -264,8 +266,9 @@ sequenceDiagram
   F->>S: onJobsFetched(batch)  (awaited)
   S->>D: bulkInsertJobs(batch)
   S->>D: getProfileJobs(profileId)
-  S->>S: selectJobsToScore (new or changed hash)
-  S->>M: matchJob(job, profileContext) per job
+  S->>S: selectJobsToScore (new, changed hash, or stale knowledge version)
+  S->>K: retrieve(job description) per job
+  S->>M: matchJob(job, profile + summary + chunks) per job
   M-->>S: { score, band, analysis, skills, gaps }
   S->>D: bulkInsertProfileJobs(rows)
   F-->>S: done
@@ -279,6 +282,34 @@ last batch has actually been scored and stored. Any failure marks the refresh
 
 Jobs are re-scored when their content hash changed, so an edited posting is not
 left with a stale score forever.
+
+Knowledge-backed scoring is **owner-only**: it applies only to profiles whose
+user's `auth_id` is `OWNER_AUTH_ID`, decided from the profile's user row so
+background and CLI runs are gated the same way as requests. Every other
+profile is scored on its own fields (keywords, location, additional context)
+with `knowledge_version` null, its rescore answers 503 like an unconfigured
+service, and its match list and `GET /job-hunt/knowledge` carry no version,
+staleness or evidence (`{ configured: false }`). Job postings and profile
+notes are fenced in `<job_posting>` / `<profile_notes>` tags as untrusted data,
+and the matcher is told never to reproduce the Background section verbatim.
+
+Migration `0001_deep_ultimatum` adds `knowledge_version` and `evidence` and
+**irreversibly drops `profiles.resume`**: pasted resume text is deleted when
+it runs.
+
+For the owner, each job is scored against the knowledge base: the published profile
+summary plus the top-k chunks retrieved with the job description as the query
+(`services/jobHunt/profileContext.ts`). The match row records the corpus
+version the chunks came from (`profile_jobs.knowledge_version`) and the
+documents they belong to (`evidence`). When the current `corpus_version`
+differs, the match is stale (`isScoreStale` in `domain/jobHunt/filtering.ts`):
+the next refresh rescores it, and `POST /job-hunt/profiles/:id/jobs/rescore`
+rescores every stale match without fetching postings (204 when none is stale).
+A run that could not read the published profile stores no version on its rows,
+so they stay stale. Publishing the profile does not bump `corpus_version`, so
+it does not by itself mark matches stale. Without
+`KNOWLEDGE_URL` / `KNOWLEDGE_SERVICE_KEY` jobs are scored on the profile's
+fields alone and nothing is stale.
 
 ## Domain layer
 

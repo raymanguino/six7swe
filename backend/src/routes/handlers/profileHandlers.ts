@@ -24,7 +24,6 @@ const createProfileSchema = z.object({
   keywords: z.array(z.string().min(1)).max(50).default([]),
   location: locationSchema,
   additionalContext: z.string().max(10_000).nullable().default(null),
-  resume: z.string().max(200_000).nullable().default(null),
 });
 
 const updateProfileSchema = createProfileSchema.partial();

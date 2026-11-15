@@ -13,7 +13,6 @@ export interface SearchProfile {
   keywords: string[];
   location: string | null;
   additionalContext: string | null;
-  resume: string | null;
 }
 
 export interface ProfileJob {
@@ -28,7 +27,44 @@ export interface ProfileJob {
   secondSkillMatch: string | null;
   thirdSkillMatch: string | null;
   summary: string | null;
+  /** The knowledge corpus version the match was scored against; null when none was used. */
+  knowledgeVersion: number | null;
+  /** The knowledge documents retrieved as background for the match. */
+  evidence: MatchEvidence[];
+  /** Scored against an older version of the knowledge base than the current one. */
+  stale: boolean;
 }
+
+export interface MatchEvidence {
+  documentId: string;
+  filename: string;
+}
+
+/**
+ * `GET /job-hunt/profiles/:id/jobs`: where the knowledge base stands for these
+ * matches. Only the knowledge owner gets the details; everyone else, and
+ * everyone when the service is off, gets `{ configured: false }`.
+ */
+export type MatchKnowledgeState =
+  | { configured: false }
+  | {
+      configured: true;
+      /** The current corpus version; null when unknown. */
+      version: number | null;
+      staleCount: number;
+    };
+
+/** `GET /job-hunt/knowledge`: what matches are scored against (owner only). */
+export type KnowledgeStatus =
+  | { configured: false }
+  | {
+      configured: true;
+      version: number | null;
+      /** Ready documents; null when the backend cannot list them. */
+      documentCount: number | null;
+      /** When the newest ready document last changed. */
+      updatedAt: string | null;
+    };
 
 export interface Job {
   id: number;

@@ -1,6 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiRequest } from '../../utils/api';
-import type { MatchBand, ProfileJob } from './types';
+import type { MatchBand, MatchKnowledgeState, ProfileJob, RefreshStatusRow } from './types';
+
+const RESCORE_POLL_MS = 3000;
+/** Consecutive failed status polls before the rescore is reported as lost. */
+const MAX_POLL_FAILURES = 3;
 
 interface MatchWithDetails extends ProfileJob {
   job: {
@@ -10,7 +14,6 @@ interface MatchWithDetails extends ProfileJob {
     link: string;
     company: string;
     position: string;
-    description: string;
     location: string | null;
     datePosted: string | null;
   };
@@ -23,24 +26,191 @@ const BAND_STYLES: Record<MatchBand, string> = {
   LOW: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300',
 };
 
+/**
+ * Starts a rescore of the stale matches and polls its refresh row until it
+ * finishes, then calls `onDone` so the list reloads.
+ *
+ * Every run gets a generation number. Unmounting, a new profile or a new
+ * start bumps it, and each step checks it after every await and before
+ * scheduling, so an abandoned poll can never reschedule itself or reload a
+ * list that is no longer on screen. The parent keys this component by
+ * profile, so a new profile also starts with fresh `running`/`error` state.
+ */
+function useRescore(profileId: number, onDone: () => Promise<void>) {
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const timerRef = useRef<number | null>(null);
+  const generationRef = useRef(0);
+
+  const cancel = useCallback(() => {
+    generationRef.current += 1;
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => cancel, [profileId, cancel]);
+
+  const start = useCallback(async () => {
+    cancel();
+    const generation = generationRef.current;
+    const live = () => generationRef.current === generation;
+
+    setRunning(true);
+    setError(null);
+
+    const finish = async (message: string | null) => {
+      if (!live()) return;
+      if (message) setError(message);
+      try {
+        await onDone();
+      } finally {
+        if (live()) setRunning(false);
+      }
+    };
+
+    let data: { refreshStatusId?: number } | undefined;
+    try {
+      data = await apiRequest(`/job-hunt/profiles/${profileId}/jobs/rescore`, {
+        method: 'POST',
+      });
+    } catch (err) {
+      if (!live()) return;
+      setError(err instanceof Error ? err.message : 'Failed to start rescore');
+      setRunning(false);
+      return;
+    }
+    if (!live()) return;
+
+    // 204: nothing was stale any more, so only the list needs reloading.
+    const refreshId = data?.refreshStatusId;
+    if (refreshId === undefined) {
+      await finish(null);
+      return;
+    }
+
+    let consecutiveFailures = 0;
+    const schedule = () => {
+      if (!live()) return;
+      timerRef.current = window.setTimeout(() => void tick(), RESCORE_POLL_MS);
+    };
+    const tick = async () => {
+      if (!live()) return;
+      let row: RefreshStatusRow;
+      try {
+        const status = await apiRequest(
+          `/job-hunt/profiles/${profileId}/jobs/refresh/${refreshId}`,
+        );
+        row = status.refreshStatus as RefreshStatusRow;
+      } catch (err) {
+        if (!live()) return;
+        // A blip should not abandon a rescore that is still running server-side.
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= MAX_POLL_FAILURES) {
+          await finish(err instanceof Error ? err.message : 'Failed to read rescore status');
+          return;
+        }
+        schedule();
+        return;
+      }
+      if (!live()) return;
+      consecutiveFailures = 0;
+      if (row.status === 'COMPLETED' || row.status === 'FAILED') {
+        await finish(row.status === 'FAILED' ? (row.description ?? 'Rescore failed') : null);
+        return;
+      }
+      schedule();
+    };
+    schedule();
+  }, [profileId, onDone, cancel]);
+
+  return { running, error, start };
+}
+
+/** Says how many matches predate the current knowledge base, with a Rescore action. */
+function StaleBanner({
+  staleCount,
+  running,
+  error,
+  onRescore,
+}: {
+  staleCount: number;
+  running: boolean;
+  error: string | null;
+  onRescore: () => void;
+}) {
+  if (staleCount === 0 && !error) return null;
+  return (
+    <div
+      role="status"
+      className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-100"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        {staleCount > 0 ? (
+          <p>
+            {staleCount === 1 ? '1 match was' : `${staleCount} matches were`} scored against an
+            older version of your knowledge base.
+          </p>
+        ) : (
+          <p>The last rescore ran into a problem.</p>
+        )}
+        {staleCount > 0 && (
+          <button
+            type="button"
+            onClick={onRescore}
+            disabled={running}
+            className="rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {running ? 'Rescoring...' : 'Rescore'}
+          </button>
+        )}
+      </div>
+      {error && <p className="mt-2 text-red-700 dark:text-red-300">{error}</p>}
+    </div>
+  );
+}
+
 /** Shows the scored matches for a profile. */
 export default function JobList({ profileId }: { profileId: number }) {
   const [matches, setMatches] = useState<MatchWithDetails[]>([]);
+  const [knowledge, setKnowledge] = useState<MatchKnowledgeState | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const fetchMatches = useCallback(async () => {
+    const data = await apiRequest(`/job-hunt/profiles/${profileId}/jobs`);
+    setMatches((data.jobs ?? []) as MatchWithDetails[]);
+    setKnowledge((data.knowledge ?? null) as MatchKnowledgeState | null);
+  }, [profileId]);
 
   const load = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-      const data = await apiRequest(`/job-hunt/profiles/${profileId}/jobs`);
-      setMatches((data.jobs ?? []) as MatchWithDetails[]);
+      await fetchMatches();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load matches');
     } finally {
       setLoading(false);
     }
-  }, [profileId]);
+  }, [fetchMatches]);
+
+  // After a rescore the list refreshes in place, without the loading state.
+  // A failed reload keeps the list on screen and reports in the banner.
+  const [reloadError, setReloadError] = useState<string | null>(null);
+  const reloadQuietly = useCallback(async () => {
+    try {
+      setReloadError(null);
+      await fetchMatches();
+    } catch (err) {
+      setReloadError(
+        `Could not reload the matches: ${err instanceof Error ? err.message : 'unknown error'}`,
+      );
+    }
+  }, [fetchMatches]);
+
+  const rescore = useRescore(profileId, reloadQuietly);
 
   useEffect(() => {
     void load();
@@ -67,69 +237,102 @@ export default function JobList({ profileId }: { profileId: number }) {
   }
 
   return (
-    <ul className="space-y-3">
-      {matches.map((match) => (
-        <li
-          key={match.id}
-          className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800"
-        >
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <a
-                href={match.job.link}
-                target="_blank"
-                rel="noreferrer"
-                className="text-lg font-semibold text-gray-900 hover:text-primary-600 dark:text-white"
-              >
-                {match.job.position}
-              </a>
-              <p className="text-sm text-gray-600 dark:text-gray-300">
-                {match.job.company}
-                {match.job.location ? ` · ${match.job.location}` : ''}
-                {match.job.datePosted ? ` · ${match.job.datePosted}` : ''}
-              </p>
-            </div>
+    <div>
+      <StaleBanner
+        staleCount={knowledge?.configured ? knowledge.staleCount : 0}
+        running={rescore.running}
+        error={rescore.error ?? reloadError}
+        onRescore={() => void rescore.start()}
+      />
 
-            <div className="flex items-center gap-2">
-              {match.score !== null && (
-                <span className="text-lg font-bold text-gray-900 dark:text-white">
-                  {match.score}
-                </span>
-              )}
-              {match.band && (
-                <span
-                  className={`rounded-full px-2.5 py-1 text-xs font-semibold ${BAND_STYLES[match.band]}`}
+      <ul className="space-y-3">
+        {matches.map((match) => (
+          <li
+            key={match.id}
+            className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <a
+                  href={match.job.link}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-lg font-semibold text-gray-900 hover:text-primary-600 dark:text-white"
                 >
-                  {match.band}
-                </span>
-              )}
-            </div>
-          </div>
+                  {match.job.position}
+                </a>
+                <p className="text-sm text-gray-600 dark:text-gray-300">
+                  {match.job.company}
+                  {match.job.location ? ` · ${match.job.location}` : ''}
+                  {match.job.datePosted ? ` · ${match.job.datePosted}` : ''}
+                </p>
+              </div>
 
-          {match.summary && (
-            <p className="mt-3 text-sm text-gray-700 dark:text-gray-300">{match.summary}</p>
-          )}
-
-          {match.explanation && (
-            <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">{match.explanation}</p>
-          )}
-
-          {(match.firstSkillMatch || match.secondSkillMatch || match.thirdSkillMatch) && (
-            <div className="mt-3 flex flex-wrap gap-2 text-xs">
-              {[match.firstSkillMatch, match.secondSkillMatch, match.thirdSkillMatch]
-                .filter(Boolean)
-                .map((skill) => (
+              <div className="flex items-center gap-2">
+                {match.stale && (
                   <span
-                    key={skill as string}
-                    className="rounded-full bg-gray-100 px-2 py-1 text-gray-700 dark:bg-gray-700 dark:text-gray-300"
+                    title="Scored against an older version of your knowledge base"
+                    className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800 dark:bg-amber-900/50 dark:text-amber-200"
                   >
-                    {skill}
+                    Stale
                   </span>
-                ))}
+                )}
+                {match.score !== null && (
+                  <span className="text-lg font-bold text-gray-900 dark:text-white">
+                    {match.score}
+                  </span>
+                )}
+                {match.band && (
+                  <span
+                    className={`rounded-full px-2.5 py-1 text-xs font-semibold ${BAND_STYLES[match.band]}`}
+                  >
+                    {match.band}
+                  </span>
+                )}
+              </div>
             </div>
-          )}
-        </li>
-      ))}
-    </ul>
+
+            {match.summary && (
+              <p className="mt-3 text-sm text-gray-700 dark:text-gray-300">{match.summary}</p>
+            )}
+
+            {match.explanation && (
+              <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">{match.explanation}</p>
+            )}
+
+            {(match.firstSkillMatch || match.secondSkillMatch || match.thirdSkillMatch) && (
+              <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                {[match.firstSkillMatch, match.secondSkillMatch, match.thirdSkillMatch]
+                  .filter(Boolean)
+                  .map((skill) => (
+                    <span
+                      key={skill as string}
+                      className="rounded-full bg-gray-100 px-2 py-1 text-gray-700 dark:bg-gray-700 dark:text-gray-300"
+                    >
+                      {skill}
+                    </span>
+                  ))}
+              </div>
+            )}
+
+            {match.evidence.length > 0 && (
+              <div className="mt-3 text-xs text-gray-500 dark:text-gray-400">
+                <span className="font-medium">Evidence:</span>
+                <ul className="mt-1 flex flex-wrap gap-2">
+                  {match.evidence.map((doc) => (
+                    <li
+                      key={doc.documentId}
+                      className="rounded border border-gray-200 px-2 py-0.5 dark:border-gray-600"
+                    >
+                      {doc.filename}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

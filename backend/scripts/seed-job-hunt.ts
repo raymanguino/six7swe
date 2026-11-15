@@ -33,7 +33,6 @@ interface SeedProfile {
    */
   location: string;
   additionalContext: string;
-  resume: string;
 }
 
 const SEED_USERS: SeedUser[] = [
@@ -48,7 +47,6 @@ const SEED_PROFILES: SeedProfile[] = [
     keywords: ['Software', 'Engineer'],
     location: '105149290',
     additionalContext: 'Software Engineer',
-    resume: 'John Doe Resume',
   },
   {
     userEmail: 'john@example.com',
@@ -56,7 +54,6 @@ const SEED_PROFILES: SeedProfile[] = [
     keywords: ['Product', 'Manager'],
     location: '105149290',
     additionalContext: 'Product Manager',
-    resume: 'John Doe Resume',
   },
   {
     userEmail: 'jane@example.com',
@@ -64,7 +61,6 @@ const SEED_PROFILES: SeedProfile[] = [
     keywords: ['Software', 'Engineer'],
     location: '101174742',
     additionalContext: 'Software Engineer',
-    resume: 'Jane Smith Resume',
   },
 ];
 
@@ -111,7 +107,6 @@ export async function seedJobHuntData(): Promise<{ users: number; profiles: numb
         keywords: seedProfile.keywords,
         location: seedProfile.location,
         additionalContext: seedProfile.additionalContext,
-        resume: seedProfile.resume,
       })
       .onConflictDoUpdate({
         target: [profiles.userId, profiles.name],
@@ -119,8 +114,7 @@ export async function seedJobHuntData(): Promise<{ users: number; profiles: numb
           keywords: seedProfile.keywords,
           location: seedProfile.location,
           additionalContext: seedProfile.additionalContext,
-          resume: seedProfile.resume,
-          updatedAt: new Date(),
+            updatedAt: new Date(),
         },
       });
   }

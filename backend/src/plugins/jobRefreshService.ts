@@ -24,6 +24,7 @@ async function jobRefreshServicePlugin(fastify: FastifyInstance) {
     profileJobService: fastify.profileJobService,
     profileService: fastify.profileService,
     refreshStatusService: fastify.refreshStatusService,
+    knowledge: fastify.jobKnowledge,
     logger: fastify.log,
   });
 

@@ -5,6 +5,7 @@ import * as profileJobService from '../../db/api/profileJob';
 import * as profileService from '../../db/api/profile';
 import * as refreshStatusService from '../../db/api/refreshStatus';
 import { createJobRefreshService, type JobRefreshService } from './jobRefreshService';
+import { getDefaultJobKnowledgeAccess } from './knowledgeSource';
 
 /**
  * Builds a refresh service that runs outside a Fastify request lifecycle.
@@ -34,8 +35,23 @@ export function createStandaloneJobRefreshService(): JobRefreshService {
     profileJobService,
     profileService,
     refreshStatusService,
+    knowledge: getDefaultJobKnowledgeAccess(),
     logger,
   });
+}
+
+const DEFAULT_STALE_MINUTES = 30;
+
+/**
+ * `JOB_REFRESH_STALE_MINUTES`, or 30 when it is unset or not a finite
+ * positive number (a typo must not make the cutoff NaN, which would reap
+ * nothing, or zero, which would reap running refreshes).
+ */
+export function staleRefreshMinutes(raw: string | undefined): number {
+  const minutes = Number(raw);
+  return raw !== undefined && Number.isFinite(minutes) && minutes > 0
+    ? minutes
+    : DEFAULT_STALE_MINUTES;
 }
 
 /**
@@ -44,7 +60,7 @@ export function createStandaloneJobRefreshService(): JobRefreshService {
  * Without this a restart during a refresh leaves the row IN_PROGRESS forever.
  */
 export async function reapStaleRefreshes(
-  staleMinutes = Number(process.env.JOB_REFRESH_STALE_MINUTES ?? 30),
+  staleMinutes = staleRefreshMinutes(process.env.JOB_REFRESH_STALE_MINUTES),
 ): Promise<number> {
   const cutoff = new Date(Date.now() - staleMinutes * 60_000);
   return refreshStatusService.failStaleRefreshes(cutoff);

@@ -377,8 +377,8 @@ Tables are split by product: `src/db/schema/portfolio.ts` and
 - `name` - Profile name (unique per user)
 - `keywords` - Text array
 - `location` - LinkedIn numeric region id (geoId), not a city name
-- `additional_context` - Additional profile information
-- `resume` - Resume text/data
+- `additional_context` - Additional profile information (the candidate's background comes from the knowledge base, not from the profile)
+- The old `resume` column was dropped by migration `0001_deep_ultimatum`. **The drop is irreversible**: resume text pasted into a profile is deleted when the migration runs and cannot be restored from the database afterwards. Copy any you want to keep before migrating.
 - `created_at` / `updated_at` - Timestamps
 
 ### `jobs`
@@ -400,6 +400,8 @@ Tables are split by product: `src/db/schema/portfolio.ts` and
 - `band` - Enum: `LOW`, `MEDIUM`, `HIGH`, `TOP` (derived from the score)
 - `explanation`, `summary` - Human-readable reasoning
 - `first_skill_match`, `second_skill_match`, `third_skill_match`
+- `knowledge_version` - Knowledge corpus version the match was scored against (null: scored without it). A different current version makes the match stale.
+- `evidence` - JSON array of `{ documentId, filename }`: the knowledge documents retrieved for the match
 - Unique on `(profile_id, job_id)`
 
 ### `refresh_status`

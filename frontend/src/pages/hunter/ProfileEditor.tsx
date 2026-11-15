@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { apiRequest } from '../../utils/api';
 import type { SearchProfile } from './types';
 import { parseNumericParam } from './params';
+import KnowledgeBackgroundCard from './KnowledgeBackgroundCard';
 
 /** Edits a single search profile. */
 export default function ProfileEditor() {
@@ -18,7 +19,6 @@ export default function ProfileEditor() {
   const [keywords, setKeywords] = useState('');
   const [geoId, setGeoId] = useState('');
   const [additionalContext, setAdditionalContext] = useState('');
-  const [resume, setResume] = useState('');
 
   const load = useCallback(async () => {
     if (numericId === null) return;
@@ -32,7 +32,6 @@ export default function ProfileEditor() {
       setKeywords((loaded.keywords ?? []).join(', '));
       setGeoId(loaded.location ?? '');
       setAdditionalContext(loaded.additionalContext ?? '');
-      setResume(loaded.resume ?? '');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load profile');
     } finally {
@@ -61,7 +60,6 @@ export default function ProfileEditor() {
             .filter(Boolean),
           location: geoId.trim() || null,
           additionalContext: additionalContext.trim() || null,
-          resume: resume.trim() || null,
         }),
       });
       setProfile(data.profile as SearchProfile);
@@ -173,21 +171,7 @@ export default function ProfileEditor() {
         />
       </div>
 
-      <div>
-        <label
-          htmlFor="edit-resume"
-          className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
-        >
-          Resume text
-        </label>
-        <textarea
-          id="edit-resume"
-          value={resume}
-          onChange={(e) => setResume(e.target.value)}
-          rows={8}
-          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
-        />
-      </div>
+      <KnowledgeBackgroundCard />
 
       <button
         type="submit"
