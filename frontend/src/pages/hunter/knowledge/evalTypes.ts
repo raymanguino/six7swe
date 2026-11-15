@@ -123,6 +123,9 @@ const isRun = (value: unknown): value is EvalRun =>
 const isSettings = (value: unknown): value is EvalSettings =>
   isRecord(value) &&
   typeof value.activeSize === 'number' &&
+  typeof value.clusterSimilarity === 'number' &&
+  typeof value.offTopicSimilarity === 'number' &&
+  typeof value.maxCandidates === 'number' &&
   typeof value.suggestSessions === 'number' &&
   typeof value.gapSimilarity === 'number' &&
   typeof value.candidateTtlDays === 'number' &&
