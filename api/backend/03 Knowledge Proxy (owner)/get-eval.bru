@@ -28,6 +28,7 @@ tests {
 
 docs {
   Questions, the latest run with its diff, and whether a run is in progress. Stores the first active question's id in evalQuestionId.
+  Forwarded to the service's GET /eval, which writes: it seeds the owner's canned questions the first time the eval set is read, and purges stale candidates and retired visitor questions. It is the one read in the collection that changes data, and it is left unguarded on purpose; see api/README.md.
   Owner only: 401 when signed out, 403 for any other user. Locally set AUTH_DEV_BYPASS=true and OWNER_AUTH_ID=auth-dev-bypass (see api/README.md).
   Forwarded to the knowledge service with KNOWLEDGE_OWNER_KEY; 503 when that is not configured.
 }

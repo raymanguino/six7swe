@@ -31,6 +31,7 @@ tests {
 }
 
 docs {
-  Seeds the canned questions on first use. Stores the first active question's id in evalQuestionId.
+  Questions, the settings and the latest run with its diff. Stores the first active question's id in evalQuestionId.
+  This GET writes: it seeds the owner's canned questions the first time the eval set is read, and purges stale candidates and retired visitor questions. It is the one read in the collection that changes data, and it is left unguarded on purpose; see api/README.md.
   Owner key: only the backend's owner proxy holds it. The service key gets a 401 here.
 }

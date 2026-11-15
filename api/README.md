@@ -69,8 +69,12 @@ unless the `allowSideEffects` environment variable is `true`. Those are `/chat`,
 `/contact`, starting a refresh or rescore, document upload, set-primary and delete, saving,
 publishing, discarding and redrafting the profile, and the eval run and question actions.
 
-The default run is therefore read-only apart from creating and deleting a throwaway job
-profile. Turn the variable on only against a database you are happy to change. Publishing
+The default run is otherwise read-only apart from creating and deleting a throwaway job
+profile, with one exception: `GET /eval` seeds the owner's canned eval questions the first
+time the eval set is read, and purges stale candidates and retired visitor questions on the
+service's usual schedule. That is what the owner's own Knowledge page does on every visit,
+and the seed is what gives the eval set its questions, so the request is left unguarded.
+Turn the variable on only against a database you are happy to change. Publishing
 changes what the public portfolio shows.
 
 ## Running headlessly
