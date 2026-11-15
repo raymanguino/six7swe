@@ -32,7 +32,7 @@ POST /retrieve {query, k} ──► embed query ──► pgvector cosine search
 
 ## API
 
-Every route declares who may call it: `public`, `service`, `owner` or `mcp` (`src/plugins/serviceAuth.ts`). A route that declares nothing is `service`, so a forgotten declaration fails closed. `service` and `owner` take a key in the `x-knowledge-key` header (never in a query string), but each accepts only its own: `service` routes take `KNOWLEDGE_SERVICE_KEY`, and `owner` routes take `KNOWLEDGE_OWNER_KEY`. The service key gets 401 on owner routes and the owner key gets 401 on service routes. `mcp` takes the owner key as `Authorization: Bearer` instead (see MCP adapter below). Unknown paths answer 401 without the service key and 404 with it.
+Every route declares who may call it: `public`, `service`, `owner` or `mcp` (`src/plugins/serviceAuth.ts`). A route that declares nothing is `service`, so a forgotten declaration fails closed. `service` and `owner` take a key in the `x-knowledge-key` header (never in a query string), but each accepts only its own: `service` routes take `KNOWLEDGE_SERVICE_KEY`, and `owner` routes take `KNOWLEDGE_OWNER_KEY`. The service key gets 401 on owner routes and the owner key gets 401 on service routes. `mcp` takes its own key as `Authorization: Bearer` instead (see MCP adapter below). Unknown paths answer 401 without the service key and 404 with it.
 
 | Method | Path                     | Purpose                                                                                                                           |
 | ------ | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
@@ -57,7 +57,7 @@ Every route declares who may call it: `public`, `service`, `owner` or `mcp` (`sr
 | POST   | `/eval/runs`             | Runs the active eval questions now, in the background (202)                                                                       |
 | POST   | `/eval/questions/:id`    | `{ action }`: `pin`, `unpin`, `retire`, `promote`, `off-topic` or `on-topic`; 409 when it cannot apply                            |
 
-`/retrieve`, `/version`, `/profile/published` and `/resume.pdf` are `service` routes; `/documents/*`, `/search`, `/profile`, `/profile/draft`, `/profile/publish` and `/eval/*` are `owner` routes; `/mcp` is an `mcp` route.
+`/retrieve`, `/version`, `/profile/published` and `/resume.pdf` are `service` routes; `/documents/*`, `/search`, `/profile`, `/profile/draft`, `/profile/publish` and `/eval/*` are `owner` routes; `/mcp` is an `mcp` route (`KNOWLEDGE_MCP_KEY`).
 
 `/retrieve` also takes `record: true` with a `sessionId` (see the eval set below); `/search` never records.
 
@@ -72,12 +72,12 @@ Every route declares who may call it: `public`, `service`, `owner` or `mcp` (`sr
 | `list_documents`    | The documents with kind and status                                                                                                                  |
 | `get_resume_pdf`    | The primary resume PDF as an embedded `resource` content block (`application/pdf`, base64 `blob`); a tool error if there is none or it is over 5 MB |
 
-**Auth.** It is the `mcp` access mode: the owner key (`KNOWLEDGE_OWNER_KEY`) as `Authorization: Bearer <key>`, because that is what MCP clients send. The service key and the `x-knowledge-key` header do not open it. Any query string gets 401, so a key in the URL never works. The service is private-network only, so reach it through your own private route (for example a tunnel or VPN into Railway's network), not a public domain.
+**Auth.** It is the `mcp` access mode: its own key, `KNOWLEDGE_MCP_KEY` (at least 32 characters, different from the other two), as `Authorization: Bearer <key>`, because that is what MCP clients send. The service key, the owner key and the `x-knowledge-key` header do not open it, and the MCP key opens nothing else. If `KNOWLEDGE_MCP_KEY` is unset, `/mcp` is disabled and every request gets 401; the service still boots. Any query string gets 401, so a key in the URL never works. The service is private-network only, so reach it through your own private route (for example a tunnel or VPN into Railway's network), not a public domain.
 
 Add it to Claude Code:
 
 ```sh
-claude mcp add --transport http six7swe-knowledge http://<knowledge-host>:3100/mcp   --header "Authorization: Bearer $KNOWLEDGE_OWNER_KEY"
+claude mcp add --transport http six7swe-knowledge http://<knowledge-host>:3100/mcp   --header "Authorization: Bearer $KNOWLEDGE_MCP_KEY"
 ```
 
 ## Chat eval set (#85)
@@ -218,6 +218,7 @@ The service validates its whole environment at boot and refuses to start if anyt
 | `DATABASE_URL`              | Postgres connection string for the same Supabase project as the backend | Supabase dashboard → **Connect**. Use the IPv4 connection string (Railway has no outbound IPv6). Any mode works (direct, session pooler on 5432, or transaction pooler on 6543), because prepared statements are off. This service only touches the `knowledge` and `knowledge_migrations` schemas. |
 | `KNOWLEDGE_SERVICE_KEY`     | A random secret, at least 32 characters                                 | `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. Opens the service routes only (`/retrieve`, `/version`). The portfolio and hunter backends will need the same value when they start calling the service (step 3).                                                       |
 | `KNOWLEDGE_OWNER_KEY`       | A different random secret, at least 32 characters                       | Same command. Opens the owner routes only (documents, search). Set the backend's `KNOWLEDGE_OWNER_KEY` to the same value: the backend's owner proxy is its only holder. Must differ from `KNOWLEDGE_SERVICE_KEY`. Treat it like an admin password.                                                  |
+| `KNOWLEDGE_MCP_KEY`         | Optional: a third random secret, at least 32 characters                 | Same command. Opens `/mcp` only, as a bearer token, for your own Claude clients. Unset disables `/mcp`. Must differ from the other two keys. A change to `railway.ts` needs `railway config plan` then `apply` by hand.                                                                             |
 | `OWNER_AUTH_ID`             | Your Supabase auth user id (a UUID)                                     | Supabase dashboard → **Authentication → Users** → your user → **User UID**. Letters, digits, `.`, `_` and `-` only; it becomes the first segment of every storage key.                                                                                                                              |
 | `OPENAI_API_KEY`            | An OpenAI API key                                                       | platform.openai.com → **API keys**. Required because `EMBEDDER` defaults to `openai`. Tip: create a dedicated project for this service with a monthly budget cap, and a key scoped to that project, so a runaway ingest can't run up the bill.                                                      |
 | `SUPABASE_URL`              | `https://<project-ref>.supabase.co`                                     | Supabase dashboard → **Project Settings → Data API**.                                                                                                                                                                                                                                               |

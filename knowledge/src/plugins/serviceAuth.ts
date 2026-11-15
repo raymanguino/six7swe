@@ -11,14 +11,16 @@ import { isSafeKeySegment } from '../lib/storageKeys.js';
  * - `owner`: the knowledge base's owner, through the backend's owner proxy,
  *   with the owner key.
  *
- * - `mcp`: personal Claude clients through the MCP adapter (#89). It accepts
- *   the owner key, but as `Authorization: Bearer` (what MCP clients send)
- *   and never alongside a query string.
+ * - `mcp`: personal Claude clients through the MCP adapter (#89), with the
+ *   MCP key (`KNOWLEDGE_MCP_KEY`) as `Authorization: Bearer` (what MCP clients
+ *   send), never alongside a query string. Without an MCP key, no request
+ *   passes.
  *
- * Each mode accepts only its own key: the service key gets a 401 on owner
- * routes and the owner key gets a 401 on service routes. Both keys travel in
- * the same `x-knowledge-key` header. The route, not the header, decides
- * which key is valid, so a second header would add no protection.
+ * `service` and `owner` each accept only their own key: the service key gets
+ * a 401 on owner routes and the owner key gets a 401 on service routes. Both
+ * keys travel in the same `x-knowledge-key` header. The route, not the
+ * header, decides which key is valid, so a second header would add no
+ * protection. `mcp` has a key of its own, in a different header.
  *
  * The owner gate itself lives in the backend (#83). The service is reachable
  * only on Railway's private network, so the browser never calls it: the
@@ -27,8 +29,9 @@ import { isSafeKeySegment } from '../lib/storageKeys.js';
  * service does not verify the JWT again: the backend is the only holder of
  * the owner key, and a second check would need the user's token forwarded
  * and the JWKS configured here for no extra protection against a caller that
- * already holds the key. A future caller with its own credential (the MCP
- * adapter, #89) can replace the `owner` entry through `authenticators`.
+ * already holds the key. A caller with its own credential gets its own mode
+ * (as `mcp` does) rather than replacing the `owner` entry, which the
+ * backend's proxy relies on. `authenticators` can still override any mode.
  */
 export type RouteAccess = 'public' | 'service' | 'owner' | 'mcp';
 
@@ -91,14 +94,15 @@ export function keyAuthenticator(key: string, ownerId: string): Authenticator {
 }
 
 /**
- * For MCP clients: the owner key as `Authorization: Bearer <key>`. A request
+ * For MCP clients: the MCP key as `Authorization: Bearer <key>`. With no key
+ * configured it rejects everything. A request
  * with any query string is rejected outright, so a key passed as `?key=...`
  * (which would end up in access logs and history) never works, even beside a
  * valid header.
  */
-export function bearerAuthenticator(key: string, ownerId: string): Authenticator {
+export function bearerAuthenticator(key: string | undefined, ownerId: string): Authenticator {
   return (req) => {
-    if (req.url.includes('?')) return null;
+    if (key === undefined || req.raw.url?.includes('?')) return null;
     const header = req.headers.authorization;
     if (typeof header !== 'string') return null;
     const token = /^Bearer (\S+)$/i.exec(header)?.[1];
@@ -111,6 +115,8 @@ export interface ServiceAuthOptions {
   serviceKey: string;
   /** Opens `owner` routes only. Held by the backend's owner proxy. */
   ownerKey: string;
+  /** Opens `mcp` routes only. Unset closes them. */
+  mcpKey?: string;
   /** The single owner (`OWNER_AUTH_ID`) every authenticated request acts for. */
   ownerId: string;
   /** Overrides per access mode, e.g. a different `owner` check for another caller. */
@@ -127,9 +133,12 @@ const serviceAuth: FastifyPluginAsync<ServiceAuthOptions> = async (app, options)
     service: keyAuthenticator(options.serviceKey, options.ownerId),
     // The backend checks the owner's JWT, then forwards with this key.
     owner: keyAuthenticator(options.ownerKey, options.ownerId),
-    mcp: bearerAuthenticator(options.ownerKey, options.ownerId),
-    ...options.authenticators,
+    mcp: bearerAuthenticator(options.mcpKey, options.ownerId),
   };
+  // An `undefined` entry must not erase a default and so disable a mode.
+  for (const [mode, override] of Object.entries(options.authenticators ?? {})) {
+    if (override !== undefined) authenticators[mode as keyof Authenticators] = override;
+  }
 
   app.decorateRequest('ownerId', null);
 
@@ -138,6 +147,12 @@ const serviceAuth: FastifyPluginAsync<ServiceAuthOptions> = async (app, options)
     // handler); those fail closed like any other non-public route.
     const access: RouteAccess = req.routeOptions.config?.access ?? 'service';
     if (access === 'public') return;
+
+    if (access === 'mcp' && req.raw.url?.includes('?')) {
+      return reply.code(401).send({
+        error: 'Query strings are not allowed on /mcp. Send the key in the Authorization header.',
+      });
+    }
 
     const ownerId = await authenticators[access](req);
     // The owner id becomes a storage-key segment, whatever produced it.

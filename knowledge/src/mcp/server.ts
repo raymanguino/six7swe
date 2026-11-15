@@ -1,16 +1,28 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { SearchRequestSchema, type DocumentDto } from '../contract.js';
+import type { FastifyBaseLogger } from 'fastify';
+import { SearchRequestSchema } from '../contract.js';
 import type { KnowledgeContext } from '../routes/context.js';
-import { toChunkDto, toDocumentDto, toPrimaryResumeDto, toProfileDto } from '../routes/mappers.js';
+import {
+  toDocumentDto,
+  toPrimaryResumeDto,
+  toProfileDto,
+  toRetrieveResponse,
+} from '../routes/mappers.js';
 import { listDocuments } from '../services/documents.js';
-import { getPrimaryResumePdf, getPublishedView } from '../services/profile/profiles.js';
+import { findPrimaryResumePdf, getPublishedView } from '../services/profile/profiles.js';
 import { retrieve } from '../services/retrieval.js';
 
 /** A resume PDF above this is not inlined: base64 in one MCP message would be too heavy. */
 export const MAX_MCP_PDF_BYTES = 5 * 1024 * 1024;
 
 export const RESUME_PDF_URI = 'knowledge://resume.pdf';
+
+export interface McpServerOptions {
+  log: FastifyBaseLogger;
+  /** Largest resume PDF `get_resume_pdf` returns. */
+  maxPdfBytes?: number;
+}
 
 const json = (value: unknown): CallToolResult => ({
   content: [{ type: 'text', text: JSON.stringify(value, null, 2) }],
@@ -22,11 +34,35 @@ const failure = (message: string): CallToolResult => ({
 });
 
 /**
+ * Runs a tool, logging anything it throws and answering with a generic
+ * message, so SQL, storage paths and provider errors never reach the client.
+ */
+function guarded<A extends unknown[]>(
+  log: FastifyBaseLogger,
+  tool: string,
+  run: (...args: A) => Promise<CallToolResult>,
+): (...args: A) => Promise<CallToolResult> {
+  return async (...args) => {
+    try {
+      return await run(...args);
+    } catch (err) {
+      log.error({ err, tool }, 'MCP tool failed');
+      return failure('Internal error. Try again.');
+    }
+  };
+}
+
+/**
  * Builds an MCP server for one request and one owner. A thin adapter over the
  * same service functions the HTTP routes call; the owner comes from the
  * authenticated request, never from tool input.
  */
-export function createMcpServer(ctx: KnowledgeContext, ownerId: string): McpServer {
+export function createMcpServer(
+  ctx: KnowledgeContext,
+  ownerId: string,
+  options: McpServerOptions,
+): McpServer {
+  const { log, maxPdfBytes = MAX_MCP_PDF_BYTES } = options;
   const server = new McpServer({ name: 'six7swe-knowledge', version: '0.1.0' });
 
   server.registerTool(
@@ -39,10 +75,9 @@ export function createMcpServer(ctx: KnowledgeContext, ownerId: string): McpServ
       inputSchema: SearchRequestSchema.shape,
       annotations: { readOnlyHint: true },
     },
-    async ({ query, k }) => {
-      const result = await retrieve(ctx, ownerId, query, k);
-      return json({ version: result.version, chunks: result.chunks.map(toChunkDto) });
-    },
+    guarded(log, 'search_background', async ({ query, k }) =>
+      json(toRetrieveResponse(await retrieve(ctx, ownerId, query, k))),
+    ),
   );
 
   server.registerTool(
@@ -54,13 +89,13 @@ export function createMcpServer(ctx: KnowledgeContext, ownerId: string): McpServ
         'primary resume text, if any.',
       annotations: { readOnlyHint: true },
     },
-    async () => {
+    guarded(log, 'get_profile', async () => {
       const { profile, resume } = await getPublishedView(ctx, ownerId);
       return json({
         profile: profile && toProfileDto(profile),
         resume: resume && toPrimaryResumeDto(resume.document, resume.text),
       });
-    },
+    }),
   );
 
   server.registerTool(
@@ -70,10 +105,9 @@ export function createMcpServer(ctx: KnowledgeContext, ownerId: string): McpServ
       description: "The owner's background documents with their kind and processing status.",
       annotations: { readOnlyHint: true },
     },
-    async () => {
-      const documents: DocumentDto[] = (await listDocuments(ctx, ownerId)).map(toDocumentDto);
-      return json({ documents });
-    },
+    guarded(log, 'list_documents', async () =>
+      json({ documents: (await listDocuments(ctx, ownerId)).map(toDocumentDto) }),
+    ),
   );
 
   server.registerTool(
@@ -85,12 +119,15 @@ export function createMcpServer(ctx: KnowledgeContext, ownerId: string): McpServ
         '(base64 blob, application/pdf).',
       annotations: { readOnlyHint: true },
     },
-    async () => {
-      const bytes = await getPrimaryResumePdf(ctx, ownerId);
-      if (!bytes) return failure('No PDF resume. Use get_profile for the resume text.');
-      if (bytes.byteLength > MAX_MCP_PDF_BYTES) {
+    guarded(log, 'get_resume_pdf', async () => {
+      const found = await findPrimaryResumePdf(ctx, ownerId, maxPdfBytes);
+      if (found.status === 'none') {
+        return failure('No PDF resume. Use get_profile for the resume text.');
+      }
+      if (found.status === 'too-large') {
         return failure('The resume PDF is too large to return. Use get_profile for its text.');
       }
+      const { bytes } = found;
       return {
         content: [
           {
@@ -98,12 +135,14 @@ export function createMcpServer(ctx: KnowledgeContext, ownerId: string): McpServ
             resource: {
               uri: RESUME_PDF_URI,
               mimeType: 'application/pdf',
-              blob: Buffer.from(bytes).toString('base64'),
+              blob: Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString(
+                'base64',
+              ),
             },
           },
         ],
       };
-    },
+    }),
   );
 
   return server;

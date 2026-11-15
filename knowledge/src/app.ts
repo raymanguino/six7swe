@@ -48,9 +48,13 @@ export interface BuildAppOptions {
   serviceKey: string;
   /** Opens owner routes only; held by the backend's owner proxy. */
   ownerKey: string;
+  /** Opens the MCP adapter only; unset closes `/mcp` (401). */
+  mcpKey?: string;
   /** The single owner (`OWNER_AUTH_ID`) every authenticated request acts for. */
   ownerId: string;
   maxUploadBytes: number;
+  /** Largest resume PDF the MCP adapter returns (default 5 MB); tests lower it. */
+  mcpMaxPdfBytes?: number;
   logger?: FastifyServerOptions['logger'];
   chunkOptions?: PipelineDeps['chunkOptions'];
   /** Per-access-mode overrides; see plugins/serviceAuth.ts. */
@@ -139,6 +143,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await app.register(serviceAuth, {
     serviceKey: options.serviceKey,
     ownerKey: options.ownerKey,
+    mcpKey: options.mcpKey,
     ownerId: options.ownerId,
     authenticators: options.authenticators,
   });
@@ -155,6 +160,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     evalRepo: options.evaluation.repo,
     evalSet,
     evalRunner,
+    mcpMaxPdfBytes: options.mcpMaxPdfBytes,
   });
   return app;
 }

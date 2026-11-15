@@ -5,12 +5,14 @@ import type {
   PrimaryResumeDto,
   ProfileDto,
   RetrievedChunkDto,
+  RetrieveResponse,
 } from '../contract.js';
 import type { EvalQuestionRecord, EvalRunWithResults } from '../db/api/evalRepository.js';
 import type { ProfileRecord } from '../db/api/profileRepository.js';
 import { diffRuns } from '../services/evalSet/diff.js';
 import { isPdf } from '../services/profile/profiles.js';
 import type { DocumentRecord, RetrievedChunk } from '../db/api/repository.js';
+import type { RetrievalResult } from '../services/retrieval.js';
 
 export function toProfileDto(profile: ProfileRecord): ProfileDto {
   return {
@@ -105,3 +107,8 @@ export function toChunkDto(chunk: RetrievedChunk): RetrievedChunkDto {
     similarity: Math.round(chunk.similarity * 10_000) / 10_000,
   };
 }
+
+export const toRetrieveResponse = (result: RetrievalResult): RetrieveResponse => ({
+  version: result.version,
+  chunks: result.chunks.map(toChunkDto),
+});

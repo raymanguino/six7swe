@@ -5,14 +5,9 @@ import {
   type RetrieveResponse,
 } from '../../contract.js';
 import { requireOwner } from '../../plugins/serviceAuth.js';
-import { getCorpusVersion, retrieve, type RetrievalResult } from '../../services/retrieval.js';
+import { getCorpusVersion, retrieve } from '../../services/retrieval.js';
 import type { KnowledgeContext } from '../context.js';
-import { toChunkDto } from '../mappers.js';
-
-const toResponse = (result: RetrievalResult): RetrieveResponse => ({
-  version: result.version,
-  chunks: result.chunks.map(toChunkDto),
-});
+import { toRetrieveResponse } from '../mappers.js';
 
 export function retrievalHandlers(ctx: KnowledgeContext) {
   return {
@@ -31,14 +26,14 @@ export function retrievalHandlers(ctx: KnowledgeContext) {
           topSimilarity: result.chunks[0]?.similarity ?? null,
         });
       }
-      return toResponse(result);
+      return toRetrieveResponse(result);
     },
 
     /** Owner: the "ask as a visitor" playground. Strict, and never recorded. */
     async search(req: FastifyRequest): Promise<RetrieveResponse> {
       const ownerId = requireOwner(req);
       const { query, k } = SearchRequestSchema.parse(req.body);
-      return toResponse(await retrieve(ctx, ownerId, query, k));
+      return toRetrieveResponse(await retrieve(ctx, ownerId, query, k));
     },
 
     async version(req: FastifyRequest) {
