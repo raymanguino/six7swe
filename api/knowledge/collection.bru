@@ -1,0 +1,7 @@
+docs {
+  The knowledge service API (default port 3100). Private-network only in production.
+
+  There is no auth bypass here. Each route needs its own key, sent as x-knowledge-key:
+  serviceKey on service routes, ownerKey on owner routes. /mcp takes mcpKey as
+  Authorization: Bearer. The wrong key for a route is a 401. See api/README.md.
+}

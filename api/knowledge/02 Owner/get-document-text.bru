@@ -1,0 +1,40 @@
+meta {
+  name: Get document text
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{knowledgeBaseUrl}}/documents/:id/text
+  body: none
+  auth: none
+}
+
+headers {
+  x-knowledge-key: {{ownerKey}}
+}
+
+params:path {
+  id: {{documentId}}
+}
+
+script:pre-request {
+  if (!bru.getVar("documentId")) {
+    bru.runner.skipRequest();
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("returns the text field", function () {
+    expect(res.body).to.have.property("text");
+  });
+}
+
+docs {
+  Null until ingestion has finished.
+  Owner key: only the backend's owner proxy holds it. The service key gets a 401 here.
+}

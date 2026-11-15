@@ -1,0 +1,85 @@
+meta {
+  name: Save profile draft
+  type: http
+  seq: 8
+}
+
+put {
+  url: {{knowledgeBaseUrl}}/profile/draft
+  body: json
+  auth: none
+}
+
+headers {
+  x-knowledge-key: {{ownerKey}}
+}
+
+body:json {
+  {
+    "data": {
+      "name": "Bruno Example",
+      "title": "Software Engineer",
+      "location": "Toronto, Canada",
+      "summary": "A sample profile saved from the Bruno collection.",
+      "skills": [
+        "TypeScript",
+        "Fastify",
+        "PostgreSQL"
+      ],
+      "experience": [
+        {
+          "title": "Software Engineer",
+          "company": "Example Inc",
+          "period": "2021 - 2024",
+          "description": "Built and ran internal platforms."
+        }
+      ],
+      "projects": [
+        {
+          "name": "Sample project",
+          "description": "A demo project.",
+          "technologies": [
+            "TypeScript"
+          ]
+        }
+      ],
+      "links": {
+        "email": null,
+        "phone": null,
+        "linkedin": null,
+        "github": null,
+        "website": null
+      }
+    }
+  }
+}
+
+script:pre-request {
+  if (bru.getEnvVar("allowSideEffects") !== "true") {
+    bru.runner.skipRequest();
+  }
+}
+
+script:post-response {
+  if (res.status >= 200 && res.status < 300) {
+    const draftUpdatedAt = res?.body?.profile?.updatedAt;
+    if (draftUpdatedAt !== undefined && draftUpdatedAt !== null) {
+      bru.setVar("draftUpdatedAt", draftUpdatedAt);
+    }
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("saves the draft", function () {
+    expect(res.body.profile.stage).to.equal("draft");
+  });
+}
+
+docs {
+  Body limit 512 KB. Stores the draft's updatedAt in draftUpdatedAt for Publish.
+  Owner key: only the backend's owner proxy holds it. The service key gets a 401 here.
+}

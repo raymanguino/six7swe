@@ -1,0 +1,36 @@
+meta {
+  name: Get profile
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/job-hunt/profiles/:profileId
+  body: none
+  auth: inherit
+}
+
+params:path {
+  profileId: {{profileId}}
+}
+
+script:pre-request {
+  if (!bru.getVar("profileId")) {
+    bru.runner.skipRequest();
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("returns the profile", function () {
+    expect(res.body.profile).to.have.property("name");
+  });
+}
+
+docs {
+  One of the caller's profiles; 404 for anyone else's.
+  Private: needs a signed-in user. With AUTH_DEV_BYPASS=true no token is needed (see api/README.md).
+}

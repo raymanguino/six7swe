@@ -1,0 +1,28 @@
+meta {
+  name: Get knowledge status
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/job-hunt/knowledge
+  body: none
+  auth: inherit
+}
+
+tests {
+  test("responds with one of 200, 503", function () {
+    expect(res.status).to.be.oneOf([200, 503]);
+  });
+
+  test("states whether it is configured", function () {
+    if (res.status === 200) {
+      expect(res.body.configured).to.be.a("boolean");
+    }
+  });
+}
+
+docs {
+  What matches are scored against. Counts and dates only, and only for the knowledge owner; everyone else gets { configured: false }.
+  Private: needs a signed-in user. With AUTH_DEV_BYPASS=true no token is needed (see api/README.md).
+}

@@ -1,0 +1,38 @@
+meta {
+  name: Fit check
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/fitcheck
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "jobDescription": "Senior platform engineer. TypeScript, Node.js, PostgreSQL, API design, and developer experience."
+  }
+}
+
+script:pre-request {
+  if (bru.getEnvVar("allowSideEffects") !== "true") {
+    bru.runner.skipRequest();
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("returns a verdict", function () {
+    expect(res.body).to.have.property("verdict");
+    expect(res.body).to.have.property("recommendation");
+  });
+}
+
+docs {
+  Public. Model call: skipped unless allowSideEffects is "true". jobDescription is at most 50000 characters.
+}

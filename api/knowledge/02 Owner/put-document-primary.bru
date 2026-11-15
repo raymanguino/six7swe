@@ -1,0 +1,40 @@
+meta {
+  name: Set primary resume
+  type: http
+  seq: 5
+}
+
+put {
+  url: {{knowledgeBaseUrl}}/documents/:id/primary
+  body: none
+  auth: none
+}
+
+headers {
+  x-knowledge-key: {{ownerKey}}
+}
+
+params:path {
+  id: {{documentId}}
+}
+
+script:pre-request {
+  if (bru.getEnvVar("allowSideEffects") !== "true") {
+    bru.runner.skipRequest();
+  }
+  if (!bru.getVar("documentId")) {
+    bru.runner.skipRequest();
+  }
+}
+
+tests {
+  test("responds with one of 200, 409", function () {
+    expect(res.status).to.be.oneOf([200, 409]);
+  });
+}
+
+docs {
+  Changes the owner's corpus (new version, stale job scores, an eval run), so it is skipped unless allowSideEffects is "true".
+  409 unless the document is a ready resume.
+  Owner key: only the backend's owner proxy holds it. The service key gets a 401 here.
+}

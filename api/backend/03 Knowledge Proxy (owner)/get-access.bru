@@ -1,0 +1,25 @@
+meta {
+  name: Get access
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/knowledge/access
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("says whether you are the owner", function () {
+    expect(res.body.isOwner).to.be.a("boolean");
+  });
+}
+
+docs {
+  Any signed-in user may ask. Decides whether the frontend shows the Knowledge nav entry.
+}

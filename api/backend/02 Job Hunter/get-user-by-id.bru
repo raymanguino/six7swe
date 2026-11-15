@@ -1,0 +1,36 @@
+meta {
+  name: Get user by id
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/job-hunt/users/:id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  id: {{userId}}
+}
+
+script:pre-request {
+  if (!bru.getVar("userId")) {
+    bru.runner.skipRequest();
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("returns the same user", function () {
+    expect(res.body.user).to.have.property("id");
+  });
+}
+
+docs {
+  Only the caller's own record; any other id is a 404.
+  Private: needs a signed-in user. With AUTH_DEV_BYPASS=true no token is needed (see api/README.md).
+}

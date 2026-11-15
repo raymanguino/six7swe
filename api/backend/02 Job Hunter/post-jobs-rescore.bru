@@ -1,0 +1,35 @@
+meta {
+  name: Start rescore
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/job-hunt/profiles/:profileId/jobs/rescore
+  body: none
+  auth: inherit
+}
+
+params:path {
+  profileId: {{profileId}}
+}
+
+script:pre-request {
+  if (bru.getEnvVar("allowSideEffects") !== "true") {
+    bru.runner.skipRequest();
+  }
+  if (!bru.getVar("profileId")) {
+    bru.runner.skipRequest();
+  }
+}
+
+tests {
+  test("responds with one of 202, 204, 503", function () {
+    expect(res.status).to.be.oneOf([202, 204, 503]);
+  });
+}
+
+docs {
+  Rescores stale matches against the current knowledge version. 204 when nothing is stale; 503 when the knowledge base is unavailable. Skipped unless allowSideEffects is "true".
+  Private: needs a signed-in user. With AUTH_DEV_BYPASS=true no token is needed (see api/README.md).
+}

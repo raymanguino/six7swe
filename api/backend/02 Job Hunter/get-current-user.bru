@@ -1,0 +1,35 @@
+meta {
+  name: Get current user
+  type: http
+  seq: 12
+}
+
+get {
+  url: {{baseUrl}}/job-hunt/users
+  body: none
+  auth: inherit
+}
+
+script:post-response {
+  if (res.status >= 200 && res.status < 300) {
+    const userId = res?.body?.user?.id;
+    if (userId !== undefined && userId !== null) {
+      bru.setVar("userId", userId);
+    }
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("returns the user", function () {
+    expect(res.body.user).to.have.property("id");
+  });
+}
+
+docs {
+  The caller's own record; stores its id in userId.
+  Private: needs a signed-in user. With AUTH_DEV_BYPASS=true no token is needed (see api/README.md).
+}

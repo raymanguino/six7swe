@@ -1,0 +1,28 @@
+meta {
+  name: Get job by source
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/job-hunt/jobs/:source_id/:source_job_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  source_id: {{sourceId}}
+  source_job_id: {{sourceJobId}}
+}
+
+tests {
+  test("responds with one of 200, 404", function () {
+    expect(res.status).to.be.oneOf([200, 404]);
+  });
+}
+
+docs {
+  A job by its source and the source's own id. source_id accepts linkedin, li, indeed, glassdoor, company_website, other (400 otherwise).
+  404 until a job exists.
+  Private: needs a signed-in user. With AUTH_DEV_BYPASS=true no token is needed (see api/README.md).
+}

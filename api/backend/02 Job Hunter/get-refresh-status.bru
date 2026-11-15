@@ -1,0 +1,40 @@
+meta {
+  name: Get refresh status
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/job-hunt/profiles/:profileId/jobs/refresh/:refreshId
+  body: none
+  auth: inherit
+}
+
+params:path {
+  profileId: {{profileId}}
+  refreshId: {{refreshId}}
+}
+
+script:pre-request {
+  if (!bru.getVar("profileId")) {
+    bru.runner.skipRequest();
+  }
+  if (!bru.getVar("refreshId")) {
+    bru.runner.skipRequest();
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("returns the refresh status", function () {
+    expect(res.body.refreshStatus).to.have.property("profileId");
+  });
+}
+
+docs {
+  Progress of a refresh or rescore. Skipped until Start refresh has run.
+  Private: needs a signed-in user. With AUTH_DEV_BYPASS=true no token is needed (see api/README.md).
+}

@@ -1,0 +1,25 @@
+meta {
+  name: Health check
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("reports ok", function () {
+    expect(res.body.status).to.equal("ok");
+  });
+}
+
+docs {
+  Public. Returns only allowlisted, non-sensitive environment values.
+}

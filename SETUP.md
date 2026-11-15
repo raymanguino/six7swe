@@ -210,6 +210,9 @@ pnpm dev:frontend
 The frontend will be available at http://localhost:5173
 The backend will be available at http://localhost:3000
 
+To exercise the HTTP APIs directly, open the Bruno collections in `api/`
+(see [api/README.md](./api/README.md)).
+
 ## Local vs Remote Database
 
 The environment is selected by which file dotenv loads, not by commenting lines out. `backend/.env` points at the local database; `backend/.env.remote` points at the remote one.

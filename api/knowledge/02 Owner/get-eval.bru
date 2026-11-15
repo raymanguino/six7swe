@@ -1,0 +1,36 @@
+meta {
+  name: Get eval set
+  type: http
+  seq: 12
+}
+
+get {
+  url: {{knowledgeBaseUrl}}/eval
+  body: none
+  auth: none
+}
+
+headers {
+  x-knowledge-key: {{ownerKey}}
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("returns the questions and settings", function () {
+    expect(res.body.questions).to.be.an("array");
+    expect(res.body).to.have.property("settings");
+  });
+
+  const active = (res.body.questions || []).find((q) => q.status === "active");
+  if (active) {
+    bru.setVar("evalQuestionId", active.id);
+  }
+}
+
+docs {
+  Seeds the canned questions on first use. Stores the first active question's id in evalQuestionId.
+  Owner key: only the backend's owner proxy holds it. The service key gets a 401 here.
+}

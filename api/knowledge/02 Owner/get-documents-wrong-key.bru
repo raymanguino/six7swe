@@ -1,0 +1,29 @@
+meta {
+  name: List documents (wrong key)
+  type: http
+  seq: 17
+}
+
+get {
+  url: {{knowledgeBaseUrl}}/documents
+  body: none
+  auth: none
+}
+
+headers {
+  x-knowledge-key: {{serviceKey}}
+}
+
+assert {
+  res.status: eq 401
+}
+
+tests {
+  test("rejects the service key", function () {
+    expect(res.body.error).to.equal("Unauthorized");
+  });
+}
+
+docs {
+  Error path: each route accepts only its own key, so the service key is refused on an owner route.
+}

@@ -1,0 +1,49 @@
+meta {
+  name: Eval question: pin
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{knowledgeBaseUrl}}/eval/questions/:id
+  body: json
+  auth: none
+}
+
+headers {
+  x-knowledge-key: {{ownerKey}}
+}
+
+params:path {
+  id: {{evalQuestionId}}
+}
+
+body:json {
+  {
+    "action": "pin"
+  }
+}
+
+script:pre-request {
+  if (bru.getEnvVar("allowSideEffects") !== "true") {
+    bru.runner.skipRequest();
+  }
+  if (!bru.getVar("evalQuestionId")) {
+    bru.runner.skipRequest();
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("pins the question", function () {
+    expect(res.body.question.pinned).to.equal(true);
+  });
+}
+
+docs {
+  action is one of pin, unpin, retire, promote, off-topic, on-topic.
+  Owner key: only the backend's owner proxy holds it. The service key gets a 401 here.
+}

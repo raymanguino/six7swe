@@ -1,0 +1,33 @@
+meta {
+  name: Create profile (invalid geo id)
+  type: http
+  seq: 16
+}
+
+post {
+  url: {{baseUrl}}/job-hunt/profiles
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "name": "Bad location",
+    "keywords": [],
+    "location": "Toronto"
+  }
+}
+
+assert {
+  res.status: eq 400
+}
+
+tests {
+  test("rejects a city name", function () {
+    expect(res.body.error).to.equal("Invalid profile payload");
+  });
+}
+
+docs {
+  Error path: location must be a numeric LinkedIn geo id; a city name would silently search nothing.
+}

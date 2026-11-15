@@ -1,0 +1,16 @@
+auth {
+  mode: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+docs {
+  The backend API (default port 3000).
+
+  Public routes send no credential. /job-hunt/* and /knowledge/* send
+  Authorization: Bearer {{accessToken}}. With AUTH_DEV_BYPASS=true the backend
+  authenticates every request as the local dev user, so the token can stay empty.
+  See api/README.md.
+}

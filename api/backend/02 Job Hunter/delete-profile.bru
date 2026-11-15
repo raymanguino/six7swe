@@ -1,0 +1,30 @@
+meta {
+  name: Delete profile
+  type: http
+  seq: 14
+}
+
+delete {
+  url: {{baseUrl}}/job-hunt/profiles/:profileId
+  body: none
+  auth: inherit
+}
+
+params:path {
+  profileId: {{profileId}}
+}
+
+script:pre-request {
+  if (!bru.getVar("profileId")) {
+    bru.runner.skipRequest();
+  }
+}
+
+assert {
+  res.status: eq 204
+}
+
+docs {
+  Deletes the profile created above.
+  Private: needs a signed-in user. With AUTH_DEV_BYPASS=true no token is needed (see api/README.md).
+}

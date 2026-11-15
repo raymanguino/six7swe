@@ -1,0 +1,50 @@
+meta {
+  name: Chat
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/chat
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "message": "What has Ray built with RAG systems?",
+    "history": [
+      {
+        "role": "user",
+        "content": "Hi"
+      },
+      {
+        "role": "assistant",
+        "content": "Hello! Ask me anything about my background."
+      }
+    ],
+    "sessionId": "bruno-demo-session-01"
+  }
+}
+
+script:pre-request {
+  if (bru.getEnvVar("allowSideEffects") !== "true") {
+    bru.runner.skipRequest();
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("answers with a string", function () {
+    expect(res.body.response).to.be.a("string");
+  });
+}
+
+docs {
+  Public, and rate limited to 10 requests per minute per client (429 with a retry-after).
+  Each message is a model call, so this request is skipped unless allowSideEffects is "true".
+  message is 1..2000 characters; history keeps the last 20 turns; sessionId is 8..128 of [A-Za-z0-9_-].
+}

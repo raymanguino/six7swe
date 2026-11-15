@@ -1,0 +1,37 @@
+meta {
+  name: List profile matches
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/job-hunt/profiles/:profileId/jobs
+  body: none
+  auth: inherit
+}
+
+params:path {
+  profileId: {{profileId}}
+}
+
+script:pre-request {
+  if (!bru.getVar("profileId")) {
+    bru.runner.skipRequest();
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("returns scored matches", function () {
+    expect(res.body.jobs).to.be.an("array");
+    expect(res.body).to.have.property("knowledge");
+  });
+}
+
+docs {
+  Scored matches. For the knowledge owner each match carries its staleness and cited evidence; everyone else gets knowledge: { configured: false }.
+  Private: needs a signed-in user. With AUTH_DEV_BYPASS=true no token is needed (see api/README.md).
+}

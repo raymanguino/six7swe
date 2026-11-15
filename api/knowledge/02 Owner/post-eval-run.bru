@@ -1,0 +1,30 @@
+meta {
+  name: Run eval
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{knowledgeBaseUrl}}/eval/runs
+  body: none
+  auth: none
+}
+
+headers {
+  x-knowledge-key: {{ownerKey}}
+}
+
+script:pre-request {
+  if (bru.getEnvVar("allowSideEffects") !== "true") {
+    bru.runner.skipRequest();
+  }
+}
+
+assert {
+  res.status: eq 202
+}
+
+docs {
+  Skipped unless allowSideEffects is "true".
+  Owner key: only the backend's owner proxy holds it. The service key gets a 401 here.
+}

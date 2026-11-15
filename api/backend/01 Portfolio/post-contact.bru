@@ -1,0 +1,40 @@
+meta {
+  name: Contact
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/contact
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "Bruno Example",
+    "email": "bruno@example.com",
+    "company": "Example Inc",
+    "message": "Hello from the Bruno collection."
+  }
+}
+
+script:pre-request {
+  if (bru.getEnvVar("allowSideEffects") !== "true") {
+    bru.runner.skipRequest();
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("confirms the message", function () {
+    expect(res.body.success).to.equal(true);
+  });
+}
+
+docs {
+  Public. Sends a real email to the profile owner, so it is skipped unless allowSideEffects is "true". 503 when the profile has no email address.
+}

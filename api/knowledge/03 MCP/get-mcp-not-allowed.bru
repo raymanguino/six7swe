@@ -1,0 +1,30 @@
+meta {
+  name: MCP: GET not allowed
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{knowledgeBaseUrl}}/mcp
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{mcpKey}}
+}
+
+assert {
+  res.status: eq 405
+}
+
+tests {
+  test("allows POST only", function () {
+    expect(res.headers.allow).to.equal("POST");
+  });
+}
+
+docs {
+  Error path: there is no session to stream to, so GET and DELETE are a 405.
+  MCP key as Authorization: Bearer. Any query string is a 401, so the key can never end up in a URL. With no KNOWLEDGE_MCP_KEY configured, /mcp is closed.
+}

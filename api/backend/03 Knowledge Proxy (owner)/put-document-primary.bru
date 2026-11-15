@@ -1,0 +1,37 @@
+meta {
+  name: Set primary resume
+  type: http
+  seq: 6
+}
+
+put {
+  url: {{baseUrl}}/knowledge/documents/:id/primary
+  body: none
+  auth: inherit
+}
+
+params:path {
+  id: {{documentId}}
+}
+
+script:pre-request {
+  if (bru.getEnvVar("allowSideEffects") !== "true") {
+    bru.runner.skipRequest();
+  }
+  if (!bru.getVar("documentId")) {
+    bru.runner.skipRequest();
+  }
+}
+
+tests {
+  test("responds with one of 200, 409", function () {
+    expect(res.status).to.be.oneOf([200, 409]);
+  });
+}
+
+docs {
+  Changes the owner's corpus (new version, stale job scores, an eval run), so it is skipped unless allowSideEffects is "true".
+  Makes a ready resume the primary one. 409 for anything else, including the supporting document uploaded above.
+  Owner only: 401 when signed out, 403 for any other user. Locally set AUTH_DEV_BYPASS=true and OWNER_AUTH_ID=auth-dev-bypass (see api/README.md).
+  Forwarded to the knowledge service with KNOWLEDGE_OWNER_KEY; 503 when that is not configured.
+}
