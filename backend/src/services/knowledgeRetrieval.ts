@@ -114,12 +114,18 @@ export function normalizeQuestion(question: string): string {
     .replace(/[\s?!.]+$/, '');
 }
 
+/** Structural logger, so a Fastify child logger fits without importing Fastify here. */
+export interface RetrievalLogger {
+  warn(obj: Record<string, unknown>, msg: string): void;
+}
+
 export interface CachedRetrieverOptions {
   k: number;
   versionTtlMs: number;
   failureCooldownMs: number;
   maxEntries: number;
   now?: () => number;
+  log?: RetrievalLogger;
 }
 
 export interface RetrieveOptions {
@@ -233,11 +239,23 @@ export function createCachedRetriever(
   /**
    * A cache hit never reaches the service, but the visitor's question still
    * counts toward the eval set: one small retrieval records it, in the
-   * background. Its outcome is ignored, and it never touches the cooldown.
+   * background. A failure is logged (never the query or session id, which are
+   * PII) and otherwise ignored, and it never touches the cooldown.
    */
   function recordInBackground(query: string, record: RecordQuestion): void {
     if (coolingDown()) return;
-    client.retrieve(query, 1, record).catch(() => undefined);
+    client.retrieve(query, 1, record).catch((error: unknown) => {
+      const detail: { message: string; status?: number } = {
+        message: error instanceof Error ? error.message : 'Unknown error',
+      };
+      if (error instanceof KnowledgeRetrievalError && error.status !== undefined) {
+        detail.status = error.status;
+      }
+      options.log?.warn(
+        { source: 'knowledge', error: detail },
+        'Recording the chat question for the eval set failed',
+      );
+    });
   }
 
   return {
@@ -274,6 +292,12 @@ export function createCachedRetriever(
 }
 
 let defaultRetriever: CachedRetriever | null | undefined;
+let retrievalLogger: RetrievalLogger | undefined;
+
+/** The server hands over its logger at startup, like `setPortfolioLogger`. */
+export function setRetrievalLogger(logger: RetrievalLogger): void {
+  retrievalLogger = logger;
+}
 
 /**
  * The process-wide retriever built from the environment, or null when
@@ -288,6 +312,7 @@ export function getDefaultRetriever(): CachedRetriever | null {
           versionTtlMs: config.versionTtlMs,
           failureCooldownMs: config.failureCooldownMs,
           maxEntries: config.cacheEntries,
+          log: retrievalLogger,
         })
       : null;
   }

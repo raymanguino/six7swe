@@ -114,6 +114,24 @@ describe('createCachedRetriever', () => {
       await expect(retriever.retrieve('go')).resolves.toHaveLength(1);
     });
 
+    it('logs a failed background record without the query or the session id', async () => {
+      const { client } = fakeClient();
+      const warn = jest.fn();
+      const retriever = createCachedRetriever(client, { ...options, log: { warn } });
+      await retriever.retrieve('kafka');
+      client.retrieve.mockRejectedValueOnce(new KnowledgeRetrievalError('down', { status: 503 }));
+      await retriever.retrieve('kafka', { record });
+      await flush();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(
+        { source: 'knowledge', error: { message: 'down', status: 503 } },
+        'Recording the chat question for the eval set failed',
+      );
+      const serialized = JSON.stringify(warn.mock.calls);
+      expect(serialized).not.toContain('kafka');
+      expect(serialized).not.toContain('session-aaaa');
+    });
+
     it('does not record a hit while the service is cooling down', async () => {
       const { client } = fakeClient();
       const retriever = createCachedRetriever(client, options);
