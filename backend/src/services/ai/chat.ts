@@ -1,6 +1,4 @@
-import { getPortfolioDataSource } from '../../config/portfolioMcp';
 import {
-  getChatContext,
   getKnowledgeChatContext,
   type ChatHistory,
   type ContextLogger,
@@ -20,22 +18,17 @@ export interface ChatOptions {
 const MAX_HISTORY_MESSAGES = 10;
 
 /**
- * The context block for one chat turn. With `PORTFOLIO_DATA_SOURCE=knowledge`
- * it is a compact profile summary plus the chunks retrieved for this question
- * (profile-only if retrieval is down); otherwise the whole resume and every
- * content section.
+ * The context block for one chat turn: a compact profile summary plus the
+ * chunks retrieved for this question (profile-only if retrieval is down).
  */
 export async function getContextForChat(options: ChatOptions): Promise<string> {
-  if (getPortfolioDataSource() === 'knowledge') {
-    const result = await getKnowledgeChatContext({
-      message: options.message,
-      history: options.history,
-      log: options.log,
-      sessionId: options.sessionId,
-    });
-    return result.context;
-  }
-  return getChatContext();
+  const result = await getKnowledgeChatContext({
+    message: options.message,
+    history: options.history,
+    log: options.log,
+    sessionId: options.sessionId,
+  });
+  return result.context;
 }
 
 /** The messages sent to the model, given the context block. */

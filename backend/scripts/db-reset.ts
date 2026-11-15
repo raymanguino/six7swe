@@ -8,8 +8,7 @@
  * schemas: that service owns them and applies its own migrations.
  *
  * The database is left empty unless `--seed` is passed. The portfolio is
- * never seeded here: its data lives in gitignored files, so it is applied
- * separately with `pnpm run db:seed-portfolio`.
+ * not in this database: its data lives in the knowledge service.
  *
  * Usage:
  *   pnpm run db:reset                    # local database, empty
@@ -156,10 +155,7 @@ async function main(): Promise<void> {
     process.stdout.write('No seed data inserted; the database is empty.\n');
   }
 
-  process.stdout.write(
-    '\nDone. The portfolio profile and content sections are not seeded by this ' +
-      'script: run `pnpm run db:seed-portfolio` for those.\n',
-  );
+  process.stdout.write('\nDone.\n');
 }
 
 main()

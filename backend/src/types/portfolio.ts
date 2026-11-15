@@ -15,20 +15,11 @@ export type PortfolioProfileData = {
   resumeFilename: string | null;
 };
 
-export type ContentSectionData = {
-  id: number;
-  filename: string;
-  content: string;
-  sortOrder: number;
-};
-
 export type PortfolioData = {
   profile: PortfolioProfileData | null;
-  contentSections: ContentSectionData[];
   /**
-   * The knowledge service's primary resume, with `PORTFOLIO_DATA_SOURCE=knowledge`
-   * (#86); null when it has none. `/resume` serves it when `isPdf`. Absent for
-   * the other sources.
+   * The knowledge service's primary resume (#86); null when it has none.
+   * `/resume` serves it when `isPdf`.
    */
   knowledgeResume?: { filename: string; isPdf: boolean } | null;
 };

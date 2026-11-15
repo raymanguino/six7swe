@@ -13,9 +13,6 @@ describe('resumeService', () => {
 
   beforeEach(() => {
     directory = fs.mkdtempSync(path.join(os.tmpdir(), 'resume-'));
-    delete process.env.PORTFOLIO_DATA_SOURCE;
-    delete process.env.MCP_PORTFOLIO_URL;
-    delete process.env.MCP_PORTFOLIO_COMMAND;
   });
 
   afterEach(() => {
@@ -87,24 +84,13 @@ describe('resumeService', () => {
   });
 
   describe('isResumeAvailable', () => {
-    it('is false with the db source and no file on disk', () => {
+    it('is false with no file on disk', () => {
       expect(isResumeAvailable('ray.pdf', directory)).toBe(false);
     });
 
     it('is true when a local file exists', () => {
       write('resume.pdf');
       expect(isResumeAvailable('ray.pdf', directory)).toBe(true);
-    });
-
-    it('is true with the MCP source configured, without checking the disk', () => {
-      process.env.PORTFOLIO_DATA_SOURCE = 'mcp';
-      process.env.MCP_PORTFOLIO_URL = 'https://mcp.example.com';
-      expect(isResumeAvailable('ray.pdf', directory)).toBe(true);
-    });
-
-    it('ignores the MCP source when no connection is configured', () => {
-      process.env.PORTFOLIO_DATA_SOURCE = 'mcp';
-      expect(isResumeAvailable('ray.pdf', directory)).toBe(false);
     });
   });
 });

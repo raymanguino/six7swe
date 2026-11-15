@@ -5,8 +5,7 @@
  * because it is a side effect; the review decision itself is pure and lives
  * in `backend/src/domain/qa/`.
  *
- * Native `fetch`, no dependency: `backend/src/services/mcpPortfolioClient.ts`
- * is the closest existing example of an outbound HTTP client in this repo.
+ * Native `fetch`, no dependency.
  *
  * The token is only ever sent in the `Authorization` header. It is never
  * written into a URL, a log line or an error message.

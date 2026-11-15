@@ -185,9 +185,7 @@ pnpm run db:reset -- --remote --seed   # hosted database, with dev data
 pnpm run db:reset -- --seed             # local database, with dev data
 ```
 
-The portfolio is never seeded by the reset: its data lives in gitignored files, so apply it
-separately with `pnpm run db:seed-portfolio -- --remote`. Without it the public site renders
-without a profile.
+The portfolio is not in this database: its profile and documents live in the knowledge service, so a reset does not touch them.
 
 > Take a backup first (`pg_dump "$DATABASE_URL" -Fc -f backup.dump`) if the hosted database holds
 > anything you want to keep.
@@ -227,10 +225,10 @@ what that does and why it matters.
 
 ### 4. Resume PDF
 
-The frontend downloads the resume from the backend via `GET /resume`. The backend serves it from the local filesystem at `backend/public/`, falling back to `resume.pdf` if the database filename does not match.
+The frontend downloads the resume from the backend via `GET /resume`. The backend serves the knowledge service's primary resume PDF; if there is none it falls back to the local filesystem at `backend/public/`, then to `resume.pdf` if the profile's filename does not match.
 
-- Place your resume at `backend/public/resume.pdf` (or match `portfolio_profile.resume_filename`).
-- Ensure it is present in the deployed backend filesystem. Note that this repo's `.gitignore` ignores `backend/public/*.pdf` by default, so it will not deploy unless you change that policy.
+- Upload your resume as the primary document on the Knowledge page, or place a fallback at `backend/public/resume.pdf`.
+- A local fallback must be present in the deployed backend filesystem. Note that this repo's `.gitignore` ignores `backend/public/*.pdf` by default, so it will not deploy unless you change that policy.
 
 **Production currently has no resume** (#104): no PDF reaches the deployed image, so `GET /resume`
 returns 404. The site handles this. `GET /portfolio` reports `resumeAvailable`, using the same
@@ -242,8 +240,8 @@ shows up in the Railway logs. The planned fix serves the PDF from the knowledge 
 
 ### 5. Update Resume / Portfolio Data
 
-1. Copy `backend/scripts/portfolio-data.example.json` to `backend/scripts/portfolio-data.json`, fill in your data, then run `pnpm run db:seed-portfolio -- --remote` from `backend/`—or update `portfolio_profile` directly in the database
-2. Contact info is served from the portfolio API; no frontend edits needed
+1. Upload the resume and edit the profile on the owner's Knowledge page (`/hunter/knowledge`), then publish it
+2. Contact info is served from the published profile via the portfolio API; no frontend edits needed
 
 ### 6. Job Refreshes (optional)
 

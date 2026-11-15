@@ -50,7 +50,7 @@ For local development point `SUPABASE_URL` at the local stack
 (`http://127.0.0.1:54321`) so the API verifies tokens issued by the local Auth
 service. It must match the frontend's `VITE_SUPABASE_URL`.
 
-Optional variables (`PORT`, `PORTFOLIO_DATA_SOURCE`, `PORTFOLIO_CACHE_TTL_MS`, `MCP_*`, `SUPABASE_JWKS_URL`, `AUTH_DEV_BYPASS`, `JOB_REFRESH_STALE_MINUTES`, and `OWNER_AUTH_ID` / `KNOWLEDGE_URL` / `KNOWLEDGE_OWNER_KEY` for the Knowledge page) are documented in [`backend/.env.example`](backend/.env.example).
+Optional variables (`PORT`, `PORTFOLIO_CACHE_TTL_MS`, `SUPABASE_JWKS_URL`, `AUTH_DEV_BYPASS`, `JOB_REFRESH_STALE_MINUTES`, and `OWNER_AUTH_ID` / `KNOWLEDGE_URL` / `KNOWLEDGE_OWNER_KEY` for the Knowledge page) are documented in [`backend/.env.example`](backend/.env.example).
 
 Set `MINIMAX_API_KEY_SECONDARY` optionally to retry once with a second key when the primary request receives HTTP 429.
 
@@ -89,10 +89,12 @@ after creating or editing `frontend/.env`.
 
 ### 6. Portfolio / Resume
 
-1. Copy `backend/scripts/portfolio-data.example.json` to `backend/scripts/portfolio-data.json`
-2. Edit `portfolio-data.json` with your profile data (name, email, resume text, etc.)
-3. Run `pnpm run db:seed-portfolio` from `backend/`
-4. Copy your resume PDF to `backend/public/` (e.g. `resume.pdf`), or set `PORTFOLIO_DATA_SOURCE=mcp` and configure MCP in `backend/.env` so portfolio and resume are served from your MCP server (see `backend/.env.example`).
+The portfolio reads only from the knowledge service, so the backend needs `KNOWLEDGE_URL` and `KNOWLEDGE_SERVICE_KEY` (see `backend/.env.example`) and refuses to start without them.
+
+1. Start the knowledge service (`pnpm dev:knowledge`, port 3100)
+2. Sign in as the owner and open `/hunter/knowledge`
+3. Upload your resume and supporting documents, then review and publish the profile
+4. The primary resume PDF is served at `/resume`. Optionally place a fallback PDF in `backend/public/` (e.g. `resume.pdf`).
 
 ### 7. Job Hunter (optional)
 
@@ -235,7 +237,6 @@ schema and replay the migrations:
 cd backend
 pnpm run db:reset                # local
 pnpm run db:reset -- --remote    # hosted
-pnpm run db:seed-portfolio       # portfolio profile and content sections
 ```
 
 The Supabase-managed schemas (`auth`, `storage`, `graphql_public`) are left alone, so Supabase
@@ -243,7 +244,7 @@ Auth users survive a reset.
 
 ## Updating Resume/Portfolio Data
 
-Update the `portfolio_profile` table in the database, or edit `backend/scripts/portfolio-data.json` (copy from `portfolio-data.example.json` if needed) and re-run `pnpm run db:seed-portfolio` from `backend/`. The AI chat assistant uses `full_resume_text` to answer questions.
+Upload a new resume or edit the profile on the owner's Knowledge page (`/hunter/knowledge`) and publish it. Chat retrieves from the documents in the knowledge service.
 
 > The portfolio payload is cached in memory for `PORTFOLIO_CACHE_TTL_MS`
 > (default 10 minutes), so chat may keep serving the previous text until the

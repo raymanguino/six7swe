@@ -46,7 +46,6 @@ export const PR_REVIEW_SYSTEM_PROMPT = `You are a code reviewer for a TypeScript
 - Services (backend/src/services/) orchestrate use cases and own the side effects: external APIs (MiniMax, Resend, GitHub), Puppeteer, the filesystem and the database. I/O in a service is the intended design, not a violation, but it is still reviewed under Security: input that reaches a file path, a URL, a query or a command must be validated.
 - Database queries live in backend/src/db/api/ and are called only from services and plugins. A route handler or a domain module that imports db/api is a violation.
 - Plugins (backend/src/plugins/) wire services and db/api modules into Fastify as decorators; they hold no business logic.
-- Known exception: backend/src/services/portfolioService.ts still queries Drizzle directly, until issue 88 adds db/api for it. That is not a finding.
 - The domain must not depend on services, routes or the database.
 - AI agent logic is isolated from HTTP and scraping concerns; tooling is reached through abstractions.
 - Scraping is Puppeteer only, lives in backend/src/services/jobFetchers/ and never in routes, handlers or the domain, and its output is normalized before it enters the domain.

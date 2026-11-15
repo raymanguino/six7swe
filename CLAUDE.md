@@ -3,13 +3,13 @@
 Portfolio + job-matching SWE platform. Full architecture in `docs/architecture.md`.
 
 ## Architecture Notes
-- Two separate products in one repo: the public **portfolio** (`backend/src/db/schema/portfolio.ts`, routes in `backend/src/routes/portfolio.ts`) and the **job hunter** (`backend/src/db/schema/jobHunt.ts`, routes in `backend/src/routes/jobHunt.ts`). The job hunter lives under `/job-hunt/*`.
+- Two separate products in one repo: the public **portfolio** (no tables of its own: its profile and documents live in the knowledge service; routes in `backend/src/routes/portfolio.ts`) and the **job hunter** (`backend/src/db/schema/jobHunt.ts`, routes in `backend/src/routes/jobHunt.ts`). The job hunter lives under `/job-hunt/*`.
 - Auth verifies real Supabase JWTs against the project JWKS (`backend/src/services/auth/`). Routes are private by default and opt out via `PUBLIC_ROUTE` in `backend/src/routes/access.ts`. `AUTH_DEV_BYPASS=true` is for local use only.
 - Supabase used for Storage only (resume/PDF bucket `portfolio-files`); no frontend Supabase client
 - **Migrations.** The schema (`backend/src/db/schema/`) is the source of truth. `pnpm run db:generate` writes a migration from a schema change; `pnpm run db:migrate` applies it. `pnpm run db:reset` rebuilds the database from the migration history.
-- **`pnpm run db:reset` leaves the database empty.** Dev data is opt-in with `--seed`; the portfolio is a separate script (`pnpm run db:seed-portfolio`) because its data is gitignored. A reset against the hosted database asks you to type the host before it drops anything (`--yes` skips the prompt).
+- **`pnpm run db:reset` leaves the database empty.** Dev data is opt-in with `--seed`. A reset against the hosted database asks you to type the host before it drops anything (`--yes` skips the prompt).
 - **`auth_id` is the identity key, not the email.** A local user row is bound to exactly one authenticated subject and is never re-bound (`backend/src/domain/jobHunt/identity.ts`). `users.email` is nullable because a token may carry no email claim.
-- Portfolio data is private and gitignored: `backend/scripts/portfolio-data.json` (template: `portfolio-data.example.json`) and `backend/content/`. Seed it with `pnpm run db:seed-portfolio`.
+- **The portfolio has no database.** The landing-page profile, the resume PDF and chat context all come from the knowledge service (`backend/src/services/portfolioService.ts` reads the published profile; the owner publishes it on `/hunter/knowledge`). The portfolio code paths need no `DATABASE_URL`, but the backend refuses to start without `KNOWLEDGE_URL` and `KNOWLEDGE_SERVICE_KEY`. The `portfolio_profile` and `content_sections` tables were dropped by migration `0002`.
 - `portfolioService.ts` caches in memory; TTL via `PORTFOLIO_CACHE_TTL_MS` (default 10 min)
 - Lerna was removed: it was never used, and it pulled in `nx` and `axios`, which accounted for most of the dependency advisories. pnpm workspace scripts are authoritative
 - `packages/knowledge-types` (`@six7swe/knowledge-types`) holds the knowledge wire contract (Zod schemas and constants) shared by the backend and the knowledge service. It compiles to CommonJS `dist/`, which `pnpm install` does not build: consumers' scripts build it first, and `pnpm build:types` rebuilds it after editing

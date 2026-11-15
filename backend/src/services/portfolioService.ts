@@ -1,16 +1,11 @@
-import { db } from '../db';
-import { portfolioProfile, contentSections } from '../db/schema/portfolio';
-import { eq, asc } from 'drizzle-orm';
-import type { PortfolioData, PortfolioProfileData, ContentSectionData } from '../types/portfolio';
-import { getPortfolioDataSource, isMcpConnectionConfigured } from '../config/portfolioMcp';
-import { fetchPortfolioFromMcp } from './mcpPortfolioClient';
+import type { PortfolioData } from '../types/portfolio';
 import { getDefaultProfileClient } from './knowledge/profileClient';
 import { mapPublishedProfile } from './knowledge/profileMapping';
 import { createSwrCache } from './staleWhileRevalidate';
 import pino from 'pino';
 import type { FastifyBaseLogger } from 'fastify';
 
-export type { PortfolioProfileData, ContentSectionData, PortfolioData } from '../types/portfolio';
+export type { PortfolioProfileData, PortfolioData } from '../types/portfolio';
 
 const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const CACHE_TTL_MS = Number(process.env.PORTFOLIO_CACHE_TTL_MS) || DEFAULT_CACHE_TTL_MS;
@@ -18,9 +13,9 @@ const CACHE_TTL_MS = Number(process.env.PORTFOLIO_CACHE_TTL_MS) || DEFAULT_CACHE
 const RETRY_AFTER_FAILURE_MS = 30_000;
 
 /**
- * Where refresh and outage failures are logged. They happen outside any request,
- * so the server hands over its logger at startup (`setPortfolioLogger`); until
- * then a plain pino logger keeps them structured.
+ * Where refresh failures are logged. They happen outside any request, so the
+ * server hands over its logger at startup (`setPortfolioLogger`); until then a
+ * plain pino logger keeps them structured.
  */
 let log: Pick<FastifyBaseLogger, 'warn'> = pino({ name: 'portfolio' });
 
@@ -28,96 +23,22 @@ export function setPortfolioLogger(logger: Pick<FastifyBaseLogger, 'warn'>): voi
   log = logger;
 }
 
-async function fetchFromDb(): Promise<PortfolioData> {
-  const [profileRow] = await db
-    .select()
-    .from(portfolioProfile)
-    .where(eq(portfolioProfile.id, 1))
-    .limit(1);
-
-  const sections = await db
-    .select()
-    .from(contentSections)
-    .orderBy(asc(contentSections.sortOrder), asc(contentSections.filename));
-
-  const profile: PortfolioProfileData | null = profileRow
-    ? {
-        id: profileRow.id,
-        name: profileRow.name,
-        title: profileRow.title,
-        email: profileRow.email,
-        phone: profileRow.phone,
-        location: profileRow.location,
-        linkedinUrl: profileRow.linkedinUrl,
-        githubUrl: profileRow.githubUrl,
-        summary: profileRow.summary,
-        skills: (profileRow.skills as string[]) ?? [],
-        experience:
-          (profileRow.experience as Array<{
-            title: string;
-            company: string;
-            period: string;
-            description: string;
-          }>) ?? [],
-        projects:
-          (profileRow.projects as Array<{
-            name: string;
-            description: string;
-            technologies: string[];
-          }>) ?? [],
-        fullResumeText: profileRow.fullResumeText,
-        resumeFilename: profileRow.resumeFilename,
-      }
-    : null;
-
-  const contentSectionsData: ContentSectionData[] = sections.map((s) => ({
-    id: s.id,
-    filename: s.filename,
-    content: s.content,
-    sortOrder: s.sortOrder ?? 0,
-  }));
-
-  return { profile, contentSections: contentSectionsData };
-}
-
 /**
- * The profile the owner published in the knowledge service (#86). Until the
- * owner publishes one, the profile seeded in the portfolio tables is shown, so
- * switching the data source never blanks the landing page; #88 retires those
- * tables and this fallback with them.
+ * The profile the owner published in the knowledge service (#86), the portfolio's
+ * only source. `profile` is null until the owner publishes one.
  */
-async function fetchFromKnowledge(): Promise<PortfolioData> {
+async function fetchPortfolioData(): Promise<PortfolioData> {
   const client = getDefaultProfileClient();
   if (!client) {
-    throw new Error(
-      'PORTFOLIO_DATA_SOURCE=knowledge requires KNOWLEDGE_URL and KNOWLEDGE_SERVICE_KEY',
-    );
+    throw new Error('The portfolio requires KNOWLEDGE_URL and KNOWLEDGE_SERVICE_KEY');
   }
-  const published = mapPublishedProfile(await client.getPublished());
-  if (published.profile) return published;
-  const seeded = await fetchFromDb();
-  return { ...seeded, knowledgeResume: published.knowledgeResume };
-}
-
-async function fetchPortfolioData(): Promise<PortfolioData> {
-  const source = getPortfolioDataSource();
-  if (source === 'mcp') {
-    if (!isMcpConnectionConfigured()) {
-      throw new Error(
-        'PORTFOLIO_DATA_SOURCE=mcp requires MCP_PORTFOLIO_URL (streamable HTTP) or MCP_PORTFOLIO_COMMAND (stdio)',
-      );
-    }
-    return fetchPortfolioFromMcp();
-  }
-  if (source === 'knowledge') return fetchFromKnowledge();
-  return fetchFromDb();
+  return mapPublishedProfile(await client.getPublished());
 }
 
 /**
  * Stale-while-revalidate: once loaded, the portfolio is always answered from
- * memory, and refreshed in the background after the TTL. If the source is
- * down (the knowledge service, the database), the last good profile keeps
- * being served.
+ * memory, and refreshed in the background after the TTL. If the knowledge
+ * service is down, the last good profile keeps being served.
  */
 const cache = createSwrCache(fetchPortfolioData, {
   ttlMs: CACHE_TTL_MS,
@@ -128,20 +49,7 @@ const cache = createSwrCache(fetchPortfolioData, {
 });
 
 export async function getPortfolioData(): Promise<PortfolioData> {
-  try {
-    return await cache.get();
-  } catch (error) {
-    if (getPortfolioDataSource() !== 'knowledge') throw error;
-    // The knowledge service is down and no profile has been loaded since the
-    // start, so there is no last good one. Until #88 retires the portfolio
-    // tables, the profile seeded there keeps the site up; it is not cached, so
-    // the published profile returns as soon as the service does.
-    log.warn(
-      { err: error },
-      'Knowledge service unavailable and no profile cached; serving the seeded profile',
-    );
-    return fetchFromDb();
-  }
+  return cache.get();
 }
 
 /**

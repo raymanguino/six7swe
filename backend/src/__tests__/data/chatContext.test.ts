@@ -33,7 +33,6 @@ const portfolio: PortfolioData = {
     fullResumeText: 'FULL RESUME TEXT THAT MUST NOT BE STUFFED',
     resumeFilename: null,
   },
-  contentSections: [{ id: 1, filename: 'hobbies', content: 'SECTION TEXT', sortOrder: 0 }],
 };
 
 const chunk: RetrievedChunkDto = {
@@ -64,7 +63,6 @@ describe('getKnowledgeChatContext', () => {
     expect(result.context).toContain('Name: Ray Manguino');
     expect(result.context).toContain('[1] resume.md > Acme\nBuilt the Kafka ingestion pipeline.');
     expect(result.context).not.toContain('FULL RESUME TEXT');
-    expect(result.context).not.toContain('SECTION TEXT');
   });
 
   it('falls back to the profile only when retrieval fails, and logs it', async () => {

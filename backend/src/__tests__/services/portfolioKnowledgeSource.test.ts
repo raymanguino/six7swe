@@ -3,36 +3,10 @@ import type { KnowledgeProfileClient } from '../../services/knowledge/profileCli
 import type { PortfolioData } from '../../types/portfolio';
 
 /**
- * `getPortfolioData()` with `PORTFOLIO_DATA_SOURCE=knowledge` (#86): the
- * published profile from the knowledge service, the seeded Postgres profile
- * until one is published, and the last good profile while the service is down.
+ * `getPortfolioData()` (#86, #88): the profile published in the knowledge
+ * service, the only source (no database), and the last good profile while the
+ * service is down.
  */
-
-const seededRow = {
-  id: 1,
-  name: 'Seeded Name',
-  title: 'Seeded Title',
-  email: 'seeded@example.com',
-  phone: null,
-  location: null,
-  linkedinUrl: null,
-  githubUrl: null,
-  summary: null,
-  skills: [],
-  experience: [],
-  projects: [],
-  fullResumeText: 'seeded resume',
-  resumeFilename: 'seeded.pdf',
-};
-
-/** A stand-in for Drizzle's query builder: every chain resolves to the given rows. */
-function chain(rows: unknown[]) {
-  const builder: Record<string, unknown> = {};
-  for (const method of ['from', 'where', 'orderBy']) builder[method] = () => builder;
-  builder.limit = () => Promise.resolve(rows);
-  builder.then = (resolve: (value: unknown[]) => unknown) => resolve(rows);
-  return builder;
-}
 
 const AT = '2026-11-14T10:00:00.000Z';
 const published = (name: string): PublishedProfileResponse => ({
@@ -61,19 +35,10 @@ const published = (name: string): PublishedProfileResponse => ({
   resume: null,
 });
 
-function load(getPublished: KnowledgeProfileClient['getPublished']) {
-  let selects = 0;
-  jest.doMock('../../db', () => ({
-    db: {
-      select: () => {
-        selects += 1;
-        // The profile query first, then the content sections.
-        return chain(selects % 2 === 1 ? [seededRow] : []);
-      },
-    },
-  }));
+function load(getPublished: KnowledgeProfileClient['getPublished'] | null) {
   jest.doMock('../../services/knowledge/profileClient', () => ({
-    getDefaultProfileClient: () => ({ getPublished, getResumePdf: jest.fn() }),
+    getDefaultProfileClient: () =>
+      getPublished ? { getPublished, getResumePdf: jest.fn() } : null,
   }));
   let service: typeof import('../../services/portfolioService') | undefined;
   jest.isolateModules(() => {
@@ -90,12 +55,7 @@ function load(getPublished: KnowledgeProfileClient['getPublished']) {
 const names = (data: PortfolioData) => data.profile?.name;
 
 describe('portfolio data from the knowledge service', () => {
-  beforeEach(() => {
-    process.env.PORTFOLIO_DATA_SOURCE = 'knowledge';
-  });
-
   afterEach(() => {
-    delete process.env.PORTFOLIO_DATA_SOURCE;
     jest.restoreAllMocks();
     jest.resetModules();
   });
@@ -107,10 +67,10 @@ describe('portfolio data from the knowledge service', () => {
     expect(data.profile?.email).toBe('jordan@example.com');
   });
 
-  it('serves the seeded profile until one is published', async () => {
+  it('has no profile until one is published', async () => {
     const service = load(() => Promise.resolve({ profile: null, resume: null }));
     const data = await service.getPortfolioData();
-    expect(names(data)).toBe('Seeded Name');
+    expect(data.profile).toBeNull();
     expect(data.knowledgeResume).toBeNull();
   });
 
@@ -141,18 +101,17 @@ describe('portfolio data from the knowledge service', () => {
     expect(names(await service.getPortfolioData())).toBe('After');
   });
 
-  it('falls back to the seeded profile on a cold start with the service down', async () => {
+  it('fails on a cold start with the service down, without asking it again at once', async () => {
     const getPublished = jest.fn(() => Promise.reject(new Error('down')));
     const service = load(getPublished);
-    expect(names(await service.getPortfolioData())).toBe('Seeded Name');
-    // The next requests go straight to the fallback instead of waiting on the
-    // service again (an outage costs one timeout, not one per request).
-    expect(names(await service.getPortfolioData())).toBe('Seeded Name');
-    expect(names(await service.getPortfolioData())).toBe('Seeded Name');
+    await expect(service.getPortfolioData()).rejects.toThrow('down');
+    // An outage costs one timeout, not one per request.
+    await expect(service.getPortfolioData()).rejects.toThrow('down');
     expect(getPublished).toHaveBeenCalledTimes(1);
-    expect(service.warn).toHaveBeenCalledWith(
-      { err: expect.any(Error) },
-      'Knowledge service unavailable and no profile cached; serving the seeded profile',
-    );
+  });
+
+  it('fails when the knowledge service is not configured', async () => {
+    const service = load(null);
+    await expect(service.getPortfolioData()).rejects.toThrow(/KNOWLEDGE_URL/);
   });
 });

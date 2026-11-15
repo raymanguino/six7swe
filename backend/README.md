@@ -39,15 +39,13 @@ This backend lives in the `backend/` directory of the Six7SWE monorepo. See the 
    pnpm install
    ```
 
-4. Apply the schema and seed portfolio data:
+4. Apply the schema:
    ```bash
    cd backend
    pnpm run db:migrate
-   # The profile data is gitignored, so copy the example first:
-   cp scripts/portfolio-data.example.json scripts/portfolio-data.json
-   # Edit scripts/portfolio-data.json with your own profile data, then:
-   pnpm run db:seed-portfolio
    ```
+   The portfolio profile is not in this database: publish it from the knowledge service
+   (see [Portfolio Data](#portfolio-data-knowledge-service)).
 
 5. Run the API:
    ```bash
@@ -87,7 +85,6 @@ pnpm run db:seed
 
 # Remote database (.env.remote)
 pnpm run db:reset -- --remote
-pnpm run db:seed-portfolio -- --remote
 ```
 
 > **Two rules that cause most `.env` bugs:**
@@ -165,7 +162,6 @@ pnpm run db:reset -- --seed # The same, and insert the development data
 pnpm run db:reset -- --remote   # The same, against the hosted database
 pnpm run db:studio          # Open Drizzle Studio GUI
 pnpm run db:seed            # Seed the users and search profiles
-pnpm run db:seed-portfolio  # Seed the portfolio profile and content sections
 ```
 
 `db:reset` drops and recreates everything in the `public` schema, then replays the migration
@@ -196,21 +192,17 @@ automatically, and the Railway deploy runs `db:migrate` followed by `db:secure`.
 
 See [`docs/SECURITY.md`](../docs/SECURITY.md) for the full rationale.
 
-### Portfolio Data (Supabase)
+### Portfolio Data (knowledge service)
 
-Portfolio profile and content are stored in Supabase for public-repo safety:
+The portfolio profile, resume and supporting documents live in the knowledge service, not in
+this database (see `../knowledge/README.md`):
 
-1. Apply the schema: `pnpm run db:migrate`
-2. Seed portfolio data:
-   - Copy `scripts/portfolio-data.example.json` to `scripts/portfolio-data.json`
-   - Edit `scripts/portfolio-data.json` with your profile data
-   - Run `pnpm run db:seed-portfolio`
-   - Seeds `portfolio_profile` (id=1) and `content_sections`
-   - If `backend/content/` exists, reads .md/.txt files into content_sections
-3. **Resume PDF**: With `PORTFOLIO_DATA_SOURCE=mcp`, implement `get_resume_pdf` on your MCP server (see `.env.example`). Otherwise place the PDF in `backend/public/` (e.g. `resume.pdf`) for local serving.
-
-The data file is gitignored (`backend/scripts/portfolio-data.json`), as is `backend/content/`.
-Only the example JSON and the seed logic are tracked.
+1. Set `KNOWLEDGE_URL` and `KNOWLEDGE_SERVICE_KEY` in `backend/.env` (the backend refuses to
+   start without them). `pnpm dev:knowledge` listens on port 3100.
+2. Upload a resume and supporting documents on the owner's Knowledge page (`/hunter/knowledge`),
+   then review and publish the profile.
+3. **Resume PDF**: `/resume` serves the knowledge service's primary resume when it is a PDF.
+   Otherwise it falls back to a PDF in `backend/public/` (e.g. `resume.pdf`).
 
 ## Development
 
@@ -315,15 +307,13 @@ src/
 ├── constants.ts
 ├── config/
 │   ├── auth.ts                # Auth provider configuration
-│   ├── env.ts                 # Allowlisted env values safe to expose
-│   └── portfolioMcp.ts        # MCP source configuration
+│   └── env.ts                 # Allowlisted env values safe to expose
 ├── data/
 │   └── chatContext.ts
 ├── db/
 │   ├── index.ts               # postgres.js client + Drizzle instance
 │   ├── api/                   # Data access per domain
 │   └── schema/
-│       ├── portfolio.ts       # Portfolio tables
 │       └── jobHunt.ts         # Job-hunter tables
 ├── domain/
 │   └── jobHunt/               # Pure logic: score, refresh, filtering, jobs
@@ -341,8 +331,7 @@ src/
 │   ├── jobHunt/               # Refresh orchestration
 │   ├── jobFetchers/           # Puppeteer job scrapers
 │   ├── portfolioService.ts
-│   ├── minimaxService.ts      # AI transport only
-│   └── mcpPortfolioClient.ts
+│   └── minimaxService.ts      # AI transport only
 ├── types/
 ├── util/                      # retry, hash, decode, redact, concurrency
 └── __tests__/                 # Unit tests
@@ -361,8 +350,8 @@ src/
 
 ## Database Schema
 
-Tables are split by product: `src/db/schema/portfolio.ts` and
-`src/db/schema/jobHunt.ts`.
+The tables are in `src/db/schema/jobHunt.ts`. The portfolio has none: it reads the
+knowledge service.
 
 ### `users`
 - `id` - Primary key
@@ -410,25 +399,6 @@ Tables are split by product: `src/db/schema/portfolio.ts` and
 - `status` - Enum: `PENDING`, `IN_PROGRESS`, `COMPLETED`, `FAILED`
 - `step` - Enum: `PENDING`, `FETCHING_JOBS`, `FILTERING_JOBS`
 - `description` - Progress detail
-- `created_at` / `updated_at` - Timestamps
-
-### `portfolio_profile`
-Single row (`id = 1`) holding the portfolio owner’s public profile.
-- `name`, `title`, `email`, `phone`, `location`
-- `linkedin_url`, `github_url`
-- `summary` - Text
-- `skills` - JSONB array
-- `experience` - JSONB array of `{ title, company, period, description }`
-- `projects` - JSONB array of `{ name, description, technologies }`
-- `full_resume_text` - Plain text resume used by the AI endpoints
-- `resume_filename` - PDF filename served by `GET /resume`
-- `created_at` / `updated_at` - Timestamps
-
-### `content_sections`
-- `id` - Primary key
-- `filename` - Source file name
-- `content` - Markdown/plain text body
-- `sort_order` - Display order
 - `created_at` / `updated_at` - Timestamps
 
 ## Example Usage

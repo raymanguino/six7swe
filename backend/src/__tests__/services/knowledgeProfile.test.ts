@@ -67,7 +67,6 @@ describe('mapPublishedProfile', () => {
         fullResumeText: 'Jordan Example\nSenior Software Engineer',
         resumeFilename: 'jordan.pdf',
       },
-      contentSections: [],
       knowledgeResume: { filename: 'jordan.pdf', isPdf: true },
     });
   });
@@ -76,7 +75,6 @@ describe('mapPublishedProfile', () => {
     const resume = { ...pdfResume, filename: 'resume.md', isPdf: false, text: null };
     expect(mapPublishedProfile({ profile: null, resume })).toEqual({
       profile: null,
-      contentSections: [],
       knowledgeResume: { filename: 'resume.md', isPdf: false },
     });
     const mapped = mapPublishedProfile({ ...published, resume });

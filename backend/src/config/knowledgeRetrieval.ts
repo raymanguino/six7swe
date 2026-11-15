@@ -1,10 +1,8 @@
 import { DEFAULT_RETRIEVE_K, MAX_RETRIEVE_K } from '@six7swe/knowledge-types';
 import { normalizeKnowledgeUrl } from './knowledgeUrl';
-import { getPortfolioDataSource } from './portfolioMcp';
 
 /**
- * How the portfolio chat reaches the knowledge service when
- * `PORTFOLIO_DATA_SOURCE=knowledge`.
+ * How the backend reaches the knowledge service for the portfolio and chat.
  *
  * `KNOWLEDGE_URL` is the service's base URL, the same variable the owner proxy
  * uses (on Railway, the private address `http://six7sweknowledge.railway.internal:3100`).
@@ -65,21 +63,20 @@ export function getKnowledgeRetrievalConfig(
 }
 
 /**
- * Called at startup. `PORTFOLIO_DATA_SOURCE=knowledge` without the URL or key
- * is a deploy mistake, so the server refuses to start rather than quietly
- * answering every chat from the profile alone. Outages are handled per
+ * Called at startup. The portfolio reads only from the knowledge service, so a
+ * missing URL or key is a deploy mistake: the server refuses to start rather
+ * than serve a site with no data. Outages are handled per
  * request instead.
  */
 export function assertKnowledgeRetrievalConfigured(): void {
-  if (getPortfolioDataSource() !== 'knowledge') return;
   // Name what is wrong, never the value: the URL may carry credentials.
   const url = process.env.KNOWLEDGE_URL;
   if (!url || normalizeKnowledgeUrl(url) === null) {
     throw new Error(
-      'PORTFOLIO_DATA_SOURCE=knowledge requires KNOWLEDGE_URL to be set to a valid http(s) URL without credentials, query or fragment',
+      'The portfolio requires KNOWLEDGE_URL to be set to a valid http(s) URL without credentials, query or fragment',
     );
   }
   if (!process.env.KNOWLEDGE_SERVICE_KEY?.trim()) {
-    throw new Error('PORTFOLIO_DATA_SOURCE=knowledge requires KNOWLEDGE_SERVICE_KEY');
+    throw new Error('The portfolio requires KNOWLEDGE_SERVICE_KEY');
   }
 }

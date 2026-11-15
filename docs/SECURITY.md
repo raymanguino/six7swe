@@ -33,7 +33,7 @@ invalidate a value that has already been disclosed.
 | 3 | `SUPABASE_SECRET_KEY` | Supabase project | Project → Settings → API Keys | Railway backend variables (if still set) |
 | 4 | `DATABASE_URL` (password) | Supabase project | Project → Settings → Database → reset password | `backend/.env`, Railway backend variables |
 | 5 | Second Supabase project password | Supabase project (us-west-2) | Project → Settings → Database → reset password | `backend/.env` (remove if unused) |
-| 6 | MCP `x-brain-key` | MCP edge function | Open-brain MCP server → key management | `backend/.env` (`MCP_PORTFOLIO_HEADERS_JSON`, `MCP_PORTFOLIO_ARGS_JSON`) |
+| 6 | `KNOWLEDGE_SERVICE_KEY` / `KNOWLEDGE_OWNER_KEY` | Knowledge service | Generate new values; set the same on the backend and the knowledge service | `backend/.env`, Railway variables on both services |
 
 > Only one `DATABASE_URL` may be active in `backend/.env`. `dotenv` resolves
 > duplicates by **last occurrence wins**, so a stale line silently overrides
@@ -137,11 +137,11 @@ which runs `db:migrate` followed by `db:secure`.
 ### Verifying it
 
 ```bash
-curl "https://<project-ref>.supabase.co/rest/v1/portfolio_profile?select=email" \
+curl "https://<project-ref>.supabase.co/rest/v1/users?select=email" \
   -H "apikey: <anon-key>"
 ```
 
-A closed table returns `permission denied for table portfolio_profile`.
+A closed table returns `permission denied for table users`.
 
 The regression test is `backend/src/__tests__/db/security.test.ts`.
 

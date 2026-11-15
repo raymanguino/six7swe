@@ -8,8 +8,6 @@ import type { PortfolioData, PortfolioProfileData } from '../../types/portfolio'
  *
  * - `fullResumeText` is the primary resume's extracted text (fitcheck and the
  *   stuffed chat context read it); empty when there is none.
- * - `contentSections` is empty: the supporting documents live in the
- *   knowledge service and reach chat through retrieval.
  * - `email` is `''` when the profile has none, which the contact form treats
  *   as "no recipient configured".
  * - The profile's `website` link has no field here and is not shown.
@@ -19,7 +17,7 @@ import type { PortfolioData, PortfolioProfileData } from '../../types/portfolio'
 export function mapPublishedProfile(response: PublishedProfileResponse): PortfolioData {
   const { resume } = response;
   const knowledgeResume = resume ? { filename: resume.filename, isPdf: resume.isPdf } : null;
-  if (!response.profile) return { profile: null, contentSections: [], knowledgeResume };
+  if (!response.profile) return { profile: null, knowledgeResume };
 
   const { data } = response.profile;
   const profile: PortfolioProfileData = {
@@ -39,5 +37,5 @@ export function mapPublishedProfile(response: PublishedProfileResponse): Portfol
     fullResumeText: resume?.text ?? '',
     resumeFilename: resume?.isPdf ? resume.filename : null,
   };
-  return { profile, contentSections: [], knowledgeResume };
+  return { profile, knowledgeResume };
 }

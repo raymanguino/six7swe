@@ -9,28 +9,13 @@ import {
 import type { PortfolioProfileData } from '../types/portfolio';
 
 /**
- * The stuffed context: the whole resume plus every content section. Used by
- * chat when `PORTFOLIO_DATA_SOURCE` is `db` or `mcp`, and by fitcheck.
+ * The whole resume text, for fitcheck. The supporting documents are not
+ * stuffed in: they live in the knowledge service and reach chat through
+ * retrieval.
  */
 export async function getChatContext(): Promise<string> {
-  const { profile, contentSections } = await getPortfolioData();
-
-  const resumeSection = profile
-    ? `Resume Information:\n${profile.fullResumeText}`
-    : 'Resume Information:\n(No profile data available.)';
-
-  if (contentSections.length === 0) {
-    return resumeSection;
-  }
-
-  const additional = contentSections
-    .map((s) => {
-      const title = s.filename.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-      return `## ${title}\n\n${s.content.trim()}`;
-    })
-    .join('\n\n');
-
-  return [resumeSection, '', 'Additional context:', '', additional].join('\n');
+  const { profile } = await getPortfolioData();
+  return `Resume Information:\n${profile ? profile.fullResumeText : '(No profile data available.)'}`;
 }
 
 const MAX_SUMMARY_SKILLS = 30;
@@ -165,7 +150,7 @@ export async function getKnowledgeChatContext(
     unavailable = true;
     options.log?.warn(
       { source: 'knowledge' },
-      'PORTFOLIO_DATA_SOURCE=knowledge but KNOWLEDGE_URL or KNOWLEDGE_SERVICE_KEY is not set; answering from the profile only',
+      'KNOWLEDGE_URL or KNOWLEDGE_SERVICE_KEY is not set; answering from the profile only',
     );
   } else {
     try {

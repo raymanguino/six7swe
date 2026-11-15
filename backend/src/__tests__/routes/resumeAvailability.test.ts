@@ -34,7 +34,6 @@ const portfolio: PortfolioData = {
     fullResumeText: '',
     resumeFilename: 'ray.pdf',
   },
-  contentSections: [],
 };
 
 /**
@@ -46,7 +45,6 @@ describe('resume availability', () => {
   let logLines: Array<{ level: number; msg: string }>;
 
   beforeEach(async () => {
-    delete process.env.PORTFOLIO_DATA_SOURCE;
     mockedGetPortfolioData.mockResolvedValue(portfolio);
 
     logLines = [];

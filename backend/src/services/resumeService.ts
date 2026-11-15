@@ -1,6 +1,5 @@
 import fs from 'fs';
 import path from 'path';
-import { isPortfolioMcpEnabled } from '../config/portfolioMcp';
 
 /** Served when the profile names a file that is not on disk. */
 export const FALLBACK_RESUME_FILENAME = 'resume.pdf';
@@ -18,7 +17,7 @@ export function resumeDirectory(): string {
 /**
  * The profile's resume filename if it is a plain file name, else `resume.pdf`.
  *
- * The name comes from the database and is joined onto `public/`, sent to the MCP server and put
+ * The name comes from the database and is joined onto `public/`, and put
  * in the `Content-Disposition` header, so anything with a directory part (`../x.pdf`, `/etc/x`,
  * `a\b.pdf` on Windows), a quote or a control character is refused rather than trusted.
  */
@@ -54,14 +53,12 @@ export function findLocalResume(
 }
 
 /**
- * Whether `GET /resume` can be expected to return a PDF, so the site only links to one that exists.
- *
- * With the MCP source enabled the PDF is fetched on demand, so availability is assumed rather than
- * checked; the request itself falls back to the local file.
+ * Whether a local fallback resume exists on disk. The caller also counts the knowledge service's
+ * PDF, so the site only links to a resume that exists.
  */
 export function isResumeAvailable(
   filename: string | null | undefined,
   directory: string = resumeDirectory(),
 ): boolean {
-  return isPortfolioMcpEnabled() || findLocalResume(filename, directory) !== null;
+  return findLocalResume(filename, directory) !== null;
 }

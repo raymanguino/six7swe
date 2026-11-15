@@ -72,7 +72,7 @@ by the compiler.
 
 | Boundary | Where |
 |---|---|
-| Database tables | `backend/src/db/schema/portfolio.ts` and `backend/src/db/schema/jobHunt.ts` |
+| Data | The portfolio reads the knowledge service and has no tables; the job hunter's tables are `backend/src/db/schema/jobHunt.ts` |
 | HTTP surface | `/job-hunt/*` vs the public portfolio paths |
 | Services | `backend/src/services/ai/` (shared) vs `backend/src/services/jobHunt/` and `backend/src/services/jobFetchers/` |
 | Frontend | `/` (public) vs `/hunter/*` (signed in) |
@@ -177,41 +177,39 @@ fabricated result.
 
 ## Data Layer
 
-**Schema** — split by product:
-
-| File | Tables |
-|---|---|
-| `db/schema/portfolio.ts` | `portfolio_profile` (singleton), `content_sections` |
-| `db/schema/jobHunt.ts` | `users`, `profiles`, `jobs`, `profile_jobs`, `refresh_status` |
+**Schema** — `db/schema/jobHunt.ts` holds `users`, `profiles`, `jobs`, `profile_jobs`
+and `refresh_status`. The portfolio has no tables: `portfolio_profile` and
+`content_sections` were dropped (#88) in favour of the knowledge service.
 
 Enums: `job_source`, `refresh_update_status`, `refresh_update_status_step`,
 `match_band`.
 
 **Portfolio service & caching** — `backend/src/services/portfolioService.ts`
-reads `portfolio_profile` and `content_sections` through Drizzle and caches the
-result in memory for `PORTFOLIO_CACHE_TTL_MS` (default 10 minutes).
+reads the profile published in the knowledge service and caches it in memory
+(stale-while-revalidate) for `PORTFOLIO_CACHE_TTL_MS` (default 10 minutes). If the
+service is down the last good profile keeps being served; on a cold start with the
+service down the request fails (500).
 
 ## Knowledge Service
 
 `knowledge/` is a separate deployable: Fastify, Drizzle and pgvector. It holds
 the owner's professional background (resumes and supporting pdf, md and txt
-files) as embedded chunks. It is replacing both the portfolio tables above and
-the never-wired `PORTFOLIO_DATA_SOURCE=mcp` path. Full details are in
-`knowledge/README.md`.
+files) as embedded chunks. It replaced both the portfolio tables and the
+never-wired MCP portfolio client. Full details are in `knowledge/README.md`.
 
-- **Chat retrieval.** With `PORTFOLIO_DATA_SOURCE=knowledge`, the backend's chat
-  context is a compact profile summary (from `portfolio_profile`) plus the top-k
+- **Chat retrieval.** The backend's chat
+  context is a compact profile summary (the published profile) plus the top-k
   chunks the service retrieves for the current question and the last user turn
   (`backend/src/data/chatContext.ts`). Retrievals are cached in memory by
   `(corpus_version, normalized question)`
   (`backend/src/services/knowledgeRetrieval.ts`); the version is re-read at most
   every 30 s. Chunks per question default to 6 (`KNOWLEDGE_RETRIEVE_K`); production sets 10
-  (`.railway/railway.ts`). The backend refuses to start if the flag is set without
+  (`.railway/railway.ts`). The backend refuses to start without
   `KNOWLEDGE_URL` and `KNOWLEDGE_SERVICE_KEY`. If the service fails, chat
   answers from the profile summary alone, and for the next 15 s uncached
   questions skip the service instead of waiting on it again (cached questions
-  are still served). The portfolio page, the resume and fitcheck still read
-  the portfolio tables. `pnpm --filter @six7swe/backend chat:eval` compares the
+  are still served). The portfolio page, the resume and fitcheck read the
+  published profile and primary resume from the service. `pnpm --filter @six7swe/backend chat:eval` compares the
   two contexts on the seed eval questions (`backend/src/domain/chatEval/`). Its
   judge's reference is the stuffed context plus the extracted text of every
   knowledge document (read with `KNOWLEDGE_OWNER_KEY`); without that key it is

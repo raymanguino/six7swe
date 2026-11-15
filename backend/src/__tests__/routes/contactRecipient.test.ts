@@ -31,7 +31,6 @@ function portfolioWithEmail(email: string): PortfolioData {
       fullResumeText: '',
       resumeFilename: null,
     },
-    contentSections: [],
   };
 }
 

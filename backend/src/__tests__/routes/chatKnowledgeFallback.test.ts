@@ -31,11 +31,10 @@ const portfolio: PortfolioData = {
     fullResumeText: 'FULL RESUME TEXT',
     resumeFilename: null,
   },
-  contentSections: [],
 };
 
 /**
- * With PORTFOLIO_DATA_SOURCE=knowledge, a knowledge service that cannot be
+ * A knowledge service that cannot be
  * reached must not break chat: the answer is grounded in the profile summary.
  */
 describe('POST /chat with the knowledge service down', () => {
@@ -44,7 +43,6 @@ describe('POST /chat with the knowledge service down', () => {
   let fetchSpy: jest.SpiedFunction<typeof fetch>;
 
   beforeEach(async () => {
-    process.env.PORTFOLIO_DATA_SOURCE = 'knowledge';
     process.env.KNOWLEDGE_URL = 'http://knowledge.invalid:3100';
     process.env.KNOWLEDGE_SERVICE_KEY = 'service-key';
     resetDefaultRetriever();

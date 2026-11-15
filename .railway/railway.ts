@@ -95,12 +95,8 @@ export default defineRailway(() => {
       RESEND_FROM_NAME: preserve(),
       SUPABASE_URL: preserve(),
       PORTFOLIO_CACHE_TTL_MS: preserve(),
-      // #120 took this out of the file, so an apply would delete the value set by hand in
-      // Railway. preserve() keeps it, and lets the owner switch chat to `knowledge` in Railway
-      // without this file doing it.
-      PORTFOLIO_DATA_SOURCE: preserve(),
-      // The knowledge service's private address, one variable for both clients: chat retrieval
-      // (PORTFOLIO_DATA_SOURCE=knowledge) and the owner proxy below. The retrieval key is the
+      // The knowledge service's private address, one variable for both clients: the portfolio
+      // and chat retrieval, and the owner proxy below. The retrieval key is the
       // knowledge service's KNOWLEDGE_SERVICE_KEY, set to the same value on both services.
       KNOWLEDGE_URL: 'http://six7sweknowledge.railway.internal:3100',
       KNOWLEDGE_SERVICE_KEY: preserve(),

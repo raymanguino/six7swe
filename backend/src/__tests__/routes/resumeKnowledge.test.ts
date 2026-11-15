@@ -41,7 +41,6 @@ const portfolio: PortfolioData = {
     fullResumeText: '',
     resumeFilename: 'jordan.pdf',
   },
-  contentSections: [],
   knowledgeResume: { filename: 'jordan.pdf', isPdf: true },
 };
 
@@ -51,7 +50,7 @@ function clientReturning(getResumePdf: KnowledgeProfileClient['getResumePdf']) {
 }
 
 /**
- * With `PORTFOLIO_DATA_SOURCE=knowledge`, `/resume` serves the knowledge
+ * `/resume` serves the knowledge
  * service's primary resume (#86), which fixes #104: production no longer
  * needs a PDF on the backend's disk.
  */
@@ -59,7 +58,6 @@ describe('resume from the knowledge service', () => {
   let app: FastifyInstance;
 
   beforeEach(async () => {
-    process.env.PORTFOLIO_DATA_SOURCE = 'knowledge';
     mockedGetPortfolioData.mockResolvedValue(portfolio);
     app = Fastify({ logger: false });
     app.get('/portfolio', getPortfolioHandler);
@@ -68,7 +66,6 @@ describe('resume from the knowledge service', () => {
   });
 
   afterEach(async () => {
-    delete process.env.PORTFOLIO_DATA_SOURCE;
     await app.close();
     jest.resetAllMocks();
   });
