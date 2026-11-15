@@ -9,7 +9,7 @@ This backend lives in the `backend/` directory of the Six7SWE monorepo. See the 
 - ✅ User and profile queries
 - ✅ Job ingestion, matching and refresh status
 - ✅ PostgreSQL database integration via Drizzle ORM
-- ✅ Portfolio content served from the database or an MCP server
+- ✅ Portfolio content served from the knowledge service
 - ✅ AI endpoints (chat, job match, fit check) via MiniMax
 - ✅ Contact form delivery via Resend
 - ✅ TypeScript with Fastify framework
@@ -171,6 +171,10 @@ history. It leaves the database empty unless `--seed` is passed. The Supabase-ma
 A database that was created before the migration history existed has the tables but no
 migration ledger, so `db:migrate` cannot apply anything to it. Run `db:reset` on such a
 database once to rebuild it from the history.
+
+**Before applying migration `0002`, publish the profile on `/hunter/knowledge`** (or export the old
+rows). It permanently drops `portfolio_profile` and `content_sections`, and the landing page
+returns 404 until a profile is published in the knowledge service.
 
 ### Database access lockdown
 

@@ -275,9 +275,7 @@ export function createCachedRetriever(
       let result: RetrieveResponse;
       const started = ++seq;
       try {
-        result = await (record
-          ? client.retrieve(query, options.k, record)
-          : client.retrieve(query, options.k));
+        result = await client.retrieve(query, options.k, record);
       } catch (error) {
         recordFailure(error);
         throw error;

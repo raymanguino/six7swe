@@ -15,8 +15,8 @@ const mockedSendEmail = jest.mocked(sendEmail);
 
 function portfolioWithEmail(email: string): PortfolioData {
   return {
+    knowledgeResume: null,
     profile: {
-      id: 1,
       name: 'Ray',
       title: 'Engineer',
       email,

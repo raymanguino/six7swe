@@ -17,9 +17,10 @@ export function resumeDirectory(): string {
 /**
  * The profile's resume filename if it is a plain file name, else `resume.pdf`.
  *
- * The name comes from the database and is joined onto `public/`, and put
- * in the `Content-Disposition` header, so anything with a directory part (`../x.pdf`, `/etc/x`,
- * `a\b.pdf` on Windows), a quote or a control character is refused rather than trusted.
+ * The name comes from the uploaded resume and is joined onto `public/` and put in the
+ * `Content-Disposition` header, so anything with a directory part (`../x.pdf`, `/etc/x`,
+ * `a\b.pdf` on Windows), a colon (an NTFS stream, `x.pdf:s`), a quote or a control character is
+ * refused rather than trusted.
  */
 export function safeResumeFilename(filename: string | null | undefined): string {
   if (
@@ -27,7 +28,7 @@ export function safeResumeFilename(filename: string | null | undefined): string 
     filename === '.' ||
     filename === '..' ||
     path.basename(filename) !== filename ||
-    /["\\/\p{Cc}]/u.test(filename)
+    /["\\/:\p{Cc}]/u.test(filename)
   ) {
     return FALLBACK_RESUME_FILENAME;
   }

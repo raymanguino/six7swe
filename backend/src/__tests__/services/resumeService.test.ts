@@ -77,6 +77,8 @@ describe('resumeService', () => {
       'C:\\secret.pdf',
       '..\\secret.pdf',
       'ray".pdf',
+      'ray.pdf:stream',
+      'C:ray.pdf',
       'ray\r\n.pdf',
     ])('replaces %j with resume.pdf', (name) => {
       expect(safeResumeFilename(name)).toBe('resume.pdf');

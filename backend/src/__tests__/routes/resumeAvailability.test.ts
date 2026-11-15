@@ -18,8 +18,8 @@ const mockedFindLocalResume = jest.mocked(findLocalResume);
 const mockedIsResumeAvailable = jest.mocked(isResumeAvailable);
 
 const portfolio: PortfolioData = {
+  knowledgeResume: null,
   profile: {
-    id: 1,
     name: 'Ray',
     title: 'Engineer',
     email: 'ray@example.com',

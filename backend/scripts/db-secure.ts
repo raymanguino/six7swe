@@ -4,9 +4,8 @@
  * Supabase grants the `anon` and `authenticated` roles full privileges on
  * every table in the `public` schema, and row level security is off unless
  * it is turned on. The frontend ships the anon key in the browser bundle,
- * so with the default grants anybody could read `portfolio_profile` (the
- * resume, the email address and the phone number) over the REST API, and
- * could write to the job-hunter tables.
+ * so with the default grants anybody could read and write the job-hunter
+ * tables (users, search profiles, jobs) over the REST API.
  *
  * This turns row level security on, revokes the public grants, and revokes
  * the default privileges so a table created later does not inherit them.

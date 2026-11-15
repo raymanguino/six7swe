@@ -17,7 +17,7 @@ The backend uses a Dockerfile because the job scraper launches Chrome, which nee
 libraries at runtime (see [Chrome for the job scraper](#chrome-for-the-job-scraper)). The frontend
 is a static SPA: Railpack builds it and serves `frontend/dist` with Caddy.
 
-Before deploying, complete the local setup steps in `SETUP.md` (install dependencies, configure environment variables, and seed your portfolio/resume data).
+Before deploying, complete the local setup steps in `SETUP.md` (install dependencies and configure environment variables), then publish your profile and resume on the owner's Knowledge page (`/hunter/knowledge`).
 
 ## Node Version
 
@@ -160,6 +160,10 @@ only the ones that have not been applied yet, so it is safe to run at any time.
 A database that was created before the migration history existed has the tables but no
 migration ledger, so `db:migrate` cannot apply anything to it. Run `db:reset` on such a
 database once to rebuild it from the history.
+
+> **Before applying migration `0002`, publish the profile on `/hunter/knowledge`** (or export the
+> old `portfolio_profile` and `content_sections` rows). The migration permanently drops both tables,
+> and the landing page returns 404 until a profile is published in the knowledge service.
 
 To rebuild the database from scratch instead, drop everything in the `public` schema and replay
 the migrations:

@@ -14,15 +14,17 @@ describe('assertKnowledgeRetrievalConfigured', () => {
 
   it('throws without the key', () => {
     process.env.KNOWLEDGE_URL = 'http://knowledge:3100';
-    expect(() => assertKnowledgeRetrievalConfigured()).toThrow(/requires KNOWLEDGE_SERVICE_KEY/);
+    expect(() => assertKnowledgeRetrievalConfigured()).toThrow(/KNOWLEDGE_SERVICE_KEY must be set/);
   });
 
   it('throws on a missing or invalid URL without printing it', () => {
     process.env.KNOWLEDGE_SERVICE_KEY = 'key';
-    expect(() => assertKnowledgeRetrievalConfigured()).toThrow(/requires KNOWLEDGE_URL/);
+    expect(() => assertKnowledgeRetrievalConfigured()).toThrow(
+      /KNOWLEDGE_URL must be set to a valid/,
+    );
     process.env.KNOWLEDGE_URL = 'http://user:secret-pw@knowledge:3100';
     const run = () => assertKnowledgeRetrievalConfigured();
-    expect(run).toThrow(/requires KNOWLEDGE_URL/);
+    expect(run).toThrow(/KNOWLEDGE_URL must be set to a valid/);
     expect(run).not.toThrow(/secret-pw/);
   });
 

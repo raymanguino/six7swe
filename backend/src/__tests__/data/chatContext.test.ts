@@ -15,8 +15,8 @@ jest.mock('../../services/portfolioService', () => ({ getPortfolioData: jest.fn(
 const mockedGetPortfolioData = jest.mocked(getPortfolioData);
 
 const portfolio: PortfolioData = {
+  knowledgeResume: null,
   profile: {
-    id: 1,
     name: 'Ray Manguino',
     title: 'Software Engineer',
     email: 'ray@example.com',
@@ -63,6 +63,22 @@ describe('getKnowledgeChatContext', () => {
     expect(result.context).toContain('Name: Ray Manguino');
     expect(result.context).toContain('[1] resume.md > Acme\nBuilt the Kafka ingestion pipeline.');
     expect(result.context).not.toContain('FULL RESUME TEXT');
+  });
+
+  it('still retrieves when the profile cannot be loaded (cold start, service down)', async () => {
+    mockedGetPortfolioData.mockRejectedValue(new Error('knowledge down'));
+    const retriever = retrieverReturning(async () => [chunk]);
+    const warn = jest.fn();
+
+    const result = await getKnowledgeChatContext({ message: 'Kafka?', retriever, log: { warn } });
+
+    expect(result.mode).toBe('retrieved');
+    expect(result.context).toContain('(No profile data available.)');
+    expect(result.context).toContain('Built the Kafka ingestion pipeline.');
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'knowledge' }),
+      'Profile unavailable; answering without the profile summary',
+    );
   });
 
   it('falls back to the profile only when retrieval fails, and logs it', async () => {
@@ -152,8 +168,8 @@ describe('getKnowledgeChatContext', () => {
     });
     await getKnowledgeChatContext({ message: 'Kafka?', retriever });
     expect(jest.mocked(retriever.retrieve).mock.calls).toEqual([
-      ['Tell me about Acme.\nHow long were you there?'],
-      ['Kafka?'],
+      ['Tell me about Acme.\nHow long were you there?', { record: undefined }],
+      ['Kafka?', { record: undefined }],
     ]);
   });
 });
@@ -167,6 +183,15 @@ describe('recordFor', () => {
       recordFor('Earlier\nKafka?', { message: 'Kafka?', sessionId: 's-123456' }),
     ).toBeUndefined();
     expect(recordFor('Kafka?', { message: 'Kafka?' })).toBeUndefined();
+  });
+
+  it('still records a standalone question longer than the query cap', () => {
+    const message = 'x'.repeat(2000);
+    const query = buildRetrievalQuery(message);
+    expect(query.length).toBeLessThan(message.length);
+    expect(recordFor(query, { message, sessionId: 's-123456' })).toEqual({
+      sessionId: 's-123456',
+    });
   });
 });
 

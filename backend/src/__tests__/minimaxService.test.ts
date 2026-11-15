@@ -1,7 +1,5 @@
 import { chatCompletion, MiniMaxApiError } from '../services/minimaxService';
 
-jest.mock('../data/chatContext', () => ({ getChatContext: jest.fn() }));
-
 describe('chatCompletion key fallback', () => {
   const originalPrimaryKey = process.env.MINIMAX_API_KEY;
   const originalSecondaryKey = process.env.MINIMAX_API_KEY_SECONDARY;

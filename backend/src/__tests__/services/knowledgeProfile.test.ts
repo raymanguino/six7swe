@@ -50,7 +50,6 @@ describe('mapPublishedProfile', () => {
   it('maps the published profile to the existing PortfolioData shape', () => {
     expect(mapPublishedProfile(published)).toEqual({
       profile: {
-        id: 1,
         name: 'Jordan Example',
         title: 'Senior Software Engineer',
         email: 'jordan@example.com',

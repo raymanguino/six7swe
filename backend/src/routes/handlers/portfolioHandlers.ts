@@ -18,7 +18,7 @@ export async function getPortfolioHandler(_request: FastifyRequest, reply: Fasti
       githubUrl: profile.githubUrl,
       resumeFilename: profile.resumeFilename,
       // The site hides its download link when this is false, rather than link to a 404.
-      // The knowledge service's PDF counts (#86), as does a local or MCP one.
+      // The knowledge service's PDF counts, as does a local fallback file.
       resumeAvailable: knowledgeResume?.isPdf === true || isResumeAvailable(profile.resumeFilename),
     });
   } catch (error) {

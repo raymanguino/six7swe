@@ -155,12 +155,12 @@ const PROJECT_TILES: ProjectTile[] = [
     id: 'portfolio',
     title: 'Portfolio',
     briefDescription:
-      'A portfolio site that loads profile, projects, skills, and resume content from a custom MCP service, serves resume assets, and includes a floating chat assistant that answers using that portfolio and resume context.',
-    techLabels: ['React', 'TypeScript', 'Vite', 'Fastify', 'MCP', 'PostgreSQL'],
+      'A portfolio site whose profile, skills, and resume are served from a knowledge service (RAG with pgvector) and published by the owner, with a floating chat assistant that answers from the passages retrieved for each question.',
+    techLabels: ['React', 'TypeScript', 'Vite', 'Fastify', 'RAG', 'pgvector'],
     overview:
-      'A full-stack TypeScript portfolio app: the React/Vite SPA loads profile, projects, skills, experience, and contact from a Fastify API backed by a custom MCP service, with resume PDFs and extra content sections served from the backend. A built-in chat widget calls the API so visitors can ask questions about your work using an assistant grounded on stored portfolio and resume context.',
+      'A full-stack TypeScript portfolio app: the React/Vite SPA loads profile, skills, experience, and contact from a Fastify API that reads an owner-published profile from a separate knowledge service, which stores the resume and supporting documents as embedded chunks in Postgres with pgvector. A built-in chat widget lets visitors ask questions about the work, answered from the passages retrieved for each question.',
     keyChallenges: [
-      'The portfolio API must serve the same shape from PostgreSQL or optional MCP without pushing that complexity into the frontend.',
+      'The owner uploads documents and publishes the profile, while the public API keeps serving the last good profile if the knowledge service is down.',
       'The chat assistant needs enough resume and portfolio context to answer well, without oversized prompts or leaking internal-only details.',
       'Resume and asset URLs must stay correct and fresh across static files, storage, and caching so downloads don\'t break or go stale after updates.',
     ],

@@ -1,14 +1,13 @@
 import type { PortfolioData } from '../types/portfolio';
+import { positiveInt } from '../config/positiveInt';
 import { getDefaultProfileClient } from './knowledge/profileClient';
 import { mapPublishedProfile } from './knowledge/profileMapping';
 import { createSwrCache } from './staleWhileRevalidate';
 import pino from 'pino';
 import type { FastifyBaseLogger } from 'fastify';
 
-export type { PortfolioProfileData, PortfolioData } from '../types/portfolio';
-
 const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
-const CACHE_TTL_MS = Number(process.env.PORTFOLIO_CACHE_TTL_MS) || DEFAULT_CACHE_TTL_MS;
+const CACHE_TTL_MS = positiveInt(process.env.PORTFOLIO_CACHE_TTL_MS, DEFAULT_CACHE_TTL_MS);
 /** After a failed refresh, how long the last good data is served before trying again. */
 const RETRY_AFTER_FAILURE_MS = 30_000;
 

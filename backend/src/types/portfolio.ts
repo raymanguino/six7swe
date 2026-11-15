@@ -1,5 +1,6 @@
+import type { ProfileExperience, ProfileProject } from '@six7swe/knowledge-types';
+
 export type PortfolioProfileData = {
-  id: number;
   name: string;
   title: string;
   email: string;
@@ -9,17 +10,14 @@ export type PortfolioProfileData = {
   githubUrl: string | null;
   summary: string | null;
   skills: string[];
-  experience: Array<{ title: string; company: string; period: string; description: string }>;
-  projects: Array<{ name: string; description: string; technologies: string[] }>;
+  experience: ProfileExperience[];
+  projects: ProfileProject[];
   fullResumeText: string;
   resumeFilename: string | null;
 };
 
 export type PortfolioData = {
   profile: PortfolioProfileData | null;
-  /**
-   * The knowledge service's primary resume (#86); null when it has none.
-   * `/resume` serves it when `isPdf`.
-   */
-  knowledgeResume?: { filename: string; isPdf: boolean } | null;
+  /** The knowledge service's primary resume; null when it has none. `/resume` serves it when `isPdf`. */
+  knowledgeResume: { filename: string; isPdf: boolean } | null;
 };

@@ -6,9 +6,8 @@ import type postgres from 'postgres';
  * Supabase grants the `anon` and `authenticated` roles full privileges on
  * every table in the `public` schema, and row level security is off unless
  * it is turned on. The frontend ships the anon key in the JavaScript bundle,
- * so with the default grants anybody could read `portfolio_profile` (the
- * resume, the email address and the phone number) over the REST API without
- * authenticating, and could write to the job-hunter tables as well.
+ * so with the default grants anybody could read and write the job-hunter
+ * tables (users, search profiles, jobs) over the REST API without authenticating.
  *
  * This module locks the application tables down:
  *

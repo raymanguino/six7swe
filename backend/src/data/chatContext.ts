@@ -103,7 +103,7 @@ export function recordFor(
   query: string,
   options: Pick<KnowledgeChatContextOptions, 'message' | 'sessionId'>,
 ): RecordQuestion | undefined {
-  if (!options.sessionId || query !== options.message.trim()) return undefined;
+  if (!options.sessionId || query !== buildRetrievalQuery(options.message)) return undefined;
   return { sessionId: options.sessionId };
 }
 
@@ -140,7 +140,16 @@ const NO_MATCH_NOTE =
 export async function getKnowledgeChatContext(
   options: KnowledgeChatContextOptions,
 ): Promise<KnowledgeChatContext> {
-  const { profile } = await getPortfolioData();
+  // On a cold start with the service down there is no profile; chat still tries retrieval.
+  let profile: PortfolioProfileData | null = null;
+  try {
+    ({ profile } = await getPortfolioData());
+  } catch (err) {
+    options.log?.warn(
+      { source: 'knowledge', error: describeError(err) },
+      'Profile unavailable; answering without the profile summary',
+    );
+  }
   const summary = buildProfileSummary(profile);
   const retriever = options.retriever === undefined ? getDefaultRetriever() : options.retriever;
 
@@ -156,7 +165,7 @@ export async function getKnowledgeChatContext(
     try {
       const query = buildRetrievalQuery(options.message, options.history);
       const record = recordFor(query, options);
-      chunks = await (record ? retriever.retrieve(query, { record }) : retriever.retrieve(query));
+      chunks = await retriever.retrieve(query, { record });
     } catch (err) {
       unavailable = true;
       options.log?.warn(

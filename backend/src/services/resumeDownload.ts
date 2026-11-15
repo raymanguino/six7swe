@@ -2,6 +2,7 @@ import fs from 'fs';
 import type { FastifyBaseLogger } from 'fastify';
 import { getDefaultProfileClient } from './knowledge/profileClient';
 import { getPortfolioData } from './portfolioService';
+import type { PortfolioData } from '../types/portfolio';
 import {
   FALLBACK_RESUME_FILENAME,
   findLocalResume,
@@ -45,15 +46,28 @@ async function fetchKnowledgeResume(log: FastifyBaseLogger): Promise<Buffer | nu
  * 2. A file under `public/` (the profile's name, then `resume.pdf`).
  */
 export async function getResumeDownload(log: FastifyBaseLogger): Promise<ResumeDownload> {
-  const portfolio = await getPortfolioData();
+  // A cold-start outage must not hide a resume that is on disk, so a failure here only costs
+  // the uploaded filename.
+  let portfolio: PortfolioData | null = null;
+  try {
+    portfolio = await getPortfolioData();
+  } catch (error) {
+    log.warn(
+      { err: error instanceof Error ? error.message : String(error) },
+      'Could not load the portfolio for the resume; trying the local file',
+    );
+  }
 
   const pdf = await fetchKnowledgeResume(log);
   if (pdf) {
-    const name = portfolio.knowledgeResume?.filename ?? portfolio.profile?.resumeFilename;
-    return { found: true, filename: safeResumeFilename(name), body: pdf };
+    return {
+      found: true,
+      filename: safeResumeFilename(portfolio?.knowledgeResume?.filename),
+      body: pdf,
+    };
   }
 
-  const filename = safeResumeFilename(portfolio.profile?.resumeFilename);
+  const filename = safeResumeFilename(portfolio?.profile?.resumeFilename);
   const localPath = findLocalResume(filename);
   if (localPath) return { found: true, filename, body: fs.createReadStream(localPath) };
 

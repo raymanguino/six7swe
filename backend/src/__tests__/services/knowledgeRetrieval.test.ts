@@ -64,7 +64,7 @@ describe('createCachedRetriever', () => {
 
     expect(second).toBe(first);
     expect(client.retrieve).toHaveBeenCalledTimes(1);
-    expect(client.retrieve).toHaveBeenCalledWith('Tell me about Kafka?', 4);
+    expect(client.retrieve).toHaveBeenCalledWith('Tell me about Kafka?', 4, undefined);
   });
 
   it('misses once the corpus version changes', async () => {

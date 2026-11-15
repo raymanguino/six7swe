@@ -26,7 +26,6 @@ const PDF = Buffer.from('%PDF-1.4 resume');
 
 const portfolio: PortfolioData = {
   profile: {
-    id: 1,
     name: 'Jordan Example',
     title: 'Engineer',
     email: 'jordan@example.com',
@@ -108,6 +107,17 @@ describe('resume from the knowledge service', () => {
     clientReturning(() => Promise.resolve(null));
     expect((await app.inject({ method: 'GET', url: '/resume' })).statusCode).toBe(404);
     expect(mockedFindLocalResume).toHaveBeenCalledTimes(2);
+  });
+
+  it('still serves a local resume on a cold start with the service down', async () => {
+    mockedGetPortfolioData.mockRejectedValue(new Error('knowledge down'));
+    clientReturning(() => Promise.reject(new Error('knowledge down')));
+    mockedFindLocalResume.mockReturnValue(require.resolve('../../../package.json'));
+
+    const res = await app.inject({ method: 'GET', url: '/resume' });
+
+    expect(res.statusCode).toBe(200);
+    expect(mockedFindLocalResume).toHaveBeenCalledWith('resume.pdf');
   });
 
   it('advertises the download when the service has a PDF resume', async () => {

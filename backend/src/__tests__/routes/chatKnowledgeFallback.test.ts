@@ -15,8 +15,8 @@ const mockedGetPortfolioData = jest.mocked(getPortfolioData);
 const mockedChatCompletion = jest.mocked(chatCompletion);
 
 const portfolio: PortfolioData = {
+  knowledgeResume: null,
   profile: {
-    id: 1,
     name: 'Ray Manguino',
     title: 'Software Engineer',
     email: 'ray@example.com',
