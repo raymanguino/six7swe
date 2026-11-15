@@ -183,11 +183,14 @@ export function createDrizzleEvalRepository(db: KnowledgeDb): EvalRepository {
 
     async recordAsk(id, sessionHash, now) {
       return db.transaction(async (tx) => {
-        // The update below locks the row, so concurrent asks are counted one at a time.
+        // The lock makes concurrent asks count one at a time, and the status
+        // guard keeps a question retired in the meantime from absorbing this ask.
         const [exists] = await tx
           .select({ id: evalQuestions.id })
           .from(evalQuestions)
-          .where(eq(evalQuestions.id, id))
+          .where(
+            and(eq(evalQuestions.id, id), inArray(evalQuestions.status, ['candidate', 'active'])),
+          )
           .for('update');
         if (!exists) return null;
         const inserted = await tx
@@ -203,7 +206,9 @@ export function createDrizzleEvalRepository(db: KnowledgeDb): EvalRepository {
             // Asks can be recorded out of order; the clock never moves back.
             lastAskedAt: sql`greatest(${evalQuestions.lastAskedAt}, ${now.toISOString()}::timestamptz)`,
           })
-          .where(eq(evalQuestions.id, id))
+          .where(
+            and(eq(evalQuestions.id, id), inArray(evalQuestions.status, ['candidate', 'active'])),
+          )
           .returning(questionColumns);
         return row ?? null;
       });

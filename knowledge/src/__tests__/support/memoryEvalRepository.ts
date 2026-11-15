@@ -134,7 +134,7 @@ export function createMemoryEvalRepository(): EvalRepository & {
 
     async recordAsk(id, sessionHash, now) {
       const q = questions.get(id);
-      if (!q) return null;
+      if (!q || q.status === 'retired') return null;
       const seen = sessions.get(id) ?? new Set<string>();
       const isNew = !seen.has(sessionHash);
       seen.add(sessionHash);

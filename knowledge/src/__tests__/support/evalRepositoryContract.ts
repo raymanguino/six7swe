@@ -82,6 +82,24 @@ export function describeEvalRepositoryContract(
       expect(await evalRepo.recordAsk(randomUUID(), 'a'.repeat(64), at(12))).toBeNull();
     });
 
+    it('does not count an ask against a retired question and reports it as not matched', async () => {
+      const { evalRepo, owner } = await seeded(1);
+      const created = await evalRepo.createCandidate({
+        ownerId: owner,
+        question: 'Do you know Go?',
+        embedding: embed('Do you know Go?'),
+        offTopic: false,
+        sessionHash: 'a'.repeat(64),
+        now: at(10),
+        maxCandidates: 500,
+      });
+      await evalRepo.updateQuestion(owner, created.id, { status: 'retired' }, undefined, at(11));
+      expect(await evalRepo.recordAsk(created.id, 'b'.repeat(64), at(12))).toBeNull();
+      const after = (await evalRepo.listQuestions(owner)).find((q) => q.id === created.id);
+      expect(after).toMatchObject({ status: 'retired', hitCount: 1, distinctSessions: 1 });
+      expect(after?.lastAskedAt.getTime()).toBe(at(10).getTime());
+    });
+
     it('promotes, retiring the least recently asked unpinned question when full', async () => {
       const { evalRepo, owner, questions } = await seeded(3);
       const [q0, q1, q2] = questions.sort((a, b) => a.question.localeCompare(b.question));

@@ -257,6 +257,31 @@ describe('eval set: candidates and owner promotion', () => {
     expect((await repo.getQuestion(OWNER, question.id))?.hitCount).toBe(1);
   });
 
+  it('records the ask as a new candidate when the match is retired after the lookup', async () => {
+    const { ask, repo, embedder, evalSet } = setup();
+    const { question } = await ask(NOVEL, 'session-aaaa');
+    // The owner retires it between the nearest-question lookup and the write.
+    const stale = await repo.nearestQuestion(OWNER, axis(12, DIMS));
+    if (!stale) throw new Error('no match');
+    await repo.updateQuestion(OWNER, question.id, { status: 'retired' }, undefined, new Date());
+    vi.spyOn(repo, 'nearestQuestion').mockResolvedValueOnce(stale);
+    const [embedding] = await embedder.embed([NEAR_NOVEL]);
+    if (!embedding) throw new Error('no embedding');
+    const again = await evalSet.record({
+      ownerId: OWNER,
+      question: NEAR_NOVEL,
+      sessionId: 'session-bbbb',
+      embedding,
+      topSimilarity: 0.5,
+    });
+    expect(again.kind).toBe('created');
+    expect(again.question).toMatchObject({ status: 'candidate', question: NEAR_NOVEL });
+    expect(await repo.getQuestion(OWNER, question.id)).toMatchObject({
+      status: 'retired',
+      hitCount: 1,
+    });
+  });
+
   it('keeps at most the configured number of candidates, dropping the least recently asked', async () => {
     const repo = createMemoryEvalRepository();
     const embedder = createStubEmbedder(VECTORS, DIMS);

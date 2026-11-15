@@ -133,8 +133,9 @@ export interface EvalRepository {
   /**
    * Records one more ask of a cluster: bumps `hit_count`, sets
    * `last_asked_at`, and bumps `distinct_sessions` when this session had not
-   * asked it before. Never changes the status. Null when the question no
-   * longer exists.
+   * asked it before. Never changes the status. Null (not matched, nothing
+   * changed) when the question no longer exists or is `retired`: the caller
+   * records the ask as a new candidate instead.
    */
   recordAsk(id: string, sessionHash: string, now: Date): Promise<EvalQuestionRecord | null>;
 
