@@ -67,15 +67,19 @@ key is configured.
 Requests that cost money, send email, call a model, or change the owner's data are **skipped**
 unless the `allowSideEffects` environment variable is `true`. Those are `/chat`, `/fitcheck`,
 `/contact`, starting a refresh or rescore, document upload, set-primary and delete, saving,
-publishing, discarding and redrafting the profile, and the eval run and question actions.
+publishing, discarding and redrafting the profile, and the eval set: reading it, running it,
+and the question actions.
 
-The default run is otherwise read-only apart from creating and deleting a throwaway job
-profile, with one exception: `GET /eval` seeds the owner's canned eval questions the first
-time the eval set is read, and purges stale candidates and retired visitor questions on the
-service's usual schedule. That is what the owner's own Knowledge page does on every visit,
-and the seed is what gives the eval set its questions, so the request is left unguarded.
+The default run is read-only apart from creating and deleting a throwaway job profile.
 Turn the variable on only against a database you are happy to change. Publishing
 changes what the public portfolio shows.
+
+`GET /eval` is on that list even though it is a GET. The service seeds the owner's canned
+questions the first time the eval set is read, and it purges stale candidates and retired
+visitor questions while answering, which deletes those rows for good. The owner's own
+Knowledge page reads it on every visit, so nothing is lost that would not be lost anyway,
+but a collection run can trigger the purge against a database the owner did not mean to
+change.
 
 ## Running headlessly
 
@@ -90,6 +94,10 @@ Pass secrets with `--env-var accessToken=...`; do not write them into a file.
 Some requests accept more than one status because it depends on setup: `/resume` and
 `/resume.pdf` are 404 until a resume is ready, redraft is 409 while `PROFILE_DRAFTER=none`,
 and set-primary is 409 for a supporting document.
+
+A few requests are skipped when the id they need was never produced, rather than being
+sent with an empty one: the job lookup needs a job, and the document requests need the
+upload above them. Run the folders top to bottom so the ids exist.
 
 ## Production
 
