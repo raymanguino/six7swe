@@ -10,7 +10,7 @@
 # See DEPLOYMENT.md, "Chrome for the job scraper" and "Running the Backend Image Locally".
 
 # Exact tag so Dependabot can bump it. It must satisfy `engines.node` in the root package.json.
-FROM node:22.23.4-bookworm-slim AS base
+FROM node:22.23.5-bookworm-slim AS base
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 # Pin corepack instead of relying on the version the base image bundles. Node 22.12 shipped
 # corepack 0.29.4, whose npm signing keys have since been rotated, so it refused to download
