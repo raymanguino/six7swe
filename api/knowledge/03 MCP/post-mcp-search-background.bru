@@ -1,0 +1,47 @@
+meta {
+  name: MCP: search_background
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{knowledgeBaseUrl}}/mcp
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{mcpKey}}
+  Content-Type: application/json
+  Accept: application/json, text/event-stream
+}
+
+body:json {
+  {
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "tools/call",
+    "params": {
+      "name": "search_background",
+      "arguments": {
+        "query": "TypeScript experience",
+        "k": 3
+      }
+    }
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("returns tool content", function () {
+    expect(res.body.result.content).to.be.an("array");
+  });
+}
+
+docs {
+  Calls a tool. The others are get_profile, list_documents and get_resume_pdf (a base64 PDF resource, capped at 5 MB), all read-only.
+  MCP key as Authorization: Bearer. Any query string is a 401, so the key can never end up in a URL. With no KNOWLEDGE_MCP_KEY configured, /mcp is closed.
+}

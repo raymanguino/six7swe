@@ -1,0 +1,43 @@
+meta {
+  name: Start refresh
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/job-hunt/profiles/:profileId/jobs/refresh
+  body: none
+  auth: inherit
+}
+
+params:path {
+  profileId: {{profileId}}
+}
+
+script:pre-request {
+  if (bru.getEnvVar("allowSideEffects") !== "true") {
+    bru.runner.skipRequest();
+  }
+  if (!bru.getVar("profileId")) {
+    bru.runner.skipRequest();
+  }
+}
+
+script:post-response {
+  if (res.status >= 200 && res.status < 300) {
+    const refreshId = res?.body?.refreshStatusId;
+    if (refreshId !== undefined && refreshId !== null) {
+      bru.setVar("refreshId", refreshId);
+    }
+  }
+}
+
+assert {
+  res.status: eq 202
+}
+
+docs {
+  Scrapes LinkedIn and scores matches in the background, so it is skipped unless allowSideEffects is "true".
+  202 with refreshStatusId (stored in refreshId); 409 if one is already running; 400 without a valid geo id.
+  Private: needs a signed-in user. With AUTH_DEV_BYPASS=true no token is needed (see api/README.md).
+}

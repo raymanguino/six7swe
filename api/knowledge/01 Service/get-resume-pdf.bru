@@ -1,0 +1,26 @@
+meta {
+  name: Resume PDF
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{knowledgeBaseUrl}}/resume.pdf
+  body: none
+  auth: none
+}
+
+headers {
+  x-knowledge-key: {{serviceKey}}
+}
+
+tests {
+  test("responds with one of 200, 404", function () {
+    expect(res.status).to.be.oneOf([200, 404]);
+  });
+}
+
+docs {
+  The primary resume's file when it is a PDF; 404 otherwise.
+  Service key: the backend and portfolio call this. The owner key gets a 401 here.
+}

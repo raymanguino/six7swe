@@ -1,0 +1,25 @@
+meta {
+  name: Health
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{knowledgeBaseUrl}}/health
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("reports ok", function () {
+    expect(res.body.status).to.equal("ok");
+  });
+}
+
+docs {
+  Public: no credentials.
+}

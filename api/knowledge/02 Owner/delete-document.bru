@@ -1,0 +1,38 @@
+meta {
+  name: Delete document
+  type: http
+  seq: 16
+}
+
+delete {
+  url: {{knowledgeBaseUrl}}/documents/:id
+  body: none
+  auth: none
+}
+
+headers {
+  x-knowledge-key: {{ownerKey}}
+}
+
+params:path {
+  id: {{createdDocumentId}}
+}
+
+script:pre-request {
+  if (bru.getEnvVar("allowSideEffects") !== "true") {
+    bru.runner.skipRequest();
+  }
+  if (!bru.getVar("createdDocumentId")) {
+    bru.runner.skipRequest();
+  }
+}
+
+assert {
+  res.status: eq 204
+}
+
+docs {
+  Changes the owner's corpus (new version, stale job scores, an eval run), so it is skipped unless allowSideEffects is "true".
+  Deletes the document uploaded above, but only when that upload actually created it. A deduplicated upload returned a document the owner already had, so it is left alone: this request is skipped instead of deleting pre-existing data.
+  Owner key: only the backend's owner proxy holds it. The service key gets a 401 here.
+}

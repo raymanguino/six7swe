@@ -1,0 +1,42 @@
+meta {
+  name: Create profile
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/job-hunt/profiles
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "name": "Bruno example profile",
+    "keywords": [
+      "typescript",
+      "platform engineer"
+    ],
+    "location": "103644278",
+    "additionalContext": "Created by the Bruno collection; safe to delete."
+  }
+}
+
+script:post-response {
+  if (res.status >= 200 && res.status < 300) {
+    const profileId = res?.body?.profile?.id;
+    if (profileId !== undefined && profileId !== null) {
+      bru.setVar("profileId", profileId);
+    }
+  }
+}
+
+assert {
+  res.status: eq 201
+}
+
+docs {
+  Creates a search profile and stores its id in profileId for the requests below.
+  location is a numeric LinkedIn geo id, not a city name (400 otherwise).
+  Private: needs a signed-in user. With AUTH_DEV_BYPASS=true no token is needed (see api/README.md).
+}

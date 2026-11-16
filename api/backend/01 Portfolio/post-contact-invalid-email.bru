@@ -1,0 +1,33 @@
+meta {
+  name: Contact (invalid email)
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/contact
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "name": "Bruno Example",
+    "email": "not-an-email",
+    "message": "Hello"
+  }
+}
+
+assert {
+  res.status: eq 400
+}
+
+tests {
+  test("explains the problem", function () {
+    expect(res.body.error).to.equal("Invalid email format");
+  });
+}
+
+docs {
+  Validation happens before anything is sent, so this is safe to run.
+}

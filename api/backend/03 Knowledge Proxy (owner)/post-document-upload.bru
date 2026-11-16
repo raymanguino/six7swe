@@ -1,0 +1,59 @@
+meta {
+  name: Upload document
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/knowledge/documents?kind=supporting
+  body: multipartForm
+  auth: inherit
+}
+
+params:query {
+  kind: supporting
+}
+
+body:multipart-form {
+  file: @file(fixtures/sample-notes.md)
+}
+
+script:pre-request {
+  if (bru.getEnvVar("allowSideEffects") !== "true") {
+    bru.runner.skipRequest();
+  }
+}
+
+script:post-response {
+  if (res.status >= 200 && res.status < 300) {
+    const doc = res?.body?.document;
+    if (doc?.id) {
+      bru.setVar("documentId", doc.id);
+      // A deduplicated upload returned a document the owner already had, so it
+      // must not become the delete target: that would remove pre-existing data.
+      // Only a document this run created is safe to delete.
+      if (res?.body?.deduplicated === false) {
+        bru.setVar("createdDocumentId", doc.id);
+      }
+    }
+  }
+}
+
+tests {
+  test("responds with one of 200, 202", function () {
+    expect(res.status).to.be.oneOf([200, 202]);
+  });
+
+  test("returns the document", function () {
+    expect(res.body.document.id).to.match(/^[0-9a-f-]{36}$/);
+  });
+}
+
+docs {
+  Changes the owner's corpus (new version, stale job scores, an eval run), so it is skipped unless allowSideEffects is "true".
+  Multipart upload of one .pdf, .md or .txt file; kind is resume or supporting. 202 when queued for ingestion, 200 when the same file was already uploaded (deduplicated).
+  The body is relayed byte for byte; the service enforces its size limit (413).
+  Stores the returned id in documentId, and in createdDocumentId only when this upload created the document. A deduplicated upload returned a document the owner already had, so only that one id is left out of the delete below.
+  Owner only: 401 when signed out, 403 for any other user. Locally set AUTH_DEV_BYPASS=true and OWNER_AUTH_ID=auth-dev-bypass (see api/README.md).
+  Forwarded to the knowledge service with KNOWLEDGE_OWNER_KEY; 503 when that is not configured.
+}

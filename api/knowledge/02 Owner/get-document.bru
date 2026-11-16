@@ -1,0 +1,40 @@
+meta {
+  name: Get document
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{knowledgeBaseUrl}}/documents/:id
+  body: none
+  auth: none
+}
+
+headers {
+  x-knowledge-key: {{ownerKey}}
+}
+
+params:path {
+  id: {{documentId}}
+}
+
+script:pre-request {
+  if (!bru.getVar("documentId")) {
+    bru.runner.skipRequest();
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("returns the document", function () {
+    expect(res.body.document).to.have.property("status");
+  });
+}
+
+docs {
+  :id must be a UUID.
+  Owner key: only the backend's owner proxy holds it. The service key gets a 401 here.
+}

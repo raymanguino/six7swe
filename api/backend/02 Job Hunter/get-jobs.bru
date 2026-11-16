@@ -1,0 +1,39 @@
+meta {
+  name: List jobs
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/job-hunt/jobs
+  body: none
+  auth: inherit
+}
+
+script:post-response {
+  if (res.status >= 200 && res.status < 300) {
+    const job = res?.body?.jobs?.[0];
+    if (job?.sourceJobId) {
+      // The source and the source id must come from the same job: a lookup
+      // that pairs one job id with another job source finds nothing.
+      bru.setVar("sourceJobId", job.sourceJobId);
+      bru.setVar("sourceId", String(job.sourceId ?? "linkedin").toLowerCase());
+    }
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("returns a jobs array", function () {
+    expect(res.body.jobs).to.be.an("array");
+  });
+}
+
+docs {
+  All scraped jobs.
+  Private: needs a signed-in user. With AUTH_DEV_BYPASS=true no token is needed (see api/README.md).
+  A fresh database has none; run a refresh first.
+}

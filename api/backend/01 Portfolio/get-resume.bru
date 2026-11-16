@@ -1,0 +1,21 @@
+meta {
+  name: Get resume
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/resume
+  body: none
+  auth: none
+}
+
+tests {
+  test("responds with one of 200, 404, 503", function () {
+    expect(res.status).to.be.oneOf([200, 404, 503]);
+  });
+}
+
+docs {
+  Public. Resume PDF download. 404 or 503 when no resume is available.
+}

@@ -1,0 +1,38 @@
+meta {
+  name: Retrieve
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{knowledgeBaseUrl}}/retrieve
+  body: json
+  auth: none
+}
+
+headers {
+  x-knowledge-key: {{serviceKey}}
+}
+
+body:json {
+  {
+    "query": "What has Ray built with RAG systems?",
+    "k": 6
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("returns chunks", function () {
+    expect(res.body.chunks).to.be.an("array");
+    expect(res.body.version).to.be.a("number");
+  });
+}
+
+docs {
+  Vector retrieval for chat and job matching. k is 1..20 (default 6). Send record: true with a sessionId to add the question to the eval set.
+  Service key: the backend and portfolio call this. The owner key gets a 401 here.
+}

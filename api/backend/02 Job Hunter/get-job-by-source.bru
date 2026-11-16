@@ -1,0 +1,38 @@
+meta {
+  name: Get job by source
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/job-hunt/jobs/:source_id/:source_job_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  source_id: {{sourceId}}
+  source_job_id: {{sourceJobId}}
+}
+
+script:pre-request {
+  if (!bru.getVar("sourceId")) {
+    bru.runner.skipRequest();
+  }
+  if (!bru.getVar("sourceJobId")) {
+    bru.runner.skipRequest();
+  }
+}
+
+tests {
+  test("responds with one of 200, 404", function () {
+    expect(res.status).to.be.oneOf([200, 404]);
+  });
+}
+
+docs {
+  A job by its source and the source's own id. source_id accepts linkedin, li, indeed, glassdoor, company_website, other (400 otherwise).
+  Both values come from the first job of the listing above, so they always describe the same job: a source and an id from different jobs would not be found.
+  Skipped until that listing returns a job, because a fresh database has none and an empty id is a 400.
+  Private: needs a signed-in user. With AUTH_DEV_BYPASS=true no token is needed (see api/README.md).
+}

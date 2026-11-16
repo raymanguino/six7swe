@@ -1,0 +1,9 @@
+{
+  "version": "1",
+  "name": "six7swe-knowledge",
+  "type": "collection",
+  "ignore": [
+    "node_modules",
+    ".git"
+  ]
+}

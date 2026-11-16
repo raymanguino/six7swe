@@ -1,0 +1,43 @@
+meta {
+  name: Get eval set
+  type: http
+  seq: 12
+}
+
+get {
+  url: {{knowledgeBaseUrl}}/eval
+  body: none
+  auth: none
+}
+
+headers {
+  x-knowledge-key: {{ownerKey}}
+}
+
+script:pre-request {
+  if (bru.getEnvVar("allowSideEffects") !== "true") {
+    bru.runner.skipRequest();
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("returns the questions and settings", function () {
+    expect(res.body.questions).to.be.an("array");
+    expect(res.body).to.have.property("settings");
+  });
+
+  const active = (res.body.questions || []).find((q) => q.status === "active");
+  if (active) {
+    bru.setVar("evalQuestionId", active.id);
+  }
+}
+
+docs {
+  Questions, the settings and the latest run with its diff. Stores the first active question's id in evalQuestionId.
+  This GET writes: it seeds the owner's canned questions the first time the eval set is read, and purges stale candidates and retired visitor questions, which deletes them for good. It is skipped unless allowSideEffects is "true".
+  Owner key: only the backend's owner proxy holds it. The service key gets a 401 here.
+}

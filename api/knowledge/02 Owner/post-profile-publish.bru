@@ -1,0 +1,41 @@
+meta {
+  name: Publish profile
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{knowledgeBaseUrl}}/profile/publish
+  body: json
+  auth: none
+}
+
+headers {
+  x-knowledge-key: {{ownerKey}}
+}
+
+body:json {
+  {
+    "draftUpdatedAt": "{{draftUpdatedAt}}"
+  }
+}
+
+script:pre-request {
+  if (bru.getEnvVar("allowSideEffects") !== "true") {
+    bru.runner.skipRequest();
+  }
+  if (!bru.getVar("draftUpdatedAt")) {
+    bru.runner.skipRequest();
+  }
+}
+
+tests {
+  test("responds with one of 200, 404, 409", function () {
+    expect(res.status).to.be.oneOf([200, 404, 409]);
+  });
+}
+
+docs {
+  409 if the draft changed since it was reviewed. Changes what the portfolio shows, so it is skipped unless allowSideEffects is "true".
+  Owner key: only the backend's owner proxy holds it. The service key gets a 401 here.
+}

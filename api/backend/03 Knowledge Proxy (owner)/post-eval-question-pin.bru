@@ -1,0 +1,46 @@
+meta {
+  name: Eval question: pin
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{baseUrl}}/knowledge/eval/questions/:id
+  body: json
+  auth: inherit
+}
+
+params:path {
+  id: {{evalQuestionId}}
+}
+
+body:json {
+  {
+    "action": "pin"
+  }
+}
+
+script:pre-request {
+  if (bru.getEnvVar("allowSideEffects") !== "true") {
+    bru.runner.skipRequest();
+  }
+  if (!bru.getVar("evalQuestionId")) {
+    bru.runner.skipRequest();
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("pins the question", function () {
+    expect(res.body.question.pinned).to.equal(true);
+  });
+}
+
+docs {
+  action is one of pin, unpin, retire, promote, off-topic, on-topic. Pinned questions are never evicted.
+  Owner only: 401 when signed out, 403 for any other user. Locally set AUTH_DEV_BYPASS=true and OWNER_AUTH_ID=auth-dev-bypass (see api/README.md).
+  Forwarded to the knowledge service with KNOWLEDGE_OWNER_KEY; 503 when that is not configured.
+}

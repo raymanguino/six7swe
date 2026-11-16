@@ -1,0 +1,46 @@
+meta {
+  name: Update profile
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{baseUrl}}/job-hunt/profiles/:profileId
+  body: json
+  auth: inherit
+}
+
+params:path {
+  profileId: {{profileId}}
+}
+
+body:json {
+  {
+    "keywords": [
+      "typescript",
+      "platform engineer",
+      "rag"
+    ]
+  }
+}
+
+script:pre-request {
+  if (!bru.getVar("profileId")) {
+    bru.runner.skipRequest();
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("applies the change", function () {
+    expect(res.body.profile.keywords).to.include("rag");
+  });
+}
+
+docs {
+  Partial update: send only the fields to change.
+  Private: needs a signed-in user. With AUTH_DEV_BYPASS=true no token is needed (see api/README.md).
+}

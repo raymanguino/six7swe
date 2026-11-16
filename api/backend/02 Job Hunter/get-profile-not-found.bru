@@ -1,0 +1,29 @@
+meta {
+  name: Get profile (not found)
+  type: http
+  seq: 15
+}
+
+get {
+  url: {{baseUrl}}/job-hunt/profiles/:profileId
+  body: none
+  auth: inherit
+}
+
+params:path {
+  profileId: 999999999
+}
+
+assert {
+  res.status: eq 404
+}
+
+tests {
+  test("explains the problem", function () {
+    expect(res.body.error).to.equal("Profile not found");
+  });
+}
+
+docs {
+  Error path: an id that is not yours looks the same as one that does not exist.
+}

@@ -1,0 +1,26 @@
+meta {
+  name: List documents
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/knowledge/documents
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("returns documents", function () {
+    expect(res.body.documents).to.be.an("array");
+  });
+}
+
+docs {
+  Owner only: 401 when signed out, 403 for any other user. Locally set AUTH_DEV_BYPASS=true and OWNER_AUTH_ID=auth-dev-bypass (see api/README.md).
+  Forwarded to the knowledge service with KNOWLEDGE_OWNER_KEY; 503 when that is not configured.
+}

@@ -1,0 +1,40 @@
+meta {
+  name: Get eval set
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/knowledge/eval
+  body: none
+  auth: inherit
+}
+
+script:pre-request {
+  if (bru.getEnvVar("allowSideEffects") !== "true") {
+    bru.runner.skipRequest();
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("returns the questions and settings", function () {
+    expect(res.body.questions).to.be.an("array");
+    expect(res.body).to.have.property("settings");
+  });
+
+  const active = (res.body.questions || []).find((q) => q.status === "active");
+  if (active) {
+    bru.setVar("evalQuestionId", active.id);
+  }
+}
+
+docs {
+  Questions, the latest run with its diff, and whether a run is in progress. Stores the first active question's id in evalQuestionId.
+  Forwarded to the service's GET /eval, which writes: it seeds the owner's canned questions the first time the eval set is read, and purges stale candidates and retired visitor questions, which deletes them for good. It is skipped unless allowSideEffects is "true".
+  Owner only: 401 when signed out, 403 for any other user. Locally set AUTH_DEV_BYPASS=true and OWNER_AUTH_ID=auth-dev-bypass (see api/README.md).
+  Forwarded to the knowledge service with KNOWLEDGE_OWNER_KEY; 503 when that is not configured.
+}

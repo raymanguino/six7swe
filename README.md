@@ -25,6 +25,8 @@ canonical job matcher.
   (PostgreSQL) and Drizzle ORM.
 - `frontend/` - Vite + React + TypeScript app serving the public portfolio and
   the signed-in job-hunter.
+- `api/` - [Bruno](https://www.usebruno.com/) collections with an example for
+  every route of the backend and the knowledge service; see `api/README.md`.
 - `docs/architecture.md` - How the two products fit together, and where the
   boundary sits.
 

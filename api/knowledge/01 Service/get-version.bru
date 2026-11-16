@@ -1,0 +1,30 @@
+meta {
+  name: Corpus version
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{knowledgeBaseUrl}}/version
+  body: none
+  auth: none
+}
+
+headers {
+  x-knowledge-key: {{serviceKey}}
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("returns a version", function () {
+    expect(res.body.version).to.be.a("number");
+  });
+}
+
+docs {
+  The corpus version; it changes whenever the documents do, which is what makes job scores stale.
+  Service key: the backend and portfolio call this. The owner key gets a 401 here.
+}

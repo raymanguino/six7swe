@@ -1,0 +1,33 @@
+meta {
+  name: Run eval
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/knowledge/eval/runs
+  body: none
+  auth: inherit
+}
+
+script:pre-request {
+  if (bru.getEnvVar("allowSideEffects") !== "true") {
+    bru.runner.skipRequest();
+  }
+}
+
+assert {
+  res.status: eq 202
+}
+
+tests {
+  test("queues a run", function () {
+    expect(res.body.running).to.equal(true);
+  });
+}
+
+docs {
+  Queues a run of the active questions. May call a model when EVAL_ANSWERER is set, so it is skipped unless allowSideEffects is "true".
+  Owner only: 401 when signed out, 403 for any other user. Locally set AUTH_DEV_BYPASS=true and OWNER_AUTH_ID=auth-dev-bypass (see api/README.md).
+  Forwarded to the knowledge service with KNOWLEDGE_OWNER_KEY; 503 when that is not configured.
+}

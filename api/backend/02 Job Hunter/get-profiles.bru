@@ -1,0 +1,26 @@
+meta {
+  name: List profiles
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/job-hunt/profiles
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("returns a profiles array", function () {
+    expect(res.body.profiles).to.be.an("array");
+  });
+}
+
+docs {
+  The caller's search profiles.
+  Private: needs a signed-in user. With AUTH_DEV_BYPASS=true no token is needed (see api/README.md).
+}

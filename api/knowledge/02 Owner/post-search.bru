@@ -1,0 +1,37 @@
+meta {
+  name: Search
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{knowledgeBaseUrl}}/search
+  body: json
+  auth: none
+}
+
+headers {
+  x-knowledge-key: {{ownerKey}}
+}
+
+body:json {
+  {
+    "query": "What are the strongest TypeScript skills?",
+    "k": 3
+  }
+}
+
+assert {
+  res.status: eq 200
+}
+
+tests {
+  test("returns chunks", function () {
+    expect(res.body.chunks).to.be.an("array");
+  });
+}
+
+docs {
+  The same retrieval as /retrieve, strict (unknown fields are a 400) and never recorded.
+  Owner key: only the backend's owner proxy holds it. The service key gets a 401 here.
+}
