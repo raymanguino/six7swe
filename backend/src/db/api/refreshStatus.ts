@@ -1,24 +1,8 @@
 import { eq, and, lt, isNull, or, sql } from 'drizzle-orm';
 import { db } from '../index';
 import { refreshStatus, type RefreshStatus as RefreshStatusType } from '../schema/jobHunt';
+import { isUniqueViolation } from '../uniqueViolation';
 import { ActiveRefreshExistsError } from '../../domain/jobHunt';
-
-/** Postgres error code for a unique constraint violation. */
-const UNIQUE_VIOLATION = '23505';
-
-/**
- * True when the error is a unique constraint violation.
- *
- * The insert races are resolved by the database, so this is how the service
- * learns that another refresh won.
- */
-function isUniqueViolation(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null) {
-    return false;
-  }
-  const code = (error as { code?: unknown }).code;
-  return code === UNIQUE_VIOLATION;
-}
 
 export interface RefreshStatusService {
   newProfileRefreshStatus(profileId: number): Promise<RefreshStatusType>;
