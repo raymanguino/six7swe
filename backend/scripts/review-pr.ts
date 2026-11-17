@@ -218,6 +218,10 @@ async function main(): Promise<void> {
   // whether the review on the pull request is a real verdict.
   let decidedGate: GateOutcome | null = null;
 
+  // The duration the review body reported, so the body and the stats line
+  // carry the same number.
+  let reportedDurationMs: number | null = null;
+
   /**
    * Writes the one stats line this run reports, for `qa:calibration`.
    *
@@ -250,7 +254,7 @@ async function main(): Promise<void> {
               reasoning: usage.reasoningTokens,
             }
           : null,
-        durationMs: Date.now() - startedAt,
+        durationMs: reportedDurationMs ?? Date.now() - startedAt,
       }),
     );
   }
@@ -320,6 +324,7 @@ async function main(): Promise<void> {
     logLine(`Gate outcome: ${gate}`);
 
     const event = reviewEventForGate(gate);
+    reportedDurationMs = Date.now() - startedAt;
     const body = renderReviewBody({
       summary: review.summary,
       findings,
@@ -328,6 +333,7 @@ async function main(): Promise<void> {
       commitSha: headSha,
       coverage: diffCoverage,
       manualReviewReasons: manualReviewReasons({ changedFiles, coverage: diffCoverage }),
+      durationMs: reportedDurationMs,
     });
 
     // Every run posts a new review and never edits an earlier one, so the

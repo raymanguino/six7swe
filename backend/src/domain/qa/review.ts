@@ -186,6 +186,15 @@ export interface ReviewBodyInput {
   coverage: DiffCoverage;
   /** Why a human has to look. Only rendered when the gate is `manual-review`. */
   manualReviewReasons: readonly ManualReviewReason[];
+  /**
+   * How long the run took, in milliseconds, measured by the script. Not
+   * derived from model output, and not part of the gate.
+   */
+  durationMs?: number;
+}
+
+function describeDuration(durationMs: number): string {
+  return `Review took ${Math.max(0, Math.round(durationMs / 1000))}s.`;
 }
 
 function reviewedFiles(coverage: DiffCoverage): number {
@@ -309,6 +318,7 @@ export function renderReviewBody(input: ReviewBodyInput): string {
     `Reviewed commit: \`${escapeMarkdown(input.commitSha)}\``,
     SUPERSEDED_NOTE,
     ...coverageAndReasons(input),
+    ...(input.durationMs === undefined ? [] : [describeDuration(input.durationMs)]),
     ...advisoryLines(input.coverage),
     '',
   ];
