@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  bigint,
   boolean,
   doublePrecision,
   index,
@@ -108,6 +109,12 @@ export const chunks = knowledge.table(
 
 export const profileStage = knowledge.enum('profile_stage', PROFILE_STAGES);
 
+/** Hands out profile `version`s; see `ProfileDtoSchema.version`. */
+export const profileVersionSeq = knowledge.sequence('profile_version_seq');
+
+/** The next profile `version`: the one expression every write to `profiles` uses. */
+export const nextProfileVersion = () => sql<number>`nextval('knowledge.profile_version_seq')`;
+
 /**
  * The structured profile behind the landing page (#86), at most one row per
  * owner and stage: the `draft` the model wrote (and the owner may have
@@ -135,6 +142,15 @@ export const profiles = knowledge.table(
     sourceDocumentId: uuid('source_document_id').references(() => documents.id, {
       onDelete: 'set null',
     }),
+    /**
+     * See `ProfileDtoSchema.version`. `$onUpdate` bumps it on any update that
+     * leaves it out (drizzle applies it to `onConflictDoUpdate` too), but the
+     * repository's writes still set it explicitly through `touched()`.
+     */
+    version: bigint('version', { mode: 'number' })
+      .notNull()
+      .default(nextProfileVersion())
+      .$onUpdate(nextProfileVersion),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()

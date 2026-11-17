@@ -27,7 +27,7 @@ export interface KnowledgeProfile {
   /** Asks the service to draft again from the primary resume. */
   redraft: () => Promise<void>;
   discardDraft: () => Promise<void>;
-  /** Publishes the draft as reviewed (by its `updatedAt`). */
+  /** Publishes the draft as reviewed (by its `version`). */
   publish: () => Promise<void>;
 }
 
@@ -144,18 +144,18 @@ export function useKnowledgeProfile(enabled: boolean, refreshKey: string | null)
     }, 'Could not discard the draft');
   }, [act]);
 
-  const draftUpdatedAt = state?.draft?.updatedAt ?? null;
+  const draftVersion = state?.draft?.version ?? null;
   const publish = useCallback(async () => {
-    if (!draftUpdatedAt) return;
+    if (draftVersion === null) return;
     await act(async () => {
       parseProfileResponse(
         await apiRequest('/knowledge/profile/publish', {
           method: 'POST',
-          body: JSON.stringify({ draftUpdatedAt }),
+          body: JSON.stringify({ draftVersion }),
         }),
       );
     }, 'Could not publish the profile');
-  }, [act, draftUpdatedAt]);
+  }, [act, draftVersion]);
 
   return { state, loading, error, busy, reload, saveDraft, redraft, discardDraft, publish };
 }

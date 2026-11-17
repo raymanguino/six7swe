@@ -62,9 +62,9 @@ script:pre-request {
 
 script:post-response {
   if (res.status >= 200 && res.status < 300) {
-    const draftUpdatedAt = res?.body?.profile?.updatedAt;
-    if (draftUpdatedAt !== undefined && draftUpdatedAt !== null) {
-      bru.setVar("draftUpdatedAt", draftUpdatedAt);
+    const draftVersion = res?.body?.profile?.version;
+    if (typeof draftVersion === "number") {
+      bru.setVar("draftVersion", draftVersion);
     }
   }
 }
@@ -80,6 +80,6 @@ tests {
 }
 
 docs {
-  Body limit 512 KB. Stores the draft's updatedAt in draftUpdatedAt for Publish.
+  Body limit 512 KB. Stores the draft's version in draftVersion for Publish.
   Owner key: only the backend's owner proxy holds it. The service key gets a 401 here.
 }

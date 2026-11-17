@@ -202,12 +202,12 @@ describe('MCP adapter tools', () => {
       headers: ownerAuth,
       payload: { data: SAMPLE_PROFILE },
     });
-    const draftUpdatedAt = saved.json<{ profile: { updatedAt: string } }>().profile.updatedAt;
+    const draftVersion = saved.json<{ profile: { version: number } }>().profile.version;
     const published = await h.app.inject({
       method: 'POST',
       url: '/profile/publish',
       headers: ownerAuth,
-      payload: { draftUpdatedAt },
+      payload: { draftVersion },
     });
     expect(published.statusCode).toBe(200);
 
