@@ -10,6 +10,8 @@ import { z } from 'zod';
 
 const authConfigSchema = z.object({
   supabaseUrl: z.string().url().optional(),
+  /** Expected `iss` claim: `${SUPABASE_URL}/auth/v1`. Overridable with SUPABASE_JWT_ISSUER. */
+  supabaseIssuer: z.string().url().optional(),
   supabaseJwksUrl: z.string().url().optional(),
   supabaseJwtSecret: z.string().min(1).optional(),
   /** Development-only escape hatch. Refused when NODE_ENV is production. */
@@ -30,6 +32,7 @@ export function getAuthConfig(): AuthConfig {
   if (cached) return cached;
 
   const supabaseUrl = process.env.SUPABASE_URL?.trim();
+  const explicitIssuer = process.env.SUPABASE_JWT_ISSUER?.trim();
   const explicitJwks = process.env.SUPABASE_JWKS_URL?.trim();
   const devBypass = readBoolean(process.env.AUTH_DEV_BYPASS);
 
@@ -39,6 +42,7 @@ export function getAuthConfig(): AuthConfig {
 
   cached = authConfigSchema.parse({
     supabaseUrl,
+    supabaseIssuer: explicitIssuer ?? (supabaseUrl ? `${supabaseUrl.replace(/\/$/, '')}/auth/v1` : undefined),
     supabaseJwksUrl: explicitJwks ?? (supabaseUrl ? `${supabaseUrl.replace(/\/$/, '')}/auth/v1/.well-known/jwks.json` : undefined),
     supabaseJwtSecret: process.env.SUPABASE_JWT_SECRET?.trim(),
     devBypass,
