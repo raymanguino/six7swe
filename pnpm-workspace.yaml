@@ -15,3 +15,8 @@ overrides:
   # which Node resolves through `require(esm)` but Jest cannot parse. The
   # 1.x line has the same `stringifySetCookie` export and is CommonJS.
   'light-my-request>cookie': ^1.1.1
+  # @puppeteer/browsers leaves yauzl as an optional peer (^2.10.0 || ^3.4.0), and pnpm
+  # resolved it to 2.10.0. On Node 26, yauzl 2 (via fd-slicer) silently stops extracting the
+  # Chrome zip and `puppeteer browsers install` still exits 0, so the image has no Chrome.
+  # Drop this once @puppeteer/browsers requires yauzl 3.
+  '@puppeteer/browsers>yauzl': ^3.4.0

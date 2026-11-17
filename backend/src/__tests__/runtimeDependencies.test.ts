@@ -82,11 +82,11 @@ describe('runtime dependencies', () => {
     `;
 
     try {
-      const stdout = execFileSync(
-        process.execPath,
-        ['-e', script],
-        { cwd: backendRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
-      );
+      const stdout = execFileSync(process.execPath, ['-e', script], {
+        cwd: backendRoot,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
       return { stdout, stderr: '', failed: false };
     } catch (error) {
       const failure = error as { stdout?: string; stderr?: string };
@@ -127,7 +127,43 @@ describe('runtime dependencies', () => {
         `The root engines.node floor is ${major}.${minor}, but the backend needs ` +
           `${needMajor}.${needMinor}+.\n` +
           'Below that, require() of an ESM-only dependency (puppeteer) crashes the deployed\n' +
-          'backend with ERR_REQUIRE_ESM while CI stays green.'
+          'backend with ERR_REQUIRE_ESM while CI stays green.',
+      );
+    }
+  });
+
+  it('pins a Dockerfile Node tag that satisfies the root engines.node range', () => {
+    const manifest: unknown = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+    const range =
+      typeof manifest === 'object' &&
+      manifest !== null &&
+      'engines' in manifest &&
+      typeof manifest.engines === 'object' &&
+      manifest.engines !== null &&
+      'node' in manifest.engines &&
+      typeof manifest.engines.node === 'string'
+        ? manifest.engines.node
+        : '';
+    const bounds = /^>=\s*(\d+)(?:\.(\d+))?(?:\.\d+)?\s*<\s*(\d+)\s*$/.exec(range.trim());
+    if (!bounds) {
+      throw new Error(`Root engines.node must look like ">=N <M", got "${range}"`);
+    }
+    const lower: [number, number] = [Number(bounds[1]), Number(bounds[2] ?? 0)];
+    const upperMajor = Number(bounds[3]);
+
+    const dockerfile = readFileSync(path.join(backendRoot, 'Dockerfile'), 'utf8');
+    const from = /^FROM\s+node:(\d+)\.(\d+)\.(\d+)[^\s]*/m.exec(dockerfile);
+    if (!from) {
+      throw new Error('backend/Dockerfile must start from an exact node:X.Y.Z tag');
+    }
+    const major = Number(from[1]);
+    const minor = Number(from[2]);
+
+    const aboveFloor = major > lower[0] || (major === lower[0] && minor >= lower[1]);
+    if (!(aboveFloor && major < upperMajor)) {
+      throw new Error(
+        `backend/Dockerfile uses node:${from[1]}.${from[2]}.${from[3]}, which does not satisfy ` +
+          `the root engines.node "${range}". Keep the image tag and engines in agreement.`,
       );
     }
   });
@@ -144,7 +180,7 @@ describe('runtime dependencies', () => {
           'That crashes the deployed backend on startup while CI stays green.\n' +
           'Pin the offending package to a loadable release with a pnpm override in\n' +
           'pnpm-workspace.yaml.\n\n' +
-          `stderr:\n${result.stderr}\nstdout:\n${result.stdout}`
+          `stderr:\n${result.stderr}\nstdout:\n${result.stdout}`,
       );
     }
 
