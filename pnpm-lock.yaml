@@ -223,7 +223,7 @@ importers:
         version: 4.1.1
       unpdf:
         specifier: ^2.1.0
-        version: 2.1.0
+        version: 2.2.0
       zod:
         specifier: ^4.6.7
         version: 4.6.7
@@ -4049,13 +4049,16 @@ packages:
   undici-types@8.9.0:
     resolution: {integrity: sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==}
 
-  unpdf@2.1.0:
-    resolution: {integrity: sha512-G/Hsrm++g0EoubUhV8TDFItq6oQ+FUu9EMvIRtHUwseKXB0iJoCvaLvBGOpYUBqyvggv/XfxhYYtohL2QpE3xQ==}
+  unpdf@2.2.0:
+    resolution: {integrity: sha512-E33ir6FPxrLuRlhLJ3KbPwcOnHozd6ITe/uhr22+Oiis6e7YQ9N/9K7hfMe1aZ9yoO6eypgI1Cc7UuYP6BkyWw==}
     engines: {node: '>=24'}
     peerDependencies:
       '@napi-rs/canvas': ^0.1.69 || ^1.0.0
+      pdfjs-dist: '*'
     peerDependenciesMeta:
       '@napi-rs/canvas':
+        optional: true
+      pdfjs-dist:
         optional: true
 
   unpipe@1.0.0:
@@ -8058,7 +8061,7 @@ snapshots:
 
   undici-types@8.9.0: {}
 
-  unpdf@2.1.0: {}
+  unpdf@2.2.0: {}
 
   unpipe@1.0.0: {}
 
