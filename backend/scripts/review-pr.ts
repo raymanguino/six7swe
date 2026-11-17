@@ -56,7 +56,6 @@ import {
   getPullRequest,
   listChangedFiles,
   submitReview,
-  upsertReviewComment,
 } from '../src/services/github/prClient';
 
 /**
@@ -317,32 +316,21 @@ async function main(): Promise<void> {
       manualReviewReasons: manualReviewReasons({ changedFiles, coverage: diffCoverage }),
     });
 
-    // A COMMENT can be updated in place: only the body changes, and the
-    // pull request keeps one authoritative review instead of a stack of
-    // them. Anything else has to be a new review, because GitHub fixes a
-    // review's event once it accepts it: a review that asked for changes
-    // cannot be turned back into a comment by editing its body.
+    // Every run posts its own review and never edits an earlier one, so
+    // the history of runs stays on the pull request. The latest review is
+    // the current verdict; a superseded request for changes is dismissed
+    // below.
     // Read before posting, so the review about to be posted is never
     // among them.
     const superseded = await findSupersededReviews(env, owner, repo);
 
-    let action: 'created' | 'updated';
+    await submitReview(owner, repo, env.PR_NUMBER, env.GITHUB_TOKEN, {
+      commit_id: headSha,
+      body,
+      event,
+    });
 
-    if (event === 'COMMENT') {
-      action = await upsertReviewComment(owner, repo, env.PR_NUMBER, env.GITHUB_TOKEN, {
-        commit_id: headSha,
-        body,
-      });
-    } else {
-      await submitReview(owner, repo, env.PR_NUMBER, env.GITHUB_TOKEN, {
-        commit_id: headSha,
-        body,
-        event,
-      });
-      action = 'created';
-    }
-
-    logLine(`Posted one ${event} review on PR #${env.PR_NUMBER} (${action}).`);
+    logLine(`Posted one ${event} review on PR #${env.PR_NUMBER}.`);
 
     await dismissSuperseded(env, owner, repo, superseded, headSha);
 
@@ -390,12 +378,13 @@ async function postFailureReview(
     const body = renderFailureBody(reason, commitSha, env.REVIEW_MODE);
     const superseded = await findSupersededReviews(env, owner, repo);
 
-    const action = await upsertReviewComment(owner, repo, env.PR_NUMBER, env.GITHUB_TOKEN, {
+    await submitReview(owner, repo, env.PR_NUMBER, env.GITHUB_TOKEN, {
       commit_id: commitSha,
       body,
+      event: 'COMMENT',
     });
 
-    logLine(`Posted one fail-closed review on PR #${env.PR_NUMBER} (${action}).`);
+    logLine(`Posted one fail-closed review on PR #${env.PR_NUMBER}.`);
 
     await dismissSuperseded(env, owner, repo, superseded, commitSha);
   } catch (postError: unknown) {

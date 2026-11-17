@@ -352,31 +352,6 @@ export async function listReviews(
 }
 
 /**
- * Replaces the body of an existing review.
- *
- * PUT /repos/{owner}/{repo}/pulls/{pullNumber}/reviews/{reviewId}
- *
- * The route has no PATCH: GitHub answers a PATCH with 404.
- *
- * Only the body can be changed. The commit the review is attached to and
- * the event it carries stay as they were.
- */
-export async function updateReview(
-  owner: string,
-  repo: string,
-  pullNumber: number,
-  reviewId: number,
-  token: string,
-  body: string,
-): Promise<void> {
-  await githubFetch(
-    `${GITHUB_API_BASE}/repos/${owner}/${repo}/pulls/${pullNumber}/reviews/${reviewId}`,
-    token,
-    { method: 'PUT', body: { body } },
-  );
-}
-
-/**
  * Reports whether a review was written by the agent.
  *
  * The marker alone proves nothing: on a public repository anyone can
@@ -421,56 +396,4 @@ export async function findAgentChangeRequests(
   return agentReviews(reviews)
     .filter((review) => review.state === 'CHANGES_REQUESTED')
     .map((review) => review.id as number);
-}
-
-/**
- * Keeps a single, current review on a pull request.
- *
- * Every push to a pull request triggers a new review, and without this the
- * pull request accumulates a stack of them: the author cannot tell which is
- * current. This finds the agent's previous review by its hidden marker and
- * replaces its body, so there is exactly one authoritative review.
- *
- * The review stays attached to the commit it was first posted on, so
- * GitHub marks it as outdated after the next push. The body is what
- * carries the current verdict, and it names the commit it refers to.
- *
- * Only a plain comment is ever edited. A request for changes is always a
- * new review (see `submitReview`), and a comment that follows one is new
- * as well, so the current verdict is always the last review on the page.
- *
- * Returns `updated` when an existing review was replaced and `created` when
- * a new one was posted.
- */
-export async function upsertReviewComment(
-  owner: string,
-  repo: string,
-  pullNumber: number,
-  token: string,
-  review: { commit_id: string; body: string },
-): Promise<'updated' | 'created'> {
-  const reviews = await listReviews(owner, repo, pullNumber, token);
-
-  // Only the agent's *latest* review is a candidate, and only while it is
-  // still a plain comment. Editing a request for changes would put a new
-  // verdict under the old event, which GitHub never changes. And when the
-  // latest review asked for changes or was dismissed, an older comment
-  // sits above it in the timeline: editing that one would hide the new
-  // verdict behind the old one. A new review keeps the current verdict
-  // last on the page.
-  const ours = agentReviews(reviews);
-  const latest = ours[ours.length - 1];
-
-  if (latest?.id !== undefined && latest.state === 'COMMENTED') {
-    await updateReview(owner, repo, pullNumber, latest.id, token, review.body);
-    return 'updated';
-  }
-
-  await submitReview(owner, repo, pullNumber, token, {
-    commit_id: review.commit_id,
-    body: review.body,
-    event: 'COMMENT',
-  });
-
-  return 'created';
 }

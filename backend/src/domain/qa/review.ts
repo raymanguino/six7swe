@@ -277,6 +277,13 @@ function advisoryLines(coverage: DiffCoverage): string[] {
 }
 
 /**
+ * Every run posts its own review, so a reader can land on an older one.
+ * This says how to tell which one is current.
+ */
+const SUPERSEDED_NOTE =
+  '_One review is posted per run. The most recent QA agent review on this pull request is the current verdict; this one covers only the commit above._';
+
+/**
  * Renders the review body.
  *
  * The gate outcome comes first, before anything the model wrote. The
@@ -295,6 +302,7 @@ export function renderReviewBody(input: ReviewBodyInput): string {
     '',
     `**Gate outcome: \`${input.gate}\`**`,
     `Reviewed commit: \`${escapeMarkdown(input.commitSha)}\``,
+    SUPERSEDED_NOTE,
     ...coverageAndReasons(input),
     ...advisoryLines(input.coverage),
     '',
@@ -371,6 +379,7 @@ export function renderFailureBody(
     '',
     '**Gate outcome: `fail-closed`**',
     `Reviewed commit: \`${escapeMarkdown(commitSha)}\``,
+    SUPERSEDED_NOTE,
     '',
     `Reason: ${escapeMarkdown(truncate(reason, MAX_SUMMARY_CHARS))}`,
     '',
