@@ -43,6 +43,7 @@ function isTokenRejection(error: unknown): boolean {
     error instanceof errors.JWTClaimValidationFailed ||
     error instanceof errors.JWSSignatureVerificationFailed ||
     error instanceof errors.JOSEAlgNotAllowed ||
+    error instanceof errors.JOSENotSupported ||
     error instanceof errors.JWKSNoMatchingKey ||
     error instanceof errors.JWKSMultipleMatchingKeys
   );

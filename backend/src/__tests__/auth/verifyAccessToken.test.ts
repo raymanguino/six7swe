@@ -1,5 +1,5 @@
 import { SignJWT, exportJWK, generateKeyPair, type CryptoKey, type JWTPayload } from 'jose';
-import { resetAuthConfig } from '../../config/auth';
+import { getAuthConfig, isAuthConfigured, resetAuthConfig } from '../../config/auth';
 import {
   AuthError,
   resolveUserFromToken,
@@ -415,5 +415,92 @@ describe('verifyAccessToken', () => {
       expect(errorSpy).toHaveBeenCalledTimes(1);
       expectOneJwksFetch();
     });
+  });
+});
+
+describe('auth configuration', () => {
+  function issuerFor(url: string): string | undefined {
+    process.env.SUPABASE_URL = url;
+    resetAuthConfig();
+    return getAuthConfig().supabaseIssuer;
+  }
+
+  it.each([
+    ['https://project.supabase.test', 'https://project.supabase.test/auth/v1'],
+    ['https://project.supabase.test/', 'https://project.supabase.test/auth/v1'],
+    ['https://project.supabase.test//', 'https://project.supabase.test/auth/v1'],
+  ])('derives the issuer from SUPABASE_URL %s', (url, expected) => {
+    expect(issuerFor(url)).toBe(expected);
+  });
+
+  it('derives the JWKS URL from the same base', () => {
+    process.env.SUPABASE_URL = 'https://project.supabase.test//';
+    resetAuthConfig();
+    expect(getAuthConfig().supabaseJwksUrl).toBe(
+      'https://project.supabase.test/auth/v1/.well-known/jwks.json',
+    );
+  });
+
+  it('prefers an explicit SUPABASE_JWT_ISSUER', () => {
+    process.env.SUPABASE_JWT_ISSUER = 'https://issuer.example.test/auth/v1';
+    resetAuthConfig();
+    expect(getAuthConfig().supabaseIssuer).toBe('https://issuer.example.test/auth/v1');
+  });
+
+  it('treats blank variables as unset', () => {
+    process.env.SUPABASE_JWT_ISSUER = '  ';
+    process.env.SUPABASE_JWKS_URL = '';
+    process.env.SUPABASE_JWT_SECRET = ' ';
+    resetAuthConfig();
+
+    const config = getAuthConfig();
+
+    expect(config.supabaseIssuer).toBe(ISSUER);
+    expect(config.supabaseJwksUrl).toBe(`${ISSUER}/.well-known/jwks.json`);
+    expect(config.supabaseJwtSecret).toBeUndefined();
+  });
+
+  it('reports auth as not configured when the issuer is missing', () => {
+    delete process.env.SUPABASE_URL;
+    process.env.SUPABASE_JWT_SECRET = HS_SECRET;
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    resetAuthConfig();
+
+    expect(isAuthConfigured()).toBe(false);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports auth as configured with a key source and an issuer', () => {
+    expect(isAuthConfigured()).toBe(true);
+  });
+
+  it('fails closed on the JWKS path without an issuer, without fetching keys', async () => {
+    delete process.env.SUPABASE_URL;
+    process.env.SUPABASE_JWKS_URL = 'https://project.supabase.test/jwks-only.json';
+    jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const fetchSpy = jest.spyOn(globalThis, 'fetch');
+    resetAuthConfig();
+    const token = await signHs256({});
+
+    await expect(verifyAccessToken(token)).rejects.toMatchObject({
+      name: 'AuthError',
+      statusCode: 401,
+      message: 'Authentication is not configured on this server.',
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not log a crafted crit header as an outage', async () => {
+    delete process.env.SUPABASE_URL;
+    process.env.SUPABASE_JWT_ISSUER = ISSUER;
+    process.env.SUPABASE_JWT_SECRET = HS_SECRET;
+    resetAuthConfig();
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const encode = (value: object): string =>
+      Buffer.from(JSON.stringify(value)).toString('base64url');
+    const token = `${encode({ alg: 'HS256', crit: ['x'], x: 1 })}.${encode({ sub: SUBJECT })}.c2ln`;
+
+    await expectAuthError(verifyAccessToken(token));
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 });
