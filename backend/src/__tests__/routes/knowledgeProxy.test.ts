@@ -434,7 +434,7 @@ describe('knowledge owner proxy: profile routes (#86)', () => {
     projects: [],
     links: { email: null, phone: null, linkedin: null, github: null, website: null },
   };
-  const DRAFT_AT = '2026-11-14T10:00:00.000Z';
+  const DRAFT_VERSION = 42;
 
   it('refuses a non-owner on every profile route, never calling the service', async () => {
     const service = fakeService(() => jsonResponse(200, {}));
@@ -513,7 +513,7 @@ describe('knowledge owner proxy: profile routes (#86)', () => {
       server.inject({
         method: 'POST',
         url: '/knowledge/profile/publish',
-        payload: { draftUpdatedAt: DRAFT_AT },
+        payload: { draftVersion: DRAFT_VERSION },
       });
 
     expect((await publish()).statusCode).toBe(409);
@@ -522,12 +522,14 @@ describe('knowledge owner proxy: profile routes (#86)', () => {
     status = 200;
     expect((await publish()).statusCode).toBe(200);
     expect(published).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(String(service.calls[1]?.init.body))).toEqual({ draftUpdatedAt: DRAFT_AT });
+    expect(JSON.parse(String(service.calls[1]?.init.body))).toEqual({
+      draftVersion: DRAFT_VERSION,
+    });
 
     const invalid = await server.inject({
       method: 'POST',
       url: '/knowledge/profile/publish',
-      payload: { draftUpdatedAt: 'yesterday' },
+      payload: { draftVersion: 'yesterday' },
     });
     expect(invalid.statusCode).toBe(400);
     expect(service.calls).toHaveLength(2);

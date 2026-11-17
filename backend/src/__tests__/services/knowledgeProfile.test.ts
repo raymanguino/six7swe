@@ -22,6 +22,7 @@ const published: PublishedProfileResponse = {
   profile: {
     stage: 'published',
     sourceDocumentId: DOC_ID,
+    version: 3,
     createdAt: AT,
     updatedAt: AT,
     data: {
@@ -107,6 +108,14 @@ describe('createKnowledgeProfileClient', () => {
     expect((calls[0]?.init.headers as Record<string, string>)[SERVICE_KEY_HEADER]).toBe(
       SERVICE_KEY,
     );
+  });
+
+  it('reads a published profile without a version, from a service older than #184', async () => {
+    if (!published.profile) throw new Error('expected a profile');
+    const { version: _version, ...profile } = published.profile;
+    const older = { ...published, profile };
+    const { client: c } = client(() => Response.json(older));
+    expect(await c.getPublished()).toEqual(older);
   });
 
   it('rejects an answer that breaks the contract, an error status, and an outage', async () => {

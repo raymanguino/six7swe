@@ -20,6 +20,13 @@ describeRepositoryContract('memory', () => ({
 describeProfileRepositoryContract('memory', () => ({
   profiles,
   newOwner: () => `owner-${randomUUID()}`,
+  async setDraftUpdatedAt(ownerId, at) {
+    for (const [key, row] of profiles.rows) {
+      if (row.ownerId === ownerId && row.stage === 'draft') {
+        profiles.rows.set(key, { ...row, updatedAt: at });
+      }
+    }
+  },
 }));
 
 describeEvalRepositoryContract('memory', () => ({

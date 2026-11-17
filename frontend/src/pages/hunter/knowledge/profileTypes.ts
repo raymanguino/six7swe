@@ -42,6 +42,8 @@ export interface Profile {
   stage: 'draft' | 'published';
   data: ProfileData;
   sourceDocumentId: string | null;
+  /** The row's version (see `ProfileDtoSchema.version`); publish sends it back. */
+  version: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -115,6 +117,9 @@ const isProfile = (value: unknown): value is Profile =>
   (value.stage === 'draft' || value.stage === 'published') &&
   isProfileData(value.data) &&
   isNullableString(value.sourceDocumentId) &&
+  typeof value.version === 'number' &&
+  Number.isSafeInteger(value.version) &&
+  value.version > 0 &&
   isString(value.createdAt) &&
   isString(value.updatedAt);
 
