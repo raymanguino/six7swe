@@ -1,21 +1,47 @@
-import { renderFailureBody, renderReviewBody } from '../../../domain/qa/review';
+import {
+  fitBodyToBudget,
+  renderFailureBody,
+  renderReviewBody,
+  SUPERSEDED_NOTE,
+  type ReviewBodyInput,
+} from '../../../domain/qa/review';
+
+const INPUT: ReviewBodyInput = {
+  summary: 'Fine.',
+  findings: [],
+  reportedCount: 0,
+  gate: 'pass',
+  commitSha: 'abc123',
+  coverage: { totalFiles: 1, omittedFiles: 0, shortenedPatches: 0, patchChars: 10 },
+  manualReviewReasons: [],
+};
 
 describe('review body names its run', () => {
-  it('states the commit and that the latest review is the current verdict', () => {
-    const review = renderReviewBody({
-      summary: 'Fine.',
-      findings: [],
-      reportedCount: 0,
-      gate: 'pass',
-      commitSha: 'abc123',
-      coverage: { totalFiles: 1, omittedFiles: 0, shortenedPatches: 0, patchChars: 10 },
-      manualReviewReasons: [],
-    });
-    const failure = renderFailureBody('boom', 'abc123');
+  it('states the commit and carries the note in every kind of body', () => {
+    const bodies = [
+      renderReviewBody(INPUT),
+      renderReviewBody({
+        ...INPUT,
+        gate: 'manual-review',
+        manualReviewReasons: ['protected-path'],
+      }),
+      renderFailureBody('boom', 'abc123'),
+    ];
 
-    for (const text of [review, failure]) {
+    for (const text of bodies) {
       expect(text).toContain('Reviewed commit: `abc123`');
-      expect(text).toContain('The most recent QA agent review on this pull request is the current');
+      expect(text).toContain(SUPERSEDED_NOTE);
     }
+  });
+
+  it('keeps the note when the body is shortened to fit', () => {
+    // The renderer bounds every field, so an over-budget body is built by
+    // padding a rendered one: the backstop is what is under test.
+    const rendered = renderReviewBody({ ...INPUT, gate: 'manual-review' });
+    const text = fitBodyToBudget(`${rendered}
+${'z'.repeat(100_000)}`);
+
+    expect(text).toContain('shortened to fit');
+    expect(text).toContain(SUPERSEDED_NOTE);
   });
 });

@@ -210,6 +210,10 @@ async function main(): Promise<void> {
   let coverage: DiffCoverage | null = null;
   let usage: TokenUsage | null = null;
 
+  // Set once this run's review is on the pull request. A later failure
+  // must not post a second review for the same run.
+  let posted = false;
+
   /**
    * Writes the one stats line this run reports, for `qa:calibration`.
    *
@@ -316,12 +320,14 @@ async function main(): Promise<void> {
       manualReviewReasons: manualReviewReasons({ changedFiles, coverage: diffCoverage }),
     });
 
-    // Every run posts its own review and never edits an earlier one, so
-    // the history of runs stays on the pull request. The latest review is
-    // the current verdict; a superseded request for changes is dismissed
-    // below.
-    // Read before posting, so the review about to be posted is never
-    // among them.
+    // Every run posts a new review and never edits an earlier one, so the
+    // history of runs stays on the pull request. The latest review is the
+    // current verdict.
+    //
+    // The agent's earlier requests for changes are read before posting, so
+    // the review about to be posted is never among them. They are
+    // dismissed afterwards, and only when this run reached a conclusive
+    // verdict.
     const superseded = await findSupersededReviews(env, owner, repo);
 
     await submitReview(owner, repo, env.PR_NUMBER, env.GITHUB_TOKEN, {
@@ -330,9 +336,17 @@ async function main(): Promise<void> {
       event,
     });
 
+    posted = true;
+
     logLine(`Posted one ${event} review on PR #${env.PR_NUMBER}.`);
 
-    await dismissSuperseded(env, owner, repo, superseded, headSha);
+    // Only a conclusive verdict retires an earlier block: `pass`, or
+    // `fail`, whose new request for changes replaces it. A run that could
+    // not decide (`manual-review`) says nothing about whether the earlier
+    // problem was fixed, so the block stays in force.
+    if (gate === 'pass' || gate === 'fail') {
+      await dismissSuperseded(env, owner, repo, superseded, headSha);
+    }
 
     logStats(gate, review.findings.length, countBySeverity(findings));
 
@@ -347,7 +361,11 @@ async function main(): Promise<void> {
     const reason = error instanceof Error ? error.message : String(error);
     process.stderr.write(`QA review failed: ${flattenText(reason)}\n`);
 
-    await postFailureReview(env, owner, repo, reason, headSha);
+    // A failure after the review was posted (for example while logging)
+    // must not post a second review for the same run.
+    if (!posted) {
+      await postFailureReview(env, owner, repo, reason, headSha);
+    }
 
     logStats('fail-closed', null, null);
 
@@ -376,8 +394,8 @@ async function postFailureReview(
 ): Promise<void> {
   try {
     const body = renderFailureBody(reason, commitSha, env.REVIEW_MODE);
-    const superseded = await findSupersededReviews(env, owner, repo);
-
+    // Nothing is dismissed here: a run that failed reached no verdict, so
+    // an earlier request for changes stays in force.
     await submitReview(owner, repo, env.PR_NUMBER, env.GITHUB_TOKEN, {
       commit_id: commitSha,
       body,
@@ -385,8 +403,6 @@ async function postFailureReview(
     });
 
     logLine(`Posted one fail-closed review on PR #${env.PR_NUMBER}.`);
-
-    await dismissSuperseded(env, owner, repo, superseded, commitSha);
   } catch (postError: unknown) {
     const message = postError instanceof Error ? postError.message : String(postError);
     process.stderr.write(`Could not post the fail-closed review: ${flattenText(message)}\n`);
@@ -423,6 +439,9 @@ async function findSupersededReviews(
 
 /**
  * Dismisses the agent's earlier requests for changes.
+ *
+ * Only reviews the agent itself wrote are ever passed in (see
+ * `findAgentChangeRequests`).
  *
  * Runs only after the new review has been posted. Each dismissal is
  * attempted on its own, and a failure is logged rather than thrown: the

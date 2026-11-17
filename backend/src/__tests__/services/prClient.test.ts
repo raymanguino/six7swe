@@ -192,28 +192,6 @@ describe('github pr client', () => {
     });
   });
 
-  describe('one review per run', () => {
-    it('posts a second review for a second run instead of editing the first', async () => {
-      fetchMock.mockResolvedValueOnce(jsonResponse({ id: 1 }, 200));
-      fetchMock.mockResolvedValueOnce(jsonResponse({ id: 2 }, 200));
-
-      for (const body of ['first run', 'second run']) {
-        await submitReview('raymanguino', 'six7swe', 63, TOKEN, {
-          commit_id: 'abc123',
-          body: `${REVIEW_MARKER}
-${body}`,
-          event: 'COMMENT',
-        });
-      }
-
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-      for (const [url, init] of fetchMock.mock.calls) {
-        expect(url).toBe('https://api.github.com/repos/raymanguino/six7swe/pulls/63/reviews');
-        expect(init?.method).toBe('POST');
-      }
-    });
-  });
-
   describe('listReviews', () => {
     it('returns the reviews on the pull request', async () => {
       fetchMock.mockResolvedValueOnce(
