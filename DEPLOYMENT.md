@@ -28,16 +28,20 @@ end of life). The root `package.json` declares it:
 "engines": { "node": ">=26 <27" }
 ```
 
-The hard floor is 22.12, the first release where `require(esm)` is on by default. The backend
-compiles to CommonJS, and `puppeteer` (25+) is ESM only, so on anything older the backend
-crashes on startup with `ERR_REQUIRE_ESM`. Everything (CI, the image, Railpack) runs 26.
+22.12 is the lowest Node with `require(esm)` on by default, and is the lower bound
+`runtimeDependencies.test.ts` enforces; the declared range (`>=26 <27`) is stricter. The backend
+compiles to CommonJS, and `puppeteer` (25+) is ESM only, so on anything older than 22.12 the
+backend crashes on startup with `ERR_REQUIRE_ESM`. Everything (CI, the image, Railpack) runs 26.
 
 The backend image gets its Node version from the base image tag in `backend/Dockerfile`
 (a `node:26.x-bookworm-slim` tag), not from `engines`. Keep the two in agreement: the tag must
 satisfy `engines.node`. Dependabot bumps the tag weekly and is told to ignore Node major
 versions (`.github/dependabot.yml`), so it stays on 26 until a deliberate major change.
 
-Railpack, which builds the frontend, reads `engines.node` and installs a matching version.
+Railpack builds both the frontend and the knowledge service (`.railway/railway.ts` sets the
+`RAILPACK` builder for knowledge), and both read the root `engines.node` and install a matching
+version. Confirming that Railpack resolves Node 26 for each is part of the Railway PR-environment
+check.
 
 > Node 18 crashes the backend on startup with `ERR_REQUIRE_ESM`. The
 > `content-disposition` package that `@fastify/static` depends on is ESM only,
