@@ -11,7 +11,13 @@
  * code the workflow checks out from `base.sha`.
  */
 
-import { allTouchedPaths, hunkLineNumbers, type ChangedFile, type DiffCoverage } from './diff';
+import {
+  allTouchedPaths,
+  shownInFull,
+  type ChangedFile,
+  type DiffCoverage,
+  type ShownFile,
+} from './diff';
 
 /**
  * The GitHub review events this agent is allowed to post.
@@ -250,10 +256,19 @@ export interface GateInput {
    * The files the pull request changed.
    *
    * The file objects are needed, not just their names: a rename carries
-   * the path it came from, and the patches carry the line numbers a
-   * finding can legitimately point at.
+   * the path it came from, and a protected path can sit on either side of
+   * it. Findings are not checked against these; see `shown`.
    */
   changedFiles: readonly ChangedFile[];
+  /**
+   * What the model was shown, from the diff builder (`prepareReviewDiff`).
+   *
+   * The findings are sanitized against this, not against `changedFiles`:
+   * a file the budget dropped, or a line cut from a shortened patch, is
+   * code the model never read. Required, so the gate always sanitizes
+   * against the same input the review body was built from.
+   */
+  shown: readonly ShownFile[];
   mode: ReviewMode;
   protectedPaths?: readonly string[];
   /** False when the review could not be completed. */
@@ -332,7 +347,7 @@ export function decideGate(input: GateInput): GateOutcome {
     return 'manual-review';
   }
 
-  const findings = sanitizeFindings(input.findings, input.changedFiles);
+  const findings = sanitizeFindings(input.findings, input.shown);
 
   if (findings.some((finding) => BLOCKING_SEVERITIES.includes(finding.severity))) {
     return 'fail';
@@ -355,6 +370,8 @@ export function decideReviewEvent(
     protectedPaths?: readonly string[];
     /** Defaults to every changed file having been shown. */
     coverage?: DiffCoverage;
+    /** Defaults to every changed file having been shown in full. */
+    shown?: readonly ShownFile[];
   } = {},
 ): ReviewEvent {
   const changedFiles = options.changedFiles ?? [];
@@ -363,6 +380,7 @@ export function decideReviewEvent(
     decideGate({
       findings,
       changedFiles,
+      shown: options.shown ?? shownInFull(changedFiles),
       mode,
       protectedPaths: options.protectedPaths,
       reviewCompleted: true,
@@ -370,6 +388,7 @@ export function decideReviewEvent(
         totalFiles: changedFiles.length,
         omittedFiles: 0,
         shortenedPatches: 0,
+        hiddenLines: 0,
         patchChars: 0,
       },
     }),
@@ -489,13 +508,20 @@ export function touchesProtectedPath(
 /**
  * Removes the findings that cannot be trusted.
  *
- * A finding that references a file the pull request did not touch is a
- * hallucination and is dropped outright: there is nothing left of it.
+ * Findings are checked against what the model was shown (`shown`, from
+ * `prepareReviewDiff`), not against the whole pull request. The diff budget
+ * drops files and cuts long patches short, and a finding about code the
+ * model never read is a guess, however plausible.
  *
- * A finding that references a line the diff does not contain keeps its
- * message but loses its line number. The line is wrong, the observation
- * may not be, and a wrong line number would make GitHub reject an inline
- * comment outright.
+ * A finding that references a file the model was not shown is dropped
+ * outright: there is nothing left of it. That covers a file the pull
+ * request did not touch (a hallucination) and a file the budget omitted.
+ *
+ * A finding that references a line the model did not see keeps its
+ * message but loses its line number. That covers a line outside every
+ * hunk and a line cut away from a shortened patch. The line is wrong, the
+ * observation may not be, and a wrong line number would make GitHub reject
+ * an inline comment outright.
  *
  * Findings without a file are general observations about the change and
  * are kept as they are.
@@ -511,19 +537,16 @@ export function touchesProtectedPath(
  */
 export function sanitizeFindings(
   findings: readonly ReviewFinding[],
-  changedFiles: readonly ChangedFile[],
+  shown: readonly ShownFile[],
 ): ReviewFinding[] {
-  const touched = new Set(allTouchedPaths(changedFiles));
-  const linesByPath = new Map<string, Set<number>>();
+  const linesByPath = new Map<string, ReadonlySet<number>>();
 
-  for (const file of changedFiles) {
-    const lines = hunkLineNumbers(file.patch ?? '');
-
+  for (const file of shown) {
     if (!linesByPath.has(file.filename)) {
-      linesByPath.set(file.filename, lines);
+      linesByPath.set(file.filename, file.lines);
     }
     if (file.previousFilename && !linesByPath.has(file.previousFilename)) {
-      linesByPath.set(file.previousFilename, lines);
+      linesByPath.set(file.previousFilename, file.lines);
     }
   }
 
@@ -535,7 +558,7 @@ export function sanitizeFindings(
       continue;
     }
 
-    if (!touched.has(finding.file)) {
+    if (!linesByPath.has(finding.file)) {
       if (isSteering(finding)) {
         sanitized.push({ ...finding, file: null, line: null });
       }

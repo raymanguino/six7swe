@@ -18,12 +18,14 @@ const SMALL: DiffCoverage = {
   totalFiles: 3,
   omittedFiles: 0,
   shortenedPatches: 0,
+  hiddenLines: 0,
   patchChars: 900,
 };
 const LARGE: DiffCoverage = {
   totalFiles: 58,
   omittedFiles: 33,
   shortenedPatches: 2,
+  hiddenLines: 0,
   patchChars: 140_000,
 };
 
@@ -59,7 +61,13 @@ describe('sizeAdvisory', () => {
   });
 
   it('gives no note when patches were only shortened', () => {
-    const shortened = { totalFiles: 7, omittedFiles: 0, shortenedPatches: 3, patchChars: 90_000 };
+    const shortened = {
+      totalFiles: 7,
+      omittedFiles: 0,
+      shortenedPatches: 3,
+      hiddenLines: 120,
+      patchChars: 90_000,
+    };
 
     expect(sizeAdvisory(shortened, SIZE_ADVISORY_THRESHOLD)).toBeNull();
   });
@@ -82,6 +90,7 @@ describe('size advisory in the review body', () => {
     const gate = decideGate({
       findings: [],
       changedFiles: [],
+      shown: [],
       mode,
       reviewCompleted: true,
       coverage: LARGE,
@@ -113,7 +122,13 @@ describe('size advisory in the review body', () => {
   it('is absent for a pull request that fits and for shortened patches', () => {
     expect(body(SMALL)).not.toContain(NOTE);
     expect(
-      body({ totalFiles: 7, omittedFiles: 0, shortenedPatches: 3, patchChars: 90_000 }),
+      body({
+        totalFiles: 7,
+        omittedFiles: 0,
+        shortenedPatches: 3,
+        hiddenLines: 120,
+        patchChars: 90_000,
+      }),
     ).not.toContain(NOTE);
   });
 
@@ -137,6 +152,7 @@ describe('the advisory and the gate', () => {
       const input: GateInput = {
         findings: [],
         changedFiles: [],
+        shown: [],
         mode,
         reviewCompleted: true,
         coverage: oversized,

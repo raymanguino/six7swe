@@ -11,13 +11,25 @@ import {
   type GateInput,
   type ReviewFinding,
 } from '../../../domain/qa/verdict';
-import type { ChangedFile, DiffCoverage } from '../../../domain/qa/diff';
+import {
+  prepareReviewDiff,
+  shownInFull,
+  type ChangedFile,
+  type DiffCoverage,
+} from '../../../domain/qa/diff';
 
-const FULL: DiffCoverage = { totalFiles: 1, omittedFiles: 0, shortenedPatches: 0, patchChars: 100 };
+const FULL: DiffCoverage = {
+  totalFiles: 1,
+  omittedFiles: 0,
+  shortenedPatches: 0,
+  hiddenLines: 0,
+  patchChars: 100,
+};
 const PARTIAL: DiffCoverage = {
   totalFiles: 58,
   omittedFiles: 33,
   shortenedPatches: 0,
+  hiddenLines: 0,
   patchChars: 140_000,
 };
 
@@ -128,6 +140,7 @@ describe('decideGate', () => {
       decideGate({
         findings: [],
         changedFiles: [],
+        shown: shownInFull([]),
         mode: 'comment-only',
         reviewCompleted: false,
         coverage: FULL,
@@ -138,6 +151,7 @@ describe('decideGate', () => {
       decideGate({
         findings: [],
         changedFiles: [],
+        shown: shownInFull([]),
         mode: 'enforce',
         reviewCompleted: false,
         coverage: FULL,
@@ -150,6 +164,7 @@ describe('decideGate', () => {
       decideGate({
         findings: [finding({ severity: 'nit' })],
         changedFiles: [patchedFile()],
+        shown: shownInFull([patchedFile()]),
         mode: 'enforce',
         reviewCompleted: false,
         coverage: FULL,
@@ -162,6 +177,7 @@ describe('decideGate', () => {
       decideGate({
         findings: [],
         changedFiles: [],
+        shown: shownInFull([]),
         mode: 'comment-only',
         reviewCompleted: true,
         coverage: FULL,
@@ -179,6 +195,7 @@ describe('decideGate', () => {
             deletions: 1,
           },
         ],
+        shown: [],
         mode: 'comment-only',
         reviewCompleted: true,
         coverage: FULL,
@@ -191,6 +208,7 @@ describe('decideGate', () => {
       decideGate({
         findings: [],
         changedFiles: [patchedFile()],
+        shown: shownInFull([patchedFile()]),
         mode: 'enforce',
         reviewCompleted: true,
         coverage: FULL,
@@ -203,6 +221,7 @@ describe('decideGate', () => {
       decideGate({
         findings: [finding({ severity: 'minor' }), finding({ severity: 'nit' })],
         changedFiles: [patchedFile()],
+        shown: shownInFull([patchedFile()]),
         mode: 'enforce',
         reviewCompleted: true,
         coverage: FULL,
@@ -215,6 +234,7 @@ describe('decideGate', () => {
       decideGate({
         findings: [finding({ severity: 'major' })],
         changedFiles: [patchedFile()],
+        shown: shownInFull([patchedFile()]),
         mode: 'enforce',
         reviewCompleted: true,
         coverage: FULL,
@@ -225,6 +245,7 @@ describe('decideGate', () => {
       decideGate({
         findings: [finding({ severity: 'blocker' })],
         changedFiles: [patchedFile()],
+        shown: shownInFull([patchedFile()]),
         mode: 'enforce',
         reviewCompleted: true,
         coverage: FULL,
@@ -244,6 +265,7 @@ describe('decideGate', () => {
             deletions: 1,
           },
         ],
+        shown: [],
         mode: 'enforce',
         reviewCompleted: true,
         coverage: FULL,
@@ -258,6 +280,7 @@ describe('decideGate', () => {
         changedFiles: [
           { filename: 'package.json', status: 'modified', additions: 1, deletions: 1 },
         ],
+        shown: [],
         mode: 'enforce',
         reviewCompleted: true,
         coverage: FULL,
@@ -278,6 +301,7 @@ describe('decideGate', () => {
             deletions: 0,
           },
         ],
+        shown: [],
         mode: 'enforce',
         reviewCompleted: true,
         coverage: FULL,
@@ -290,6 +314,7 @@ describe('decideGate', () => {
       decideGate({
         findings: [finding({ severity: 'blocker', file: 'backend/src/made-up.ts' })],
         changedFiles: [patchedFile()],
+        shown: shownInFull([patchedFile()]),
         mode: 'enforce',
         reviewCompleted: true,
         coverage: FULL,
@@ -304,6 +329,7 @@ describe('decideGate', () => {
         changedFiles: [
           { filename: 'docs/readme.md', status: 'modified', additions: 1, deletions: 1 },
         ],
+        shown: [],
         mode: 'enforce',
         protectedPaths: ['docs/**'],
         reviewCompleted: true,
@@ -322,19 +348,19 @@ describe('sanitizeFindings', () => {
   it('drops a finding that references a file outside the diff', () => {
     const findings = [finding({ file: 'backend/src/does-not-exist.ts' })];
 
-    expect(sanitizeFindings(findings, changedFiles)).toEqual([]);
+    expect(sanitizeFindings(findings, shownInFull(changedFiles))).toEqual([]);
   });
 
   it('keeps a finding that references a file in the diff', () => {
     const kept = finding({ file: 'backend/src/routes/portfolio.ts' });
 
-    expect(sanitizeFindings([kept], changedFiles)).toEqual([kept]);
+    expect(sanitizeFindings([kept], shownInFull(changedFiles))).toEqual([kept]);
   });
 
   it('keeps findings without a file', () => {
     const general = finding({ file: null, line: null });
 
-    expect(sanitizeFindings([general], changedFiles)).toEqual([general]);
+    expect(sanitizeFindings([general], shownInFull(changedFiles))).toEqual([general]);
   });
 
   it('preserves the order of the findings that survive', () => {
@@ -342,25 +368,32 @@ describe('sanitizeFindings', () => {
     const dropped = finding({ file: 'nope.ts', message: 'dropped' });
     const last = finding({ file: null, message: 'last' });
 
-    expect(sanitizeFindings([first, dropped, last], changedFiles)).toEqual([first, last]);
+    expect(sanitizeFindings([first, dropped, last], shownInFull(changedFiles))).toEqual([
+      first,
+      last,
+    ]);
   });
 
   it('keeps a finding whose line is part of the diff', () => {
     const onLine = finding({ file: 'backend/src/index.ts', line: 11 });
 
-    expect(sanitizeFindings([onLine], [patchedFile()])).toEqual([onLine]);
+    expect(sanitizeFindings([onLine], shownInFull([patchedFile()]))).toEqual([onLine]);
   });
 
   it('clears a line that the diff does not contain but keeps the finding', () => {
     const wrongLine = finding({ file: 'backend/src/index.ts', line: 999 });
 
-    expect(sanitizeFindings([wrongLine], [patchedFile()])).toEqual([{ ...wrongLine, line: null }]);
+    expect(sanitizeFindings([wrongLine], shownInFull([patchedFile()]))).toEqual([
+      { ...wrongLine, line: null },
+    ]);
   });
 
   it('clears a line on a file that has no patch at all', () => {
     const noPatch = finding({ file: 'backend/src/index.ts', line: 4 });
 
-    expect(sanitizeFindings([noPatch], changedFiles)).toEqual([{ ...noPatch, line: null }]);
+    expect(sanitizeFindings([noPatch], shownInFull(changedFiles))).toEqual([
+      { ...noPatch, line: null },
+    ]);
   });
 
   it('keeps a finding about the path a file was moved from', () => {
@@ -375,8 +408,98 @@ describe('sanitizeFindings', () => {
     ];
 
     expect(
-      sanitizeFindings([finding({ file: 'backend/src/domain/qa/verdict.ts' })], moved),
+      sanitizeFindings([finding({ file: 'backend/src/domain/qa/verdict.ts' })], shownInFull(moved)),
     ).toHaveLength(1);
+  });
+});
+
+describe('sanitizeFindings against the budgeted diff', () => {
+  // Every patch line plus its "\n" is 10 characters after a 16-character
+  // hunk header, so a per-file budget of 67 shows lines 1 to 5 only.
+  const longPatch = [
+    '@@ -0,0 +1,20 @@',
+    ...Array.from({ length: 20 }, (_, i) => `+line-${String(i + 1).padStart(3, '0')}`),
+  ].join('\n');
+
+  const shortened = patchedFile({ filename: 'backend/src/long.ts', patch: longPatch });
+  const kept = patchedFile({ filename: 'backend/src/kept.ts' });
+  const omitted = patchedFile({ filename: 'backend/src/omitted.ts', patch: 'x'.repeat(500) });
+  const changedFiles = [shortened, kept, omitted];
+  const budget = { perFileChars: 67, totalChars: 340, skipPatchesFor: [] };
+  const prepared = prepareReviewDiff(changedFiles, budget);
+
+  it('is set up with one shortened patch and one omitted file', () => {
+    expect(prepared.coverage.shortenedPatches).toBe(1);
+    expect(prepared.coverage.omittedFiles).toBe(1);
+    expect(prepared.shown.map((entry) => entry.filename)).not.toContain('backend/src/omitted.ts');
+  });
+
+  it('drops a finding on a file that was omitted from the diff', () => {
+    const onOmitted = finding({ file: 'backend/src/omitted.ts' });
+
+    expect(sanitizeFindings([onOmitted], prepared.shown)).toEqual([]);
+    // The full pull request would have kept it: the file is in it.
+    expect(sanitizeFindings([onOmitted], shownInFull(changedFiles))).toEqual([onOmitted]);
+  });
+
+  it('clears the line of a finding on a line that was truncated away', () => {
+    const pastTheCut = finding({ file: 'backend/src/long.ts', line: 18 });
+
+    expect(sanitizeFindings([pastTheCut], prepared.shown)).toEqual([{ ...pastTheCut, line: null }]);
+    expect(sanitizeFindings([pastTheCut], shownInFull(changedFiles))).toEqual([pastTheCut]);
+  });
+
+  it('keeps the line of a finding on a line the shortened patch still shows', () => {
+    const beforeTheCut = finding({ file: 'backend/src/long.ts', line: 5 });
+
+    expect(sanitizeFindings([beforeTheCut], prepared.shown)).toEqual([beforeTheCut]);
+  });
+
+  it('keeps a steering finding on an omitted file, as a general finding', () => {
+    const onOmitted = finding({ kind: 'steering', file: 'backend/src/omitted.ts', line: 1 });
+
+    expect(sanitizeFindings([onOmitted], prepared.shown)).toEqual([
+      { ...onOmitted, severity: STEERING_SEVERITY, file: null, line: null },
+    ]);
+  });
+
+  it('does not let a blocker on an omitted file fail the gate', () => {
+    const input: GateInput = {
+      findings: [finding({ severity: 'blocker', file: 'backend/src/omitted.ts' })],
+      changedFiles,
+      shown: prepared.shown,
+      mode: 'enforce',
+      reviewCompleted: true,
+      coverage: prepared.coverage,
+    };
+
+    // Partial coverage still needs a human; it is not a failure.
+    expect(decideGate(input)).toBe('manual-review');
+    expect(decideGate({ ...input, shown: shownInFull(changedFiles) })).toBe('fail');
+  });
+
+  it('still fails the gate on a blocker in a shortened file, without its line', () => {
+    expect(
+      decideGate({
+        findings: [finding({ severity: 'blocker', file: 'backend/src/long.ts', line: 18 })],
+        changedFiles,
+        shown: prepared.shown,
+        mode: 'enforce',
+        reviewCompleted: true,
+        coverage: prepared.coverage,
+      }),
+    ).toBe('fail');
+  });
+
+  it('defaults decideReviewEvent to every changed file shown in full', () => {
+    const blocker = finding({ severity: 'blocker', file: 'backend/src/omitted.ts' });
+
+    expect(decideReviewEvent([blocker], 'enforce', { changedFiles: [omitted] })).toBe(
+      'REQUEST_CHANGES',
+    );
+    expect(decideReviewEvent([blocker], 'enforce', { changedFiles: [omitted], shown: [] })).toBe(
+      'COMMENT',
+    );
   });
 });
 
@@ -491,13 +614,13 @@ describe('steering findings', () => {
     const changedFiles = [patchedFile()];
     const sanitized = sanitizeFindings(
       [steering(), steering({ file: 'backend/src/index.ts', line: 11 })],
-      changedFiles,
+      shownInFull(changedFiles),
     );
 
     expect(sanitized).toHaveLength(1);
     expect(sanitized[0].severity).toBe(STEERING_SEVERITY);
     // Sanitizing twice, as the script and the gate do, changes nothing more.
-    expect(sanitizeFindings(sanitized, changedFiles)).toEqual(sanitized);
+    expect(sanitizeFindings(sanitized, shownInFull(changedFiles))).toEqual(sanitized);
   });
 
   it('keeps a steering finding whose file is outside the diff, as a general finding', () => {
@@ -506,7 +629,7 @@ describe('steering findings', () => {
         steering({ file: 'pull-request-description.md', line: 3, message: 'Injected.' }),
         finding({ file: 'backend/src/not-in-diff.ts' }),
       ],
-      [patchedFile()],
+      shownInFull([patchedFile()]),
     );
 
     expect(sanitized).toEqual([
@@ -524,6 +647,7 @@ describe('steering findings', () => {
       decideGate({
         findings: [steering({ severity: 'blocker' })],
         changedFiles: [patchedFile()],
+        shown: shownInFull([patchedFile()]),
         mode: 'enforce',
         reviewCompleted: true,
         coverage: FULL,
@@ -536,6 +660,7 @@ describe('steering findings', () => {
       decideGate({
         findings: [steering(), steering({ severity: 'major' }), steering()],
         changedFiles: [patchedFile()],
+        shown: shownInFull([patchedFile()]),
         mode: 'enforce',
         reviewCompleted: true,
         coverage: FULL,
@@ -551,6 +676,7 @@ describe('steering findings', () => {
     const input: GateInput = {
       findings,
       changedFiles: [patchedFile()],
+      shown: shownInFull([patchedFile()]),
       mode: 'enforce',
       reviewCompleted: true,
       coverage: FULL,
@@ -558,7 +684,7 @@ describe('steering findings', () => {
 
     expect(decideGate(input)).toBe('fail');
 
-    const shown = sortFindingsBySeverity(sanitizeFindings(findings, [patchedFile()]));
+    const shown = sortFindingsBySeverity(sanitizeFindings(findings, shownInFull([patchedFile()])));
     expect(shown.map((entry) => entry.message)[0]).toBe('real defect');
     expect(shown).toHaveLength(2);
   });
@@ -668,6 +794,7 @@ describe('decideGate with partial coverage', () => {
     return decideGate({
       findings: [],
       changedFiles,
+      shown: shownInFull(changedFiles),
       mode: 'enforce',
       reviewCompleted: true,
       coverage: FULL,

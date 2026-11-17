@@ -211,7 +211,7 @@ export function describeCoverage(coverage: DiffCoverage): string {
         : `Reviewed all ${coverage.totalFiles} files.`;
 
   return coverage.shortenedPatches > 0
-    ? `${files} ${count(coverage.shortenedPatches, 'patch', 'patches')} shortened.`
+    ? `${files} ${count(coverage.shortenedPatches, 'patch', 'patches')} shortened, ${count(coverage.hiddenLines, 'line', 'lines')} hidden.`
     : files;
 }
 
@@ -326,7 +326,7 @@ export function renderReviewBody(input: ReviewBodyInput): string {
     footer.push(
       '',
       input.reportedCount > 0
-        ? `No findings to show. The model reported ${input.reportedCount} finding(s), but none of them referenced a file in this diff, so none were kept.`
+        ? `No findings to show. The model reported ${input.reportedCount} finding(s), but none of them referenced a file the model was shown, so none were kept.`
         : input.coverage.omittedFiles > 0
           ? `No findings in the files that were reviewed. ${input.coverage.omittedFiles} file(s) were not shown to the model.`
           : 'No findings. The model reported nothing against this diff.',

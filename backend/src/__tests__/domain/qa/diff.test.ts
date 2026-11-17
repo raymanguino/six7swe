@@ -355,6 +355,7 @@ describe('prepareReviewDiff', () => {
       totalFiles: 2,
       omittedFiles: 0,
       shortenedPatches: 0,
+      hiddenLines: 0,
       patchChars: 2 * '@@ -1 +1 @@\n-old\n+new'.length,
     });
   });
@@ -444,5 +445,109 @@ describe('prepareReviewDiff', () => {
 
     expect(coverage.omittedFiles).toBe(1);
     expect(coverage.shortenedPatches).toBe(1);
+  });
+});
+
+describe('prepareReviewDiff: what the model was shown', () => {
+  // A hunk header of 16 characters, then 20 added lines of 9 characters
+  // each. Every line plus its "\n" is 10 characters, so a cut at
+  // 16 + 1 + 5 * 10 = 67 keeps exactly lines 1 to 5 of the new file.
+  const HEADER = '@@ -0,0 +1,20 @@';
+  const LONG_PATCH = [
+    HEADER,
+    ...Array.from({ length: 20 }, (_, i) => `+line-${String(i + 1).padStart(3, '0')}`),
+  ].join('\n');
+
+  function shownLines(perFileChars: number): number[] {
+    const { shown } = prepareReviewDiff([file({ patch: LONG_PATCH })], {
+      ...BUDGET,
+      perFileChars,
+    });
+    return [...(shown[0]?.lines ?? [])].sort((a, b) => a - b);
+  }
+
+  it('lists every file it showed, with the lines of its hunks', () => {
+    const { shown } = prepareReviewDiff(
+      [file(), file({ filename: 'b.ts', patch: '@@ -1,2 +10,3 @@\n a\n+b\n c' })],
+      BUDGET,
+    );
+
+    expect(shown.map((entry) => entry.filename)).toEqual(['backend/src/index.ts', 'b.ts']);
+    expect([...shown[1].lines]).toEqual([10, 11, 12]);
+  });
+
+  it('shows a whole patch in full', () => {
+    expect(shownLines(10_000)).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
+  });
+
+  it('lists only the lines before the cut in a shortened patch', () => {
+    expect(shownLines(67)).toEqual([1, 2, 3, 4, 5]);
+    // A cut that ends exactly at the end of a line keeps that line.
+    expect(shownLines(66)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('does not count a line the cut ran through as shown', () => {
+    // 70 characters keep "+li" of line 6: not enough to have read it.
+    expect(shownLines(70)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('does not count removed lines as lines of the new file', () => {
+    // The cut at 37 falls inside "+added", so only the context line 1 survives.
+    const patch = '@@ -1,4 +1,3 @@\n-gone\n-gone\n keep\n+added\n keep-too';
+    const { shown } = prepareReviewDiff([file({ patch })], { ...BUDGET, perFileChars: 37 });
+
+    expect([...shown[0].lines]).toEqual([1]);
+  });
+
+  it('counts the lines hidden inside a shortened patch', () => {
+    const { coverage } = prepareReviewDiff(
+      [file({ patch: LONG_PATCH }), file({ filename: 'b.ts', patch: LONG_PATCH })],
+      { ...BUDGET, perFileChars: 70 },
+    );
+
+    // Each patch is 21 lines; 6 survive whole (the header and lines 1-5).
+    expect(coverage.shortenedPatches).toBe(2);
+    expect(coverage.hiddenLines).toBe(2 * 15);
+  });
+
+  it('hides no lines when nothing was shortened', () => {
+    expect(prepareReviewDiff([file({ patch: LONG_PATCH })], BUDGET).coverage.hiddenLines).toBe(0);
+  });
+
+  it('leaves out a file the budget dropped', () => {
+    const { shown, coverage } = prepareReviewDiff(
+      [
+        file({ filename: 'a.ts', patch: 'x'.repeat(500) }),
+        file({ filename: 'b.ts', patch: 'x'.repeat(500) }),
+      ],
+      { ...BUDGET, perFileChars: 100, totalChars: 300 },
+    );
+
+    expect(coverage.omittedFiles).toBe(1);
+    expect(shown.map((entry) => entry.filename)).toEqual(['a.ts']);
+  });
+
+  it('lists a lockfile and a file with no patch with no visible lines', () => {
+    const { shown } = prepareReviewDiff(
+      [
+        file({ filename: 'pnpm-lock.yaml', patch: '@@ -1 +1 @@\n+x' }),
+        file({ filename: 'logo.png', patch: undefined }),
+      ],
+      BUDGET,
+    );
+
+    expect(shown.map((entry) => [entry.filename, entry.lines.size])).toEqual([
+      ['pnpm-lock.yaml', 0],
+      ['logo.png', 0],
+    ]);
+  });
+
+  it('keeps the path a shown file was moved from', () => {
+    const { shown } = prepareReviewDiff(
+      [file({ filename: 'new.ts', previousFilename: 'old.ts' })],
+      BUDGET,
+    );
+
+    expect(shown[0]).toMatchObject({ filename: 'new.ts', previousFilename: 'old.ts' });
   });
 });
