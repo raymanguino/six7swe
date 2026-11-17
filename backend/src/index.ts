@@ -5,6 +5,7 @@ import fastifyCors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import { FastifyReply, FastifyRequest } from 'fastify';
 import { UnauthenticatedUser } from './constants';
+import { getCorsOrigin } from './config/cors';
 import { getSafeEnv } from './config/env';
 import { assertKnowledgeRetrievalConfigured } from './config/knowledgeRetrieval';
 import * as plugins from './plugins';
@@ -37,11 +38,14 @@ declare module '@fastify/request-context' {
   }
 }
 
-// Register CORS
-fastify.register(fastifyCors, {
-  origin: true, // Allow all origins in development, configure for production
+// Register CORS. It must be registered before the routes so its hooks cover them, so the options
+// are a function: avvio evaluates it when the plugin loads (during listen, inside start()'s
+// try/catch), so a missing or invalid CORS_ORIGINS is logged and exits 1 like the other startup
+// assertions. Every origin in development and test; CORS_ORIGINS otherwise.
+fastify.register(fastifyCors, () => ({
+  origin: getCorsOrigin(),
   credentials: true,
-});
+}));
 
 // Register static file serving for resume PDF
 // Use ../public (relative to dist/ or src/) so it works in both dev and production
@@ -99,6 +103,9 @@ const start = async () => {
     const port = parseInt(process.env.PORT || '3000');
     const host = process.env.HOST || '0.0.0.0';
 
+    // Validate CORS first so a bad config fails before anything touches the database. The plugin
+    // options above evaluate the same function again when it loads.
+    getCorsOrigin();
     assertKnowledgeRetrievalConfigured();
     setPortfolioLogger(fastify.log.child({ module: 'portfolio' }));
     setRetrievalLogger(fastify.log.child({ module: 'knowledge' }));
