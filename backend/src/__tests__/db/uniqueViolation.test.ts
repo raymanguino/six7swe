@@ -91,6 +91,31 @@ describe('findOrCreateUserByAuthId with a wrapped unique violation', () => {
 
     await expect(findOrCreateUserByAuthId({ authId: 'auth-1', email: null })).rejects.toBe(error);
   });
+
+  it('falls back to inserting without the email when the address is taken', async () => {
+    const created = { id: 9, name: 'a', email: null, authId: 'auth-1' };
+    // findByAuthId misses, findUnclaimedByEmail misses (it ends in .limit()),
+    // then the re-read after the lost insert misses too.
+    selectResolves([]);
+    mockDb.select.mockReturnValueOnce({
+      from: () => ({ where: () => ({ limit: () => Promise.resolve([]) }) }),
+    });
+    selectResolves([]);
+
+    const values = jest
+      .fn()
+      .mockReturnValueOnce({ returning: () => Promise.reject(wrapped('23505')) })
+      .mockReturnValueOnce({ returning: () => Promise.resolve([created]) });
+    mockDb.insert.mockReturnValue({ values });
+
+    await expect(
+      findOrCreateUserByAuthId({ authId: 'auth-1', email: 'a@x.com' }),
+    ).resolves.toEqual(created);
+
+    expect(values).toHaveBeenCalledTimes(2);
+    expect(values).toHaveBeenNthCalledWith(1, expect.objectContaining({ email: 'a@x.com' }));
+    expect(values).toHaveBeenLastCalledWith(expect.objectContaining({ email: null }));
+  });
 });
 
 describe('newProfileRefreshStatus with a wrapped unique violation', () => {
