@@ -121,7 +121,7 @@ describe('renderReviewBody', () => {
     expect(coverage).toBeLessThan(rendered.indexOf('The summary.'));
   });
 
-  it('says a partial review needs a human because files were not shown', () => {
+  it('says a partial review needs a human, with the shortened patches and hidden lines', () => {
     const rendered = body({
       gate: 'manual-review',
       coverage: PARTIAL_COVERAGE,
@@ -129,7 +129,7 @@ describe('renderReviewBody', () => {
     });
 
     expect(rendered).toContain(
-      'Reviewed 25 of 58 files. 33 file(s) were not shown to the model, so a clean result cannot be trusted.',
+      'Reviewed 25 of 58 files. 1 patch shortened, 140 lines hidden. 33 files were not shown to the model. A clean result cannot be trusted.',
     );
     expect(rendered).not.toContain('judges or runs the review');
   });
@@ -149,7 +149,7 @@ describe('renderReviewBody', () => {
       manualReviewReasons: ['protected-path', 'partial-coverage'],
     });
 
-    expect(rendered).toContain('33 file(s) were not shown to the model');
+    expect(rendered).toContain('33 files were not shown to the model.');
     expect(rendered).toContain('changes a path that judges or runs the review');
   });
 
@@ -173,8 +173,22 @@ describe('renderReviewBody', () => {
 
     expect(rendered).not.toContain('reported nothing');
     expect(rendered).toContain(
-      'No findings in the files that were reviewed. 33 file(s) were not shown to the model.',
+      'No findings in the files that were reviewed. 33 files were not shown to the model.',
     );
+  });
+
+  it('says "1 file was" for a single omitted file', () => {
+    const rendered = body({
+      gate: 'manual-review',
+      reportedCount: 0,
+      coverage: { ...PARTIAL_COVERAGE, totalFiles: 26, omittedFiles: 1 },
+      manualReviewReasons: ['partial-coverage'],
+    });
+
+    expect(rendered).toContain(
+      'Reviewed 25 of 26 files. 1 patch shortened, 140 lines hidden. 1 file was not shown to the model. A clean result cannot be trusted.',
+    );
+    expect(rendered).toContain('No findings in the files that were reviewed. 1 file was not shown');
   });
 
   it('renders a findings table', () => {

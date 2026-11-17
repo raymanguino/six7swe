@@ -13,6 +13,8 @@
 
 import {
   allTouchedPaths,
+  displayPath,
+  fullCoverage,
   shownInFull,
   type ChangedFile,
   type DiffCoverage,
@@ -292,9 +294,9 @@ export type ManualReviewReason = 'protected-path' | 'partial-coverage';
  * and was only partly read needs both said.
  *
  * Only omitted files count as partial coverage. A shortened patch also
- * leaves part of a file unread, but any file over `perFileChars` (about
- * 200 lines) trips it, and that is common. Shortened patches are reported
- * in the body and do not change the outcome.
+ * leaves part of a file unread, but any patch longer than `perFileChars`
+ * trips it, and a long patch is common. Shortened patches, and the lines
+ * they hid, are reported in the body and do not change the outcome.
  */
 export function manualReviewReasons(
   input: Pick<GateInput, 'changedFiles' | 'coverage' | 'protectedPaths'>,
@@ -361,18 +363,17 @@ export function decideGate(input: GateInput): GateOutcome {
  *
  * The default is `comment-only`, so the safe behaviour is what you get if
  * nobody passes a mode. Phase 2 flips the *caller*, not the default.
+ *
+ * Without `coverage`, every changed file is taken to have been shown in
+ * full, and `shown` defaults to match. With `coverage`, `shown` is
+ * required: a coverage that says files were omitted, next to a default
+ * that says every file was shown, would sanitize against code the model
+ * never read.
  */
 export function decideReviewEvent(
   findings: readonly ReviewFinding[],
   mode: ReviewMode = 'comment-only',
-  options: {
-    changedFiles?: readonly ChangedFile[];
-    protectedPaths?: readonly string[];
-    /** Defaults to every changed file having been shown. */
-    coverage?: DiffCoverage;
-    /** Defaults to every changed file having been shown in full. */
-    shown?: readonly ShownFile[];
-  } = {},
+  options: DecideReviewEventOptions = {},
 ): ReviewEvent {
   const changedFiles = options.changedFiles ?? [];
 
@@ -384,16 +385,26 @@ export function decideReviewEvent(
       mode,
       protectedPaths: options.protectedPaths,
       reviewCompleted: true,
-      coverage: options.coverage ?? {
-        totalFiles: changedFiles.length,
-        omittedFiles: 0,
-        shortenedPatches: 0,
-        hiddenLines: 0,
-        patchChars: 0,
-      },
+      coverage: options.coverage ?? fullCoverage(changedFiles.length),
     }),
   );
 }
+
+export type DecideReviewEventOptions = {
+  changedFiles?: readonly ChangedFile[];
+  protectedPaths?: readonly string[];
+} & (
+  | {
+      coverage?: undefined;
+      /** Defaults to every changed file having been shown in full. */
+      shown?: readonly ShownFile[];
+    }
+  | {
+      coverage: DiffCoverage;
+      /** Required with `coverage`, from the same `prepareReviewDiff` call. */
+      shown: readonly ShownFile[];
+    }
+);
 
 /**
  * Paths a pull request must never be allowed to pass automatically.
@@ -539,41 +550,81 @@ export function sanitizeFindings(
   findings: readonly ReviewFinding[],
   shown: readonly ShownFile[],
 ): ReviewFinding[] {
-  const linesByPath = new Map<string, ReadonlySet<number>>();
-
-  for (const file of shown) {
-    if (!linesByPath.has(file.filename)) {
-      linesByPath.set(file.filename, file.lines);
-    }
-    if (file.previousFilename && !linesByPath.has(file.previousFilename)) {
-      linesByPath.set(file.previousFilename, file.lines);
-    }
-  }
-
+  const linesByPath = shownLinesByPath(shown);
   const sanitized: ReviewFinding[] = [];
 
   for (const finding of findings) {
-    if (finding.file === null) {
-      sanitized.push(finding);
-      continue;
+    const kept = sanitizeFinding(finding, linesByPath);
+    if (kept !== null) {
+      sanitized.push(kept);
     }
-
-    if (!linesByPath.has(finding.file)) {
-      if (isSteering(finding)) {
-        sanitized.push({ ...finding, file: null, line: null });
-      }
-      continue;
-    }
-
-    if (finding.line === null) {
-      sanitized.push(finding);
-      continue;
-    }
-
-    const validLines = linesByPath.get(finding.file);
-
-    sanitized.push(validLines?.has(finding.line) === true ? finding : { ...finding, line: null });
   }
 
   return consolidateSteeringFindings(sanitized);
+}
+
+const NO_LINES: ReadonlySet<number> = new Set();
+
+/**
+ * The line numbers a finding may point at, keyed by every spelling of every
+ * path the model was shown.
+ *
+ * A path is registered under its raw spelling and under the spelling the
+ * model read (`displayPath`, which escapes control characters). A model
+ * that copies the path from the diff writes the displayed spelling, and a
+ * finding about a real file must not be dropped because of it.
+ *
+ * Current filenames are registered first, so they always win. A rename's
+ * old path is registered only if no shown file has it as its current name,
+ * and with no lines: the line numbers shown are of the new revision, so
+ * they say nothing about lines of the old path. A finding about the old
+ * path keeps its message and loses its line.
+ */
+function shownLinesByPath(shown: readonly ShownFile[]): Map<string, ReadonlySet<number>> {
+  const linesByPath = new Map<string, ReadonlySet<number>>();
+
+  const register = (spelling: string, lines: ReadonlySet<number>): void => {
+    if (!linesByPath.has(spelling)) {
+      linesByPath.set(spelling, lines);
+    }
+  };
+
+  // Raw current names, then displayed current names, then old paths: a
+  // real path is never shadowed by another file's escaped spelling or by
+  // a rename's old path.
+  for (const file of shown) {
+    register(file.filename, file.lines);
+  }
+  for (const file of shown) {
+    register(displayPath(file.filename), file.lines);
+  }
+  for (const file of shown) {
+    if (file.previousFilename) {
+      register(file.previousFilename, NO_LINES);
+      register(displayPath(file.previousFilename), NO_LINES);
+    }
+  }
+
+  return linesByPath;
+}
+
+/**
+ * Sanitizes one finding against the shown paths (see `sanitizeFindings`).
+ * Returns null when the finding is dropped.
+ */
+function sanitizeFinding(
+  finding: ReviewFinding,
+  linesByPath: ReadonlyMap<string, ReadonlySet<number>>,
+): ReviewFinding | null {
+  if (finding.file === null) {
+    return finding;
+  }
+
+  const lines = linesByPath.get(finding.file);
+
+  if (lines === undefined) {
+    return isSteering(finding) ? { ...finding, file: null, line: null } : null;
+  }
+
+  return finding.line === null || lines.has(finding.line) ? finding : { ...finding, line: null };
 }

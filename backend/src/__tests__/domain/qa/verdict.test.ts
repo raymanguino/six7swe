@@ -8,11 +8,14 @@ import {
   sortFindingsBySeverity,
   manualReviewReasons,
   touchesProtectedPath,
+  type DecideReviewEventOptions,
   type GateInput,
   type ReviewFinding,
 } from '../../../domain/qa/verdict';
 import {
+  displayPath,
   prepareReviewDiff,
+  REVIEW_DIFF_BUDGET,
   shownInFull,
   type ChangedFile,
   type DiffCoverage,
@@ -491,7 +494,7 @@ describe('sanitizeFindings against the budgeted diff', () => {
     ).toBe('fail');
   });
 
-  it('defaults decideReviewEvent to every changed file shown in full', () => {
+  it('defaults decideReviewEvent to every changed file shown in full only without coverage', () => {
     const blocker = finding({ severity: 'blocker', file: 'backend/src/omitted.ts' });
 
     expect(decideReviewEvent([blocker], 'enforce', { changedFiles: [omitted] })).toBe(
@@ -500,6 +503,89 @@ describe('sanitizeFindings against the budgeted diff', () => {
     expect(decideReviewEvent([blocker], 'enforce', { changedFiles: [omitted], shown: [] })).toBe(
       'COMMENT',
     );
+    expect(
+      decideReviewEvent([blocker], 'enforce', {
+        changedFiles,
+        coverage: prepared.coverage,
+        shown: prepared.shown,
+      }),
+    ).toBe('COMMENT');
+  });
+
+  it('requires shown whenever decideReviewEvent is given a coverage', () => {
+    // A coverage that says files were omitted must not be paired with a
+    // default that treats every file as shown.
+    // @ts-expect-error `shown` is required alongside `coverage`.
+    const options: DecideReviewEventOptions = { changedFiles, coverage: prepared.coverage };
+
+    expect(options.coverage).toBe(prepared.coverage);
+  });
+});
+
+describe('sanitizeFindings: path spellings and renames', () => {
+  it('keeps a finding written with the displayed spelling of a path with a newline', () => {
+    const raw = 'backend/src/odd\nname.ts';
+    const changed = [patchedFile({ filename: raw })];
+    const { shown, text } = prepareReviewDiff(changed, REVIEW_DIFF_BUDGET);
+    const displayed = displayPath(raw);
+
+    expect(displayed).toBe('backend/src/odd\\u000aname.ts');
+    expect(text).toContain(`### ${displayed} (`);
+
+    const blocker = finding({ severity: 'blocker', file: displayed, line: 11 });
+    expect(sanitizeFindings([blocker], shown)).toEqual([blocker]);
+    expect(sanitizeFindings([{ ...blocker, file: raw }], shown)).toEqual([
+      { ...blocker, file: raw },
+    ]);
+    expect(
+      decideGate({
+        findings: [blocker],
+        changedFiles: changed,
+        shown,
+        mode: 'enforce',
+        reviewCompleted: true,
+        coverage: { ...FULL, totalFiles: 1 },
+      }),
+    ).toBe('fail');
+  });
+
+  it('lets a current filename win over another file’s old path', () => {
+    // a.ts was renamed to b.ts, and a new a.ts was added.
+    const renamed = patchedFile({
+      filename: 'backend/src/b.ts',
+      previousFilename: 'backend/src/a.ts',
+      patch: '@@ -1,2 +1,2 @@\n x\n+y',
+    });
+    const recreated = patchedFile({ filename: 'backend/src/a.ts' });
+    const shown = shownInFull([renamed, recreated]);
+
+    // Line 11 is in the new a.ts's hunk (10-12), not in b.ts's (1-2).
+    const onNew = finding({ file: 'backend/src/a.ts', line: 11 });
+    expect(sanitizeFindings([onNew], shown)).toEqual([onNew]);
+  });
+
+  it('clears the line of a finding on an old path whose re-created file was dropped', () => {
+    const renamed = patchedFile({
+      filename: 'backend/src/b.ts',
+      previousFilename: 'backend/src/a.ts',
+      patch: '@@ -1,2 +1,2 @@\n x\n+y',
+    });
+    const recreated = patchedFile({
+      filename: 'backend/src/a.ts',
+      patch: `@@ -0,0 +1,3 @@\n+${'z'.repeat(400)}`,
+    });
+    const prepared = prepareReviewDiff([renamed, recreated], {
+      perFileChars: 1_000,
+      totalChars: 200,
+      skipPatchesFor: [],
+    });
+
+    expect(prepared.coverage.omittedFiles).toBe(1);
+    expect(prepared.shown.map((entry) => entry.filename)).toEqual(['backend/src/b.ts']);
+
+    // Line 1 is a line of b.ts, the new revision; it says nothing about a.ts.
+    const onOldPath = finding({ file: 'backend/src/a.ts', line: 1 });
+    expect(sanitizeFindings([onOldPath], prepared.shown)).toEqual([{ ...onOldPath, line: null }]);
   });
 });
 
@@ -846,6 +932,7 @@ describe('decideGate with partial coverage', () => {
         {
           changedFiles,
           coverage: PARTIAL,
+          shown: shownInFull(changedFiles),
         },
       ),
     ).toBe('REQUEST_CHANGES');

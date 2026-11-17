@@ -9,6 +9,7 @@ import {
   PATCH_SKIPPED_MARKER,
   prepareReviewDiff,
   REVIEW_DIFF_BUDGET,
+  shownInFull,
   type ChangedFile,
   type DiffBudget,
 } from '../../../domain/qa/diff';
@@ -341,6 +342,24 @@ describe('hunkLineNumbers', () => {
   it('returns nothing for a patch with no hunks', () => {
     expect(hunkLineNumbers('').size).toBe(0);
   });
+
+  it('clamps a hunk count larger than the patch', () => {
+    const lines = hunkLineNumbers('@@ -1 +1,999999999 @@\n+x');
+
+    expect(lines.size).toBe(2);
+    expect([...lines]).toEqual([1, 2]);
+  });
+});
+
+describe('shownInFull', () => {
+  it('lists a lockfile with no lines, as the budgeted diff does', () => {
+    const shown = shownInFull([
+      file({ filename: 'pnpm-lock.yaml', patch: '@@ -1 +1 @@\n+x' }),
+      file(),
+    ]);
+
+    expect(shown.map((entry) => entry.lines.size)).toEqual([0, 1]);
+  });
 });
 
 describe('prepareReviewDiff', () => {
@@ -508,6 +527,58 @@ describe('prepareReviewDiff: what the model was shown', () => {
     // Each patch is 21 lines; 6 survive whole (the header and lines 1-5).
     expect(coverage.shortenedPatches).toBe(2);
     expect(coverage.hiddenLines).toBe(2 * 15);
+  });
+
+  it('counts hidden lines the same when the patch ends in a newline', () => {
+    // A cut right after a "\n" (67) and a patch with a trailing "\n" must
+    // not count an empty line that is not there.
+    const { coverage } = prepareReviewDiff([file({ patch: `${LONG_PATCH}\n` })], {
+      ...BUDGET,
+      perFileChars: 67,
+    });
+
+    expect(coverage.hiddenLines).toBe(15);
+    expect(
+      prepareReviewDiff([file({ patch: LONG_PATCH })], { ...BUDGET, perFileChars: 67 }).coverage
+        .hiddenLines,
+    ).toBe(15);
+  });
+
+  it('shows none of a second hunk whose header falls after the cut', () => {
+    const patch = [
+      '@@ -1,2 +1,2 @@',
+      ' first',
+      '+second',
+      '@@ -50,2 +60,2 @@',
+      ' far',
+      '+away',
+    ].join('\n');
+    // The cut lands inside the second hunk header.
+    const cut = patch.indexOf('@@ -50') + 5;
+    const { shown } = prepareReviewDiff([file({ patch })], { ...BUDGET, perFileChars: cut });
+
+    expect([...shown[0].lines].sort((a, b) => a - b)).toEqual([1, 2]);
+  });
+
+  it('follows removed lines and a no-newline marker before the cut', () => {
+    const patch = [
+      '@@ -1,3 +1,3 @@',
+      ' a',
+      '-b',
+      '\\ No newline at end of file',
+      '+B',
+      ' c',
+      '+d-is-long-enough-to-be-cut',
+    ].join('\n');
+    const cut = patch.indexOf('+d-is') + 4;
+    const { shown, coverage } = prepareReviewDiff([file({ patch })], {
+      ...BUDGET,
+      perFileChars: cut,
+    });
+
+    // " a" is 1, "+B" is 2, " c" is 3; "-b" and the marker take no number.
+    expect([...shown[0].lines].sort((a, b) => a - b)).toEqual([1, 2, 3]);
+    expect(coverage.hiddenLines).toBe(1);
   });
 
   it('hides no lines when nothing was shortened', () => {

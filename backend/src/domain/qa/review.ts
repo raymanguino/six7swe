@@ -195,6 +195,11 @@ function count(n: number, singular: string, plural: string): string {
   return `${n} ${n === 1 ? singular : plural}`;
 }
 
+/** Says how many files the budget kept from the model, as one sentence. */
+function notShownSentence(omittedFiles: number): string {
+  return `${count(omittedFiles, 'file was', 'files were')} not shown to the model.`;
+}
+
 /**
  * Says how much of the pull request the model read.
  *
@@ -253,9 +258,8 @@ function coverageAndReasons(input: ReviewBodyInput): string[] {
   const lines: string[] = [];
 
   if (reasons.includes('partial-coverage')) {
-    const reviewed = reviewedFiles(input.coverage);
     lines.push(
-      `Reviewed ${reviewed} of ${input.coverage.totalFiles} files. ${input.coverage.omittedFiles} file(s) were not shown to the model, so a clean result cannot be trusted.`,
+      `${describeCoverage(input.coverage)} ${notShownSentence(input.coverage.omittedFiles)} A clean result cannot be trusted.`,
     );
   } else {
     lines.push(describeCoverage(input.coverage));
@@ -328,7 +332,7 @@ export function renderReviewBody(input: ReviewBodyInput): string {
       input.reportedCount > 0
         ? `No findings to show. The model reported ${input.reportedCount} finding(s), but none of them referenced a file the model was shown, so none were kept.`
         : input.coverage.omittedFiles > 0
-          ? `No findings in the files that were reviewed. ${input.coverage.omittedFiles} file(s) were not shown to the model.`
+          ? `No findings in the files that were reviewed. ${notShownSentence(input.coverage.omittedFiles)}`
           : 'No findings. The model reported nothing against this diff.',
     );
   }

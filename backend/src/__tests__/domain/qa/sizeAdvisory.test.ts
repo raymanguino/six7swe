@@ -162,7 +162,7 @@ describe('the advisory and the gate', () => {
       // the gate, so the verdict must match what partial coverage alone gives.
       expect(sizeAdvisory(oversized, SIZE_ADVISORY_THRESHOLD)).not.toBeNull();
       expect(decideGate(input)).toBe(outcome);
-      expect(decideReviewEvent([], mode, { coverage: oversized })).toBe(event);
+      expect(decideReviewEvent([], mode, { coverage: oversized, shown: [] })).toBe(event);
       expect(gateBlocksMerge(decideGate(input), mode)).toBe(blocks);
       expect(decideGate({ ...input, coverage: fits })).toBe('pass');
     },
