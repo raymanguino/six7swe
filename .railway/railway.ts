@@ -95,9 +95,10 @@ export default defineRailway(() => {
       RESEND_FROM_NAME: preserve(),
       SUPABASE_URL: preserve(),
       PORTFOLIO_CACHE_TTL_MS: preserve(),
-      // Comma-separated browser origins allowed by CORS. Required in production: the backend
+      // Comma-separated browser origins allowed by CORS (the frontend domains declared above; not
+      // secret, so a literal rather than preserve()). Required in production: the backend
       // refuses to start without it.
-      CORS_ORIGINS: preserve(),
+      CORS_ORIGINS: 'https://ray-manguino.dev,https://six7swe.up.railway.app',
       // #120 took this out of the file, so an apply would delete the value set by hand in
       // Railway. preserve() keeps it, and lets the owner switch chat to `knowledge` in Railway
       // without this file doing it.

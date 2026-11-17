@@ -3,8 +3,9 @@ import { z } from 'zod';
 /**
  * CORS origin policy.
  *
- * Outside production every origin is reflected (`true`), so local development needs no
- * configuration. In production `CORS_ORIGINS` is required: a comma-separated list of the exact
+ * With `NODE_ENV` of `development` or `test` every origin is reflected (`true`), so local
+ * development needs no configuration. Otherwise (production, unset, anything else)
+ * `CORS_ORIGINS` is required: a comma-separated list of the exact
  * origins (scheme + host + optional port, no path) allowed to call the API from a browser.
  * Leaving it unset, empty, or malformed throws, so the server fails fast at startup instead of
  * silently allowing every origin.
@@ -23,7 +24,10 @@ const originSchema = z.string().transform((value, ctx) => {
   }
   // `origin` drops any path, so require the value to already be one (a trailing slash is fine).
   if (value.replace(/\/+$/, '') !== parsed.origin) {
-    ctx.addIssue({ code: 'custom', message: `"${value}" must be an origin without a path` });
+    ctx.addIssue({
+      code: 'custom',
+      message: `"${value}" must be a normalized origin, expected "${parsed.origin}"`,
+    });
     return z.NEVER;
   }
   return parsed.origin;
@@ -42,7 +46,9 @@ const originListSchema = z
 export function getCorsOrigin(
   env: Record<string, string | undefined> = process.env,
 ): true | string[] {
-  if (env.NODE_ENV !== 'production') return true;
+  // Fail closed: only an explicit development or test environment allows every origin, so an
+  // unset or misspelled NODE_ENV (`Production`, `staging`) still requires CORS_ORIGINS.
+  if (env.NODE_ENV === 'development' || env.NODE_ENV === 'test') return true;
 
   const result = originListSchema.safeParse(env.CORS_ORIGINS ?? '');
   if (!result.success) {
