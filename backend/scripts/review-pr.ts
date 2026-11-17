@@ -56,7 +56,6 @@ import {
   getPullRequest,
   listChangedFiles,
   submitReview,
-  upsertReviewComment,
 } from '../src/services/github/prClient';
 
 /**
@@ -211,6 +210,14 @@ async function main(): Promise<void> {
   let coverage: DiffCoverage | null = null;
   let usage: TokenUsage | null = null;
 
+  // Set once this run's review is on the pull request. A later failure
+  // must not post a second review for the same run.
+  let posted = false;
+
+  // The gate this run decided, once it has. Together with `posted` it says
+  // whether the review on the pull request is a real verdict.
+  let decidedGate: GateOutcome | null = null;
+
   /**
    * Writes the one stats line this run reports, for `qa:calibration`.
    *
@@ -302,6 +309,7 @@ async function main(): Promise<void> {
       reviewCompleted: true,
       coverage: diffCoverage,
     });
+    decidedGate = gate;
 
     logLine(
       `Model returned ${review.findings.length} finding(s); ${findings.length} survived sanitizing.`,
@@ -322,34 +330,33 @@ async function main(): Promise<void> {
       manualReviewReasons: manualReviewReasons({ changedFiles, coverage: diffCoverage }),
     });
 
-    // A COMMENT can be updated in place: only the body changes, and the
-    // pull request keeps one authoritative review instead of a stack of
-    // them. Anything else has to be a new review, because GitHub fixes a
-    // review's event once it accepts it: a review that asked for changes
-    // cannot be turned back into a comment by editing its body.
-    // Read before posting, so the review about to be posted is never
-    // among them.
+    // Every run posts a new review and never edits an earlier one, so the
+    // history of runs stays on the pull request. The latest review is the
+    // current verdict.
+    //
+    // The agent's earlier requests for changes are read before posting, so
+    // the review about to be posted is never among them. They are
+    // dismissed afterwards, and only when this run reached a conclusive
+    // verdict.
     const superseded = await findSupersededReviews(env, owner, repo);
 
-    let action: 'created' | 'updated';
+    await submitReview(owner, repo, env.PR_NUMBER, env.GITHUB_TOKEN, {
+      commit_id: headSha,
+      body,
+      event,
+    });
 
-    if (event === 'COMMENT') {
-      action = await upsertReviewComment(owner, repo, env.PR_NUMBER, env.GITHUB_TOKEN, {
-        commit_id: headSha,
-        body,
-      });
-    } else {
-      await submitReview(owner, repo, env.PR_NUMBER, env.GITHUB_TOKEN, {
-        commit_id: headSha,
-        body,
-        event,
-      });
-      action = 'created';
+    posted = true;
+
+    logLine(`Posted one ${event} review on PR #${env.PR_NUMBER}.`);
+
+    // Only a conclusive verdict retires an earlier block: `pass`, or
+    // `fail`, whose new request for changes replaces it. A run that could
+    // not decide (`manual-review`) says nothing about whether the earlier
+    // problem was fixed, so the block stays in force.
+    if (gate === 'pass' || gate === 'fail') {
+      await dismissSuperseded(env, owner, repo, superseded, headSha);
     }
-
-    logLine(`Posted one ${event} review on PR #${env.PR_NUMBER} (${action}).`);
-
-    await dismissSuperseded(env, owner, repo, superseded, headSha);
 
     logStats(gate, review.findings.length, countBySeverity(findings));
 
@@ -364,14 +371,23 @@ async function main(): Promise<void> {
     const reason = error instanceof Error ? error.message : String(error);
     process.stderr.write(`QA review failed: ${flattenText(reason)}\n`);
 
-    await postFailureReview(env, owner, repo, reason, headSha);
+    // A failure after the review was posted (for example while logging)
+    // must not post a second review for the same run.
+    if (!posted) {
+      await postFailureReview(env, owner, repo, reason, headSha);
+    }
 
-    logStats('fail-closed', null, null);
+    // Once the review is posted it is the verdict of record. A throw after
+    // that comes from logging or stats code, so reporting fail-closed would
+    // contradict the posted review and record the wrong outcome.
+    const outcome: GateOutcome = posted && decidedGate !== null ? decidedGate : 'fail-closed';
 
-    // The gate outcome is fail-closed. Whether that turns the check red
-    // depends on the mode: in comment-only mode the agent is an observer
-    // and nothing it does blocks a merge.
-    if (gateBlocksMerge('fail-closed', mode)) {
+    logStats(outcome, null, null);
+
+    // Whether the outcome turns the check red depends on the mode: in
+    // comment-only mode the agent is an observer and nothing it does blocks
+    // a merge.
+    if (gateBlocksMerge(outcome, mode)) {
       process.exitCode = 1;
     }
   }
@@ -393,16 +409,15 @@ async function postFailureReview(
 ): Promise<void> {
   try {
     const body = renderFailureBody(reason, commitSha, env.REVIEW_MODE);
-    const superseded = await findSupersededReviews(env, owner, repo);
-
-    const action = await upsertReviewComment(owner, repo, env.PR_NUMBER, env.GITHUB_TOKEN, {
+    // Nothing is dismissed here: a run that failed reached no verdict, so
+    // an earlier request for changes stays in force.
+    await submitReview(owner, repo, env.PR_NUMBER, env.GITHUB_TOKEN, {
       commit_id: commitSha,
       body,
+      event: 'COMMENT',
     });
 
-    logLine(`Posted one fail-closed review on PR #${env.PR_NUMBER} (${action}).`);
-
-    await dismissSuperseded(env, owner, repo, superseded, commitSha);
+    logLine(`Posted one fail-closed review on PR #${env.PR_NUMBER}.`);
   } catch (postError: unknown) {
     const message = postError instanceof Error ? postError.message : String(postError);
     process.stderr.write(`Could not post the fail-closed review: ${flattenText(message)}\n`);
@@ -439,6 +454,9 @@ async function findSupersededReviews(
 
 /**
  * Dismisses the agent's earlier requests for changes.
+ *
+ * Only reviews the agent itself wrote are ever passed in (see
+ * `findAgentChangeRequests`).
  *
  * Runs only after the new review has been posted. Each dismissal is
  * attempted on its own, and a failure is logged rather than thrown: the

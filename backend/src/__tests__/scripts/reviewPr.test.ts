@@ -571,15 +571,55 @@ describe('the script retires its earlier requests for changes', () => {
     expect(dismissals(result)).toHaveLength(1);
   });
 
-  it('dismisses the request when the review fails closed', () => {
+  it('leaves the request in force when the review fails closed', () => {
+    // A run that failed reached no verdict, so it cannot say the earlier
+    // problem was fixed.
     const result = runScript(ENFORCE_ENV, {
       modelResponse: 'not json at all',
       reviews: [STALE_REQUEST],
     });
 
     expect(reviewPost(result).body).toContain('fail-closed');
-    expect(dismissals(result)).toHaveLength(1);
+    expect(dismissals(result)).toHaveLength(0);
     expect(result.status).toBe(1);
+  });
+
+  it('leaves the request in force when the run needs a manual review', () => {
+    const result = runScript(ENFORCE_ENV, {
+      modelResponse: CLEAN_RESPONSE,
+      files: [SOURCE_FILE, LOCKFILE],
+      reviews: [STALE_REQUEST],
+    });
+
+    expect(result.stdout).toContain('Gate outcome: manual-review');
+    expect(reviewPost(result).event).toBe('COMMENT');
+    expect(dismissals(result)).toHaveLength(0);
+  });
+
+  it('posts one new review and edits nothing when an earlier agent review exists', () => {
+    const earlierComment = {
+      id: 30,
+      body: `${REVIEW_MARKER}
+## QA agent review`,
+      user: { login: 'github-actions[bot]' },
+      state: 'COMMENTED',
+    };
+    const result = runScript(BASE_ENV, {
+      modelResponse: CLEAN_RESPONSE,
+      files: [SOURCE_FILE],
+      reviews: [earlierComment],
+    });
+
+    const posts = result.calls.filter(
+      (call) => call.method === 'POST' && call.url.endsWith('/pulls/7/reviews'),
+    );
+    const edits = result.calls.filter(
+      (call) =>
+        (call.method === 'PUT' || call.method === 'PATCH') && call.url.includes('/reviews/30'),
+    );
+
+    expect(posts).toHaveLength(1);
+    expect(edits).toHaveLength(0);
   });
 
   it('does not let a failed dismissal change the outcome', () => {

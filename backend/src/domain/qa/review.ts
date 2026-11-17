@@ -6,8 +6,8 @@
  * than inside the script that wires everything together.
  *
  * The marker lives here too, because it is part of the contract between
- * the body and the client that posts it: the client has to recognise the
- * agent's own review, and the body has to be the one that carries the
+ * the body and the client that reads reviews back: the client has to
+ * recognise the agent's own reviews, and the body has to be the one that carries the
  * marker. Keeping the constant in one place stops them drifting apart.
  *
  * Almost everything in the body is untrusted. The summary and the finding
@@ -33,7 +33,8 @@ import {
  * Hidden marker that identifies the agent's own review.
  *
  * It is an HTML comment, so GitHub renders nothing for it, and it is what
- * lets a later run find the review it posted before.
+ * lets a later run find the requests for changes it posted before, so it
+ * can dismiss them once superseded.
  */
 export const REVIEW_MARKER = '<!-- six7swe-qa-agent -->';
 
@@ -281,6 +282,13 @@ function advisoryLines(coverage: DiffCoverage): string[] {
 }
 
 /**
+ * Every run posts its own review, so a reader can land on an older one.
+ * This says how to tell which one is current.
+ */
+export const SUPERSEDED_NOTE =
+  '_One review is posted per run. The most recent QA agent review on this pull request is the current verdict; this one covers only the commit above._';
+
+/**
  * Renders the review body.
  *
  * The gate outcome comes first, before anything the model wrote. The
@@ -299,6 +307,7 @@ export function renderReviewBody(input: ReviewBodyInput): string {
     '',
     `**Gate outcome: \`${input.gate}\`**`,
     `Reviewed commit: \`${escapeMarkdown(input.commitSha)}\``,
+    SUPERSEDED_NOTE,
     ...coverageAndReasons(input),
     ...advisoryLines(input.coverage),
     '',
@@ -375,6 +384,7 @@ export function renderFailureBody(
     '',
     '**Gate outcome: `fail-closed`**',
     `Reviewed commit: \`${escapeMarkdown(commitSha)}\``,
+    SUPERSEDED_NOTE,
     '',
     `Reason: ${escapeMarkdown(truncate(reason, MAX_SUMMARY_CHARS))}`,
     '',
