@@ -89,8 +89,8 @@ updates:
       time: '07:00'
       timezone: America/Bogota
     ignore:
-      # Stay on Node 22: `engines.node` in the root package.json is `>=22.12 <23`,
-      # and CI tests on 22. Moving to a new major is a deliberate change to both.
+      # Stay on Node 26: `engines.node` in the root package.json is `>=26 <27`,
+      # and CI tests on 26. Moving to a new major is a deliberate change to both.
       - dependency-name: node
         update-types:
           - version-update:semver-major

@@ -21,20 +21,21 @@ Before deploying, complete the local setup steps in `SETUP.md` (install dependen
 
 ## Node Version
 
-The backend needs **Node 22.12 or later** on the 22 line. The root `package.json` declares it:
+The backend needs **Node 26** (the current LTS line, supported well past Node 22's April 2027
+end of life). The root `package.json` declares it:
 
 ```json
-"engines": { "node": ">=22.12 <23" }
+"engines": { "node": ">=26 <27" }
 ```
 
-22.12 is the first release where `require(esm)` is on by default. The backend compiles to
-CommonJS, and `puppeteer` (25+) is ESM only, so on anything older the backend crashes on
-startup with `ERR_REQUIRE_ESM`.
+The hard floor is 22.12, the first release where `require(esm)` is on by default. The backend
+compiles to CommonJS, and `puppeteer` (25+) is ESM only, so on anything older the backend
+crashes on startup with `ERR_REQUIRE_ESM`. Everything (CI, the image, Railpack) runs 26.
 
 The backend image gets its Node version from the base image tag in `backend/Dockerfile`
-(a `node:22.x-bookworm-slim` tag), not from `engines`. Keep the two in agreement: the tag must
+(a `node:26.x-bookworm-slim` tag), not from `engines`. Keep the two in agreement: the tag must
 satisfy `engines.node`. Dependabot bumps the tag weekly and is told to ignore Node major
-versions (`.github/dependabot.yml`), so it stays on 22.
+versions (`.github/dependabot.yml`), so it stays on 26 until a deliberate major change.
 
 Railpack, which builds the frontend, reads `engines.node` and installs a matching version.
 
@@ -43,7 +44,7 @@ Railpack, which builds the frontend, reads `engines.node` and installs a matchin
 > and Node 18 cannot `require()` an ES module. The dependency is pinned to a
 > CommonJS release through a pnpm override in `pnpm-workspace.yaml`. That override
 > no longer makes older runtimes work on its own, because `puppeteer` is now ESM
-> only too. Node 22.12+ is the supported version and the one CI tests.
+> only too. Node 26 is the supported version and the one CI tests.
 >
 > `backend/src/__tests__/runtimeDependencies.test.ts` fails the build if the
 > `engines.node` floor drops below 22.12, or if a dependency cannot be loaded with
