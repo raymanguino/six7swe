@@ -1,4 +1,5 @@
-// The package.json test scripts start Jest with `node --experimental-vm-modules`.
+// Every package.json test script runs Jest through the `jest` script, which
+// starts it with `node --experimental-vm-modules`.
 // Some dependencies (jose 6) are ESM-only, and Jest only loads them through
 // require(esm) on Node 24.9+ when VM modules are enabled; without the flag the
 // suites that import them fail with "Must use import to load ES Module".
