@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProfileRepository } from '../../db/api/profileRepository.js';
 import { SAMPLE_PROFILE } from './fixtures.js';
 
@@ -37,6 +37,7 @@ export function describeProfileRepositoryContract(
       expect(second.data.title).toBe('Principal Engineer');
       expect(second.createdAt.getTime()).toBe(first.createdAt.getTime());
       expect(second.updatedAt.getTime()).toBeGreaterThanOrEqual(first.updatedAt.getTime());
+      expect(second.version).not.toBe(first.version);
       expect((await profiles.getProfiles(owner)).draft?.data.title).toBe('Principal Engineer');
 
       expect(await profiles.deleteDraft(owner)).toBe(true);
@@ -55,10 +56,10 @@ export function describeProfileRepositoryContract(
     it('publishes the reviewed draft and removes it', async () => {
       const { profiles, newOwner } = target();
       const owner = newOwner();
-      expect(await profiles.publishDraft(owner, new Date())).toEqual({ status: 'no-draft' });
+      expect(await profiles.publishDraft(owner, 1)).toEqual({ status: 'no-draft' });
 
       const draft = await profiles.saveDraft(owner, SAMPLE_PROFILE, null);
-      const outcome = await profiles.publishDraft(owner, draft.updatedAt);
+      const outcome = await profiles.publishDraft(owner, draft.version);
       expect(outcome).toMatchObject({
         status: 'published',
         profile: { stage: 'published', data: SAMPLE_PROFILE },
@@ -70,7 +71,7 @@ export function describeProfileRepositoryContract(
 
       // Publishing again replaces the published profile.
       const next = await profiles.saveDraft(owner, { ...SAMPLE_PROFILE, name: 'J. Example' }, null);
-      await profiles.publishDraft(owner, next.updatedAt);
+      await profiles.publishDraft(owner, next.version);
       expect((await profiles.getPublished(owner))?.data.name).toBe('J. Example');
     });
 
@@ -80,9 +81,76 @@ export function describeProfileRepositoryContract(
       const reviewed = await profiles.saveDraft(owner, SAMPLE_PROFILE, null);
       await profiles.saveDraft(owner, { ...SAMPLE_PROFILE, title: 'Changed' }, null);
 
-      const outcome = await profiles.publishDraft(owner, reviewed.updatedAt);
+      const outcome = await profiles.publishDraft(owner, reviewed.version);
       expect(outcome).toMatchObject({ status: 'stale', draft: { data: { title: 'Changed' } } });
       expect(await profiles.getPublished(owner)).toBeNull();
+    });
+
+    describe('within one millisecond', () => {
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      // #184: `updatedAt` reaches callers at millisecond precision, so a check
+      // on it missed a change saved in the same millisecond as the reviewed
+      // write. The in-memory clock is frozen here, so its writes always share
+      // a millisecond; the database keeps its own clock, so writes are
+      // repeated until two land in one millisecond (or the attempts run out,
+      // and the change is still detected).
+      it('detects a change saved in the same millisecond as the reviewed draft', async () => {
+        vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-01-01T00:00:00.000Z') });
+        const { profiles, newOwner } = target();
+        const owner = newOwner();
+        let reviewed = await profiles.saveDraft(owner, SAMPLE_PROFILE, null);
+        let changed = await profiles.saveDraft(
+          owner,
+          { ...SAMPLE_PROFILE, title: 'Changed 0' },
+          null,
+        );
+        for (
+          let i = 1;
+          i < 200 && changed.updatedAt.getTime() !== reviewed.updatedAt.getTime();
+          i++
+        ) {
+          reviewed = changed;
+          changed = await profiles.saveDraft(
+            owner,
+            { ...SAMPLE_PROFILE, title: `Changed ${i}` },
+            null,
+          );
+        }
+
+        expect(changed.version).not.toBe(reviewed.version);
+        expect(await profiles.publishDraft(owner, reviewed.version)).toMatchObject({
+          status: 'stale',
+          draft: { data: { title: changed.data.title } },
+        });
+        const drafted = { ...SAMPLE_PROFILE, title: 'Model draft' };
+        expect(
+          await profiles.saveDraftIfUnchanged(owner, drafted, null, reviewed.version),
+        ).toBeNull();
+        expect((await profiles.getProfiles(owner)).draft?.data.title).toBe(changed.data.title);
+        expect(await profiles.getPublished(owner)).toBeNull();
+      });
+    });
+
+    it('never reuses the version of a published or discarded draft', async () => {
+      const { profiles, newOwner } = target();
+      const owner = newOwner();
+      const published = await profiles.saveDraft(owner, SAMPLE_PROFILE, null);
+      await profiles.publishDraft(owner, published.version);
+      const discarded = await profiles.saveDraft(owner, SAMPLE_PROFILE, null);
+      await profiles.deleteDraft(owner);
+
+      const next = await profiles.saveDraft(owner, { ...SAMPLE_PROFILE, title: 'Next' }, null);
+      expect(next.version).not.toBe(published.version);
+      expect(next.version).not.toBe(discarded.version);
+      expect(await profiles.publishDraft(owner, published.version)).toMatchObject({
+        status: 'stale',
+      });
+      expect(await profiles.publishDraft(owner, discarded.version)).toMatchObject({
+        status: 'stale',
+      });
     });
 
     it('writes a drafter’s draft only over the draft it started from', async () => {
@@ -96,19 +164,19 @@ export function describeProfileRepositoryContract(
       // The owner edits it while a new one is drafted: the edits are kept.
       await profiles.saveDraft(owner, { ...SAMPLE_PROFILE, title: 'Owner edit' }, null);
       const drafted = { ...SAMPLE_PROFILE, title: 'Model draft' };
-      expect(await profiles.saveDraftIfUnchanged(owner, drafted, null, first.updatedAt)).toBeNull();
+      expect(await profiles.saveDraftIfUnchanged(owner, drafted, null, first.version)).toBeNull();
       expect(await profiles.saveDraftIfUnchanged(owner, drafted, null, null)).toBeNull();
       expect((await profiles.getProfiles(owner)).draft?.data.title).toBe('Owner edit');
 
       // Unchanged since the drafter started: replaced.
       const current = (await profiles.getProfiles(owner)).draft;
       if (!current) throw new Error('expected a draft');
-      const saved = await profiles.saveDraftIfUnchanged(owner, drafted, null, current.updatedAt);
+      const saved = await profiles.saveDraftIfUnchanged(owner, drafted, null, current.version);
       expect(saved?.data.title).toBe('Model draft');
 
       // Discarded since the drafter started: written.
       await profiles.deleteDraft(owner);
-      const after = await profiles.saveDraftIfUnchanged(owner, drafted, null, current.updatedAt);
+      const after = await profiles.saveDraftIfUnchanged(owner, drafted, null, current.version);
       expect(after?.data.title).toBe('Model draft');
     });
 
@@ -118,7 +186,7 @@ export function describeProfileRepositoryContract(
       const draft = await profiles.saveDraft(owner, SAMPLE_PROFILE, null);
       const other = newOwner();
       expect(await profiles.getProfiles(other)).toEqual({ draft: null, published: null });
-      expect(await profiles.publishDraft(other, draft.updatedAt)).toEqual({ status: 'no-draft' });
+      expect(await profiles.publishDraft(other, draft.version)).toEqual({ status: 'no-draft' });
       expect(await profiles.deleteDraft(other)).toBe(false);
     });
   });

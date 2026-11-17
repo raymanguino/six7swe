@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  bigint,
   boolean,
   doublePrecision,
   index,
@@ -109,6 +110,13 @@ export const chunks = knowledge.table(
 export const profileStage = knowledge.enum('profile_stage', PROFILE_STAGES);
 
 /**
+ * Hands out profile `version`s. One sequence for every row, so a version is
+ * never reused, not even by a draft written after the previous one was
+ * published or discarded.
+ */
+export const profileVersionSeq = knowledge.sequence('profile_version_seq');
+
+/**
  * The structured profile behind the landing page (#86), at most one row per
  * owner and stage: the `draft` the model wrote (and the owner may have
  * edited), and the `published` one the portfolio serves. Publishing copies the
@@ -135,6 +143,15 @@ export const profiles = knowledge.table(
     sourceDocumentId: uuid('source_document_id').references(() => documents.id, {
       onDelete: 'set null',
     }),
+    /**
+     * Changes on every write (from `profile_version_seq`), so the drafter and
+     * a publish can tell whether the draft changed since it was read.
+     * `updated_at` cannot: two writes may share its millisecond on the wire.
+     */
+    version: bigint('version', { mode: 'number' })
+      .notNull()
+      .default(sql`nextval('knowledge.profile_version_seq')`)
+      .$onUpdate(() => sql`nextval('knowledge.profile_version_seq')`),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()

@@ -43,6 +43,13 @@
       "when": 1794706130717,
       "tag": "0005_eval_retired_at",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794947041887,
+      "tag": "0006_profile_version",
+      "breakpoints": true
     }
   ]
 }

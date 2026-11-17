@@ -42,6 +42,8 @@ export interface Profile {
   stage: 'draft' | 'published';
   data: ProfileData;
   sourceDocumentId: string | null;
+  /** Changes on every write; publishing sends it to name the draft reviewed. */
+  version: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -115,6 +117,7 @@ const isProfile = (value: unknown): value is Profile =>
   (value.stage === 'draft' || value.stage === 'published') &&
   isProfileData(value.data) &&
   isNullableString(value.sourceDocumentId) &&
+  Number.isInteger(value.version) &&
   isString(value.createdAt) &&
   isString(value.updatedAt);
 

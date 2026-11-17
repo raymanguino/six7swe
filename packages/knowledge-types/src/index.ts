@@ -214,6 +214,11 @@ export const ProfileDtoSchema = z.object({
   data: ProfileDataSchema,
   /** The resume it was drafted from; null when the owner wrote it or that resume is gone. */
   sourceDocumentId: z.uuid().nullable(),
+  /**
+   * Changes on every write and is never reused. It identifies the draft the
+   * owner reviewed: `updatedAt` cannot, as two writes may share a millisecond.
+   */
+  version: z.number().int().positive(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 });
@@ -248,11 +253,14 @@ export const SaveDraftRequestSchema = z.strictObject({ data: ProfileDataSchema }
 export type SaveDraftRequest = z.infer<typeof SaveDraftRequestSchema>;
 
 /**
- * `POST /profile/publish` (owner). `draftUpdatedAt` is the draft the owner
- * reviewed: if the draft changed since (a new resume re-drafted it), the
- * service answers 409 rather than publish something the owner has not seen.
+ * `POST /profile/publish` (owner). `draftVersion` is the `version` of the
+ * draft the owner reviewed: if the draft changed since (a new resume
+ * re-drafted it), the service answers 409 rather than publish something the
+ * owner has not seen.
  */
-export const PublishRequestSchema = z.strictObject({ draftUpdatedAt: z.iso.datetime() });
+export const PublishRequestSchema = z.strictObject({
+  draftVersion: z.number().int().positive(),
+});
 export type PublishRequest = z.infer<typeof PublishRequestSchema>;
 
 /** `PUT /profile/draft` and `POST /profile/publish`: the stage that was written. */

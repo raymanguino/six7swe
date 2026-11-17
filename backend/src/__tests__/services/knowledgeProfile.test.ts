@@ -22,6 +22,7 @@ const published: PublishedProfileResponse = {
   profile: {
     stage: 'published',
     sourceDocumentId: DOC_ID,
+    version: 3,
     createdAt: AT,
     updatedAt: AT,
     data: {
