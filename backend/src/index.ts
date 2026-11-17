@@ -5,6 +5,7 @@ import fastifyCors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import { FastifyReply, FastifyRequest } from 'fastify';
 import { UnauthenticatedUser } from './constants';
+import { getCorsOrigin } from './config/cors';
 import { getSafeEnv } from './config/env';
 import { assertKnowledgeRetrievalConfigured } from './config/knowledgeRetrieval';
 import * as plugins from './plugins';
@@ -37,9 +38,9 @@ declare module '@fastify/request-context' {
   }
 }
 
-// Register CORS
+// Register CORS. Every origin outside production; CORS_ORIGINS in production (throws if unset).
 fastify.register(fastifyCors, {
-  origin: true, // Allow all origins in development, configure for production
+  origin: getCorsOrigin(),
   credentials: true,
 });
 

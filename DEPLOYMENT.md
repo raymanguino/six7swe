@@ -83,6 +83,7 @@ policy and the watch paths.
    - `RESEND_API_KEY` - Resend API key (contact form)
    - `RESEND_FROM_EMAIL` - Sender address for outbound mail. Must be on a domain verified in Resend, e.g. `no-reply@auth.your-domain.dev`
    - `RESEND_FROM_NAME` - Optional display name shown next to the sender address
+   - `CORS_ORIGINS` - **Required in production.** Comma-separated browser origins allowed to call the API, e.g. `https://six7swe.dev,https://www.six7swe.dev` (scheme and host, no path). Unset or invalid makes the server refuse to start rather than allow every origin. Outside production every origin is allowed
    - `SUPABASE_URL` - Supabase project URL; the JWKS endpoint is derived from it. Required for the job-hunter routes
    - `SUPABASE_JWKS_URL` - Optional explicit JWKS endpoint
    - `JOB_REFRESH_STALE_MINUTES` - Optional; how long a refresh may run before it is considered abandoned (default 30)
