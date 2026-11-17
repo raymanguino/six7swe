@@ -11,6 +11,8 @@ export interface ProfileRecord {
   stage: ProfileStage;
   data: ProfileData;
   sourceDocumentId: string | null;
+  /** See `ProfileDtoSchema.version`; the checks below compare it, not `updatedAt`. */
+  version: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -45,15 +47,15 @@ export interface ProfileRepository {
 
   /**
    * `saveDraft` for the drafter, which must not overwrite the owner's edits
-   * made while it ran: writes only if the draft's `updatedAt` is still
-   * `expectedUpdatedAt` (null: there was no draft), or the draft has since
+   * made while it ran: writes only if the draft's `version` is still
+   * `expectedVersion` (null: there was no draft), or the draft has since
    * been discarded. Returns null, writing nothing, when the draft changed.
    */
   saveDraftIfUnchanged(
     ownerId: string,
     data: ProfileData,
     sourceDocumentId: string | null,
-    expectedUpdatedAt: Date | null,
+    expectedVersion: number | null,
   ): Promise<ProfileRecord | null>;
 
   /** Deletes the draft. False when there was none. */
@@ -61,13 +63,7 @@ export interface ProfileRepository {
 
   /**
    * Atomically copies the draft over the published profile and deletes the
-   * draft, provided the draft's `updatedAt` is still `expectedUpdatedAt`
-   * (compared to the millisecond, the wire precision).
+   * draft, provided the draft's `version` is still `expectedVersion`.
    */
-  publishDraft(ownerId: string, expectedUpdatedAt: Date): Promise<PublishOutcome>;
-}
-
-/** Timestamps travel as ISO strings, so equality is checked at millisecond precision. */
-export function sameInstant(a: Date, b: Date): boolean {
-  return a.getTime() === b.getTime();
+  publishDraft(ownerId: string, expectedVersion: number): Promise<PublishOutcome>;
 }

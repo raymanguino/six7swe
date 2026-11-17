@@ -1,13 +1,8 @@
 import { and, eq, sql } from 'drizzle-orm';
 import { ProfileDataSchema, type ProfileData, type ProfileStage } from '../../contract.js';
 import type { KnowledgeDb, KnowledgeExecutor } from '../index.js';
-import { profiles } from '../schema.js';
-import {
-  sameInstant,
-  type ProfilePair,
-  type ProfileRecord,
-  type ProfileRepository,
-} from './profileRepository.js';
+import { nextProfileVersion, profiles } from '../schema.js';
+import type { ProfilePair, ProfileRecord, ProfileRepository } from './profileRepository.js';
 
 type ProfileRow = typeof profiles.$inferSelect;
 
@@ -31,8 +26,17 @@ function toRecord(row: ProfileRow): ProfileRecord {
       links: row.links,
     }),
     sourceDocumentId: row.sourceDocumentId,
+    version: row.version,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+  };
+}
+
+/** What every write sets besides the data: a new version and timestamp. */
+function touched() {
+  return {
+    version: nextProfileVersion(),
+    updatedAt: sql<Date>`now()`,
   };
 }
 
@@ -86,32 +90,34 @@ export function createDrizzleProfileRepository(db: KnowledgeDb): ProfileReposito
         .values({ ownerId, stage: 'draft', ...values })
         .onConflictDoUpdate({
           target: [profiles.ownerId, profiles.stage],
-          set: { ...values, updatedAt: sql`now()` },
+          set: { ...values, ...touched() },
         })
         .returning();
       if (!row) throw new Error('profile draft upsert returned no row');
       return toRecord(row);
     },
 
-    async saveDraftIfUnchanged(ownerId, data, sourceDocumentId, expectedUpdatedAt) {
+    async saveDraftIfUnchanged(ownerId, data, sourceDocumentId, expectedVersion) {
       const values = { ...columnsOf(data), sourceDocumentId };
       return db.transaction(async (tx) => {
         const [current] = await tx
-          .select({ updatedAt: profiles.updatedAt })
+          .select({ version: profiles.version })
           .from(profiles)
           .where(and(eq(profiles.ownerId, ownerId), eq(profiles.stage, 'draft')))
           .for('update');
         if (current) {
           // Locked, so the owner's save cannot land between this check and the write.
-          if (!expectedUpdatedAt || !sameInstant(current.updatedAt, expectedUpdatedAt)) {
-            return null;
-          }
+          if (current.version !== expectedVersion) return null;
           const [row] = await tx
             .update(profiles)
-            .set({ ...values, updatedAt: sql`now()` })
+            .set({ ...values, ...touched() })
             .where(and(eq(profiles.ownerId, ownerId), eq(profiles.stage, 'draft')))
             .returning();
-          return row ? toRecord(row) : null;
+          if (!row) return null;
+          if (row.version === current.version) {
+            throw new Error('profile draft update did not change its version');
+          }
+          return toRecord(row);
         }
         // No draft (never was, or discarded). An owner's draft inserted
         // concurrently wins: the insert then does nothing.
@@ -132,7 +138,7 @@ export function createDrizzleProfileRepository(db: KnowledgeDb): ProfileReposito
       return deleted.length > 0;
     },
 
-    async publishDraft(ownerId, expectedUpdatedAt) {
+    async publishDraft(ownerId, expectedVersion) {
       return db.transaction(async (tx) => {
         // Locks the draft, so a re-draft landing now waits for the publish
         // (and then writes a new draft) instead of being deleted unseen.
@@ -143,9 +149,7 @@ export function createDrizzleProfileRepository(db: KnowledgeDb): ProfileReposito
           .for('update');
         if (!draftRow) return { status: 'no-draft' } as const;
         const draft = toRecord(draftRow);
-        if (!sameInstant(draft.updatedAt, expectedUpdatedAt)) {
-          return { status: 'stale', draft } as const;
-        }
+        if (draft.version !== expectedVersion) return { status: 'stale', draft } as const;
 
         const values = { ...columnsOf(draft.data), sourceDocumentId: draft.sourceDocumentId };
         const [published] = await tx
@@ -153,7 +157,7 @@ export function createDrizzleProfileRepository(db: KnowledgeDb): ProfileReposito
           .values({ ownerId, stage: 'published', ...values })
           .onConflictDoUpdate({
             target: [profiles.ownerId, profiles.stage],
-            set: { ...values, updatedAt: sql`now()` },
+            set: { ...values, ...touched() },
           })
           .returning();
         if (!published) throw new Error('profile publish upsert returned no row');

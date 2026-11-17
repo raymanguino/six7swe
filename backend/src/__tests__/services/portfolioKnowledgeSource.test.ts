@@ -39,6 +39,7 @@ const published = (name: string): PublishedProfileResponse => ({
   profile: {
     stage: 'published',
     sourceDocumentId: null,
+    version: 1,
     createdAt: AT,
     updatedAt: AT,
     data: {

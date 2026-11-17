@@ -214,6 +214,17 @@ export const ProfileDtoSchema = z.object({
   data: ProfileDataSchema,
   /** The resume it was drafted from; null when the owner wrote it or that resume is gone. */
   sourceDocumentId: z.uuid().nullable(),
+  /**
+   * The profile row's version (not the corpus `version`). It changes on every
+   * write to the row and is never reused, even by a draft written after the
+   * previous one was published or discarded, so it names the exact draft the
+   * owner reviewed. `updatedAt` cannot: two writes may share a millisecond.
+   *
+   * TODO(#184 follow-up): make required. Optional for one release, so a
+   * backend deployed before the knowledge service still parses the published
+   * profile the public portfolio shows.
+   */
+  version: z.number().int().positive().optional(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 });
@@ -248,11 +259,14 @@ export const SaveDraftRequestSchema = z.strictObject({ data: ProfileDataSchema }
 export type SaveDraftRequest = z.infer<typeof SaveDraftRequestSchema>;
 
 /**
- * `POST /profile/publish` (owner). `draftUpdatedAt` is the draft the owner
- * reviewed: if the draft changed since (a new resume re-drafted it), the
- * service answers 409 rather than publish something the owner has not seen.
+ * `POST /profile/publish` (owner). `draftVersion` is the `version` of the
+ * draft the owner reviewed: if the draft changed since (a new resume
+ * re-drafted it), the service answers 409 rather than publish something the
+ * owner has not seen.
  */
-export const PublishRequestSchema = z.strictObject({ draftUpdatedAt: z.iso.datetime() });
+export const PublishRequestSchema = z.strictObject({
+  draftVersion: z.number().int().positive(),
+});
 export type PublishRequest = z.infer<typeof PublishRequestSchema>;
 
 /** `PUT /profile/draft` and `POST /profile/publish`: the stage that was written. */

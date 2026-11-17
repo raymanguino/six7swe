@@ -389,6 +389,32 @@ the others:
 
 A change to one of the shared root files rebuilds every service.
 
+## Deploy Order for Knowledge Contract Changes
+
+A change to the wire contract between the services (`packages/knowledge-types`) must go live in
+this order:
+
+1. The knowledge service, with its migration (its pre-deploy step applies it)
+2. The backend
+3. The frontend
+
+Railway does not enforce this order. A push to `main` redeploys every service it touches, in
+parallel. So a contract change must keep the public portfolio working against the previous release
+of the other side, and its PR says what breaks while the services are mismatched. After the merge,
+check that the knowledge deploy and its pre-deploy migration succeeded. If they failed, the backend
+and frontend stay mismatched until the knowledge service is fixed and redeployed.
+
+The profile `version` change (#184) is one of these:
+
+- The public portfolio works in any order. `ProfileDtoSchema.version` is optional for one release
+  so that a new backend still parses the old service's published profile.
+- If the backend or frontend goes live before the knowledge service, the owner's Knowledge page
+  cannot publish until the service is deployed. The page shows "Unexpected profile response from
+  the server" (the old service sends no `version`), or the publish fails with a 400 (the old
+  service rejects `draftVersion`).
+- If the frontend goes live last, a Knowledge page loaded before its deploy fails to publish with
+  a 400 (the backend rejects the old `draftUpdatedAt` body). Reloading the page fixes it.
+
 ## Changing Railway config
 
 Railway does not read `.railway/railway.ts` during deploys. Code pushes to `main` deploy as usual,

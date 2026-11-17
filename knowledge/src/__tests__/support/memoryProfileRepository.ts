@@ -1,9 +1,5 @@
 import { ProfileDataSchema, type ProfileStage } from '../../contract.js';
-import {
-  sameInstant,
-  type ProfileRecord,
-  type ProfileRepository,
-} from '../../db/api/profileRepository.js';
+import type { ProfileRecord, ProfileRepository } from '../../db/api/profileRepository.js';
 
 /**
  * An in-memory ProfileRepository with the same observable behaviour as the
@@ -14,13 +10,8 @@ export function createMemoryProfileRepository(): ProfileRepository & {
 } {
   const rows = new Map<string, ProfileRecord>();
   const key = (ownerId: string, stage: ProfileStage) => `${stage}\u0000${ownerId}`;
-  // Strictly increasing, so two writes in one millisecond still differ, as
-  // the database's microsecond clock almost always does.
-  let last = 0;
-  const now = () => {
-    last = Math.max(Date.now(), last + 1);
-    return new Date(last);
-  };
+  // One counter for every row, like the database's `profile_version_seq`.
+  let lastVersion = 0;
 
   const upsert = (
     ownerId: string,
@@ -28,12 +19,15 @@ export function createMemoryProfileRepository(): ProfileRepository & {
     record: Pick<ProfileRecord, 'data' | 'sourceDocumentId'>,
   ): ProfileRecord => {
     const existing = rows.get(key(ownerId, stage));
-    const at = now();
+    // The real clock, so two writes may share a millisecond as they can in
+    // the database: the checks must rely on `version` alone.
+    const at = new Date();
     const saved: ProfileRecord = {
       ownerId,
       stage,
       data: ProfileDataSchema.parse(record.data),
       sourceDocumentId: record.sourceDocumentId,
+      version: ++lastVersion,
       createdAt: existing?.createdAt ?? at,
       updatedAt: at,
     };
@@ -59,11 +53,9 @@ export function createMemoryProfileRepository(): ProfileRepository & {
       return upsert(ownerId, 'draft', { data, sourceDocumentId });
     },
 
-    async saveDraftIfUnchanged(ownerId, data, sourceDocumentId, expectedUpdatedAt) {
+    async saveDraftIfUnchanged(ownerId, data, sourceDocumentId, expectedVersion) {
       const current = rows.get(key(ownerId, 'draft'));
-      if (current && (!expectedUpdatedAt || !sameInstant(current.updatedAt, expectedUpdatedAt))) {
-        return null;
-      }
+      if (current && current.version !== expectedVersion) return null;
       return upsert(ownerId, 'draft', { data, sourceDocumentId });
     },
 
@@ -71,10 +63,10 @@ export function createMemoryProfileRepository(): ProfileRepository & {
       return rows.delete(key(ownerId, 'draft'));
     },
 
-    async publishDraft(ownerId, expectedUpdatedAt) {
+    async publishDraft(ownerId, expectedVersion) {
       const draft = rows.get(key(ownerId, 'draft'));
       if (!draft) return { status: 'no-draft' };
-      if (!sameInstant(draft.updatedAt, expectedUpdatedAt)) return { status: 'stale', draft };
+      if (draft.version !== expectedVersion) return { status: 'stale', draft };
       const profile = upsert(ownerId, 'published', draft);
       rows.delete(key(ownerId, 'draft'));
       return { status: 'published', profile };

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { like } from 'drizzle-orm';
+import { and, eq, like, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDrizzleEvalRepository } from '../db/api/drizzleEvalRepository.js';
 import { createDrizzleProfileRepository } from '../db/api/drizzleProfileRepository.js';
@@ -98,9 +98,48 @@ describeRepositoryContract(
 
 describeProfileRepositoryContract(
   'drizzle (Postgres)',
-  () => ({ profiles: createDrizzleProfileRepository(db().handle.db), newOwner: freshOwner }),
+  () => ({
+    profiles: createDrizzleProfileRepository(db().handle.db),
+    newOwner: freshOwner,
+    async setDraftUpdatedAt(ownerId, at) {
+      await db()
+        .handle.db.update(profiles)
+        // `version` is set to itself, or the column's `$onUpdate` would bump it.
+        .set({ updatedAt: at, version: sql`${profiles.version}` })
+        .where(and(eq(profiles.ownerId, ownerId), eq(profiles.stage, 'draft')));
+    },
+  }),
   { skip: !url },
 );
+
+describe.skipIf(!url)('Drizzle profile repository: concurrent publish and save', () => {
+  // The publish locks the draft row, so a save landing meanwhile either waits
+  // and writes a new draft afterwards, or wins and makes the publish stale.
+  // Either way the owner's change is never deleted unseen.
+  it('publishes and keeps the new draft, or refuses as stale', async () => {
+    const repo = createDrizzleProfileRepository(db().handle.db);
+    for (let i = 0; i < 20; i++) {
+      const owner = freshOwner();
+      const reviewed = await repo.saveDraft(owner, SAMPLE_PROFILE, null);
+      const changedData = { ...SAMPLE_PROFILE, title: `Changed ${i}` };
+      const [outcome, saved] = await Promise.all([
+        repo.publishDraft(owner, reviewed.version),
+        repo.saveDraft(owner, changedData, null),
+      ]);
+      const after = await repo.getProfiles(owner);
+
+      expect(after.draft?.data.title).toBe(changedData.title);
+      expect(after.draft?.version).toBe(saved.version);
+      expect(saved.version).toBeGreaterThan(reviewed.version);
+      if (outcome.status === 'published') {
+        expect(after.published?.data.title).toBe(SAMPLE_PROFILE.title);
+      } else {
+        expect(outcome.status).toBe('stale');
+        expect(after.published).toBeNull();
+      }
+    }
+  });
+});
 
 describeEvalRepositoryContract(
   'drizzle (Postgres + pgvector)',
