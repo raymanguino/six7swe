@@ -76,7 +76,8 @@ COPY --from=build --chown=node:node /app /app
 # the cron. Among other things it arms the guard that refuses to start with AUTH_DEV_BYPASS set.
 ENV NODE_ENV=production
 
-# Commands run from the backend package, so pnpm is the version backend/package.json pins.
+# Commands run from the backend package, which has no `packageManager` of its own, so corepack
+# resolves the root one (/app/package.json): one pnpm version for build and runtime.
 # Run as `node` from here on, then let corepack fetch pnpm now rather than on first use at
 # runtime. COREPACK_HOME pins the cache to node's home, so the prefetched pnpm is found at
 # runtime whatever HOME is set to and nothing is downloaded when the container starts.
@@ -84,6 +85,9 @@ ENV COREPACK_HOME=/home/node/.cache/corepack
 USER node
 WORKDIR /app/backend
 RUN corepack install
+# Fail the build if corepack stops resolving the root pin from here (for example, if a
+# packageManager field reappears in backend/package.json), rather than run another pnpm.
+RUN test "$(pnpm --version)" = "$(node -p "require('/app/package.json').packageManager.split('@')[1].split('+')[0]")"
 
 # Railway's start command overrides this. Exec form, so it needs no shell.
 CMD ["pnpm", "start"]
