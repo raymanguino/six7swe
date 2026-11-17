@@ -34,9 +34,10 @@ compiles to CommonJS, and `puppeteer` (25+) is ESM only, so on anything older th
 backend crashes on startup with `ERR_REQUIRE_ESM`. Everything (CI, the image, Railpack) runs 26.
 
 The backend image gets its Node version from the base image tag in `backend/Dockerfile`
-(a `node:26.x-bookworm-slim` tag), not from `engines`. Keep the two in agreement: the tag must
-satisfy `engines.node`. Dependabot bumps the tag weekly and is told to ignore Node major
-versions (`.github/dependabot.yml`), so it stays on 26 until a deliberate major change.
+(a `node:26.x-bookworm-slim` tag, pinned by digest), not from `engines`. Keep the two in
+agreement: the tag must satisfy `engines.node`. Dependabot bumps the tag and its digest together
+weekly and is told to ignore Node major versions (`.github/dependabot.yml`), so it stays on 26
+until a deliberate major change.
 
 Railpack builds both the frontend and the knowledge service (`.railway/railway.ts` sets the
 `RAILPACK` builder for knowledge), and both read the root `engines.node` and install a matching

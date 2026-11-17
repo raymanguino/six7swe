@@ -9,8 +9,9 @@
 # through `tsx`, and Railway runs the pre-deploy command and the cron inside this image.
 # See DEPLOYMENT.md, "Chrome for the job scraper" and "Running the Backend Image Locally".
 
-# Exact tag so Dependabot can bump it. It must satisfy `engines.node` in the root package.json.
-FROM node:26.13.1-bookworm-slim AS base
+# Exact tag plus multi-arch index digest: reproducible, and Dependabot bumps both together.
+# It must satisfy `engines.node` in the root package.json.
+FROM node:26.13.1-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c0161664a011f7ff6b0f1 AS base
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 # Pin corepack instead of relying on the version the base image bundles. Node 22.12 shipped
 # corepack 0.29.4, whose npm signing keys have since been rotated, so it refused to download
