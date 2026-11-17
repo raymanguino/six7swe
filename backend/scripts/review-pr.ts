@@ -214,6 +214,10 @@ async function main(): Promise<void> {
   // must not post a second review for the same run.
   let posted = false;
 
+  // The gate this run decided, once it has. Together with `posted` it says
+  // whether the review on the pull request is a real verdict.
+  let decidedGate: GateOutcome | null = null;
+
   /**
    * Writes the one stats line this run reports, for `qa:calibration`.
    *
@@ -300,6 +304,7 @@ async function main(): Promise<void> {
       reviewCompleted: true,
       coverage: diffCoverage,
     });
+    decidedGate = gate;
 
     logLine(
       `Model returned ${review.findings.length} finding(s); ${findings.length} survived sanitizing.`,
@@ -367,12 +372,17 @@ async function main(): Promise<void> {
       await postFailureReview(env, owner, repo, reason, headSha);
     }
 
-    logStats('fail-closed', null, null);
+    // Once the review is posted it is the verdict of record. A throw after
+    // that comes from logging or stats code, so reporting fail-closed would
+    // contradict the posted review and record the wrong outcome.
+    const outcome: GateOutcome = posted && decidedGate !== null ? decidedGate : 'fail-closed';
 
-    // The gate outcome is fail-closed. Whether that turns the check red
-    // depends on the mode: in comment-only mode the agent is an observer
-    // and nothing it does blocks a merge.
-    if (gateBlocksMerge('fail-closed', mode)) {
+    logStats(outcome, null, null);
+
+    // Whether the outcome turns the check red depends on the mode: in
+    // comment-only mode the agent is an observer and nothing it does blocks
+    // a merge.
+    if (gateBlocksMerge(outcome, mode)) {
       process.exitCode = 1;
     }
   }
