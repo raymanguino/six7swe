@@ -58,9 +58,9 @@ script:pre-request {
 
 script:post-response {
   if (res.status >= 200 && res.status < 300) {
-    const draftUpdatedAt = res?.body?.profile?.updatedAt;
-    if (draftUpdatedAt !== undefined && draftUpdatedAt !== null) {
-      bru.setVar("draftUpdatedAt", draftUpdatedAt);
+    const draftVersion = res?.body?.profile?.version;
+    if (typeof draftVersion === "number") {
+      bru.setVar("draftVersion", draftVersion);
     }
   }
 }
@@ -77,7 +77,7 @@ tests {
 
 docs {
   Overwrites the owner's draft, so it is skipped unless allowSideEffects is "true". Replaces the draft with the given edits. Links must be http(s) URLs or null.
-  Stores the draft's updatedAt in draftUpdatedAt for Publish.
+  Stores the draft's version in draftVersion for Publish.
   Owner only: 401 when signed out, 403 for any other user. Locally set AUTH_DEV_BYPASS=true and OWNER_AUTH_ID=auth-dev-bypass (see api/README.md).
   Forwarded to the knowledge service with KNOWLEDGE_OWNER_KEY; 503 when that is not configured.
 }

@@ -16,7 +16,7 @@ headers {
 
 body:json {
   {
-    "draftUpdatedAt": "{{draftUpdatedAt}}"
+    "draftVersion": {{draftVersion}}
   }
 }
 
@@ -24,7 +24,7 @@ script:pre-request {
   if (bru.getEnvVar("allowSideEffects") !== "true") {
     bru.runner.skipRequest();
   }
-  if (!bru.getVar("draftUpdatedAt")) {
+  if (!bru.getVar("draftVersion")) {
     bru.runner.skipRequest();
   }
 }
@@ -36,6 +36,6 @@ tests {
 }
 
 docs {
-  409 if the draft changed since it was reviewed. Changes what the portfolio shows, so it is skipped unless allowSideEffects is "true".
+  Publishes the draft whose version is draftVersion (set by Save profile draft). 409 if the draft changed since it was reviewed. Changes what the portfolio shows, so it is skipped unless allowSideEffects is "true".
   Owner key: only the backend's owner proxy holds it. The service key gets a 401 here.
 }

@@ -1,7 +1,7 @@
 import { and, eq, sql } from 'drizzle-orm';
 import { ProfileDataSchema, type ProfileData, type ProfileStage } from '../../contract.js';
 import type { KnowledgeDb, KnowledgeExecutor } from '../index.js';
-import { profiles } from '../schema.js';
+import { nextProfileVersion, profiles } from '../schema.js';
 import type { ProfilePair, ProfileRecord, ProfileRepository } from './profileRepository.js';
 
 type ProfileRow = typeof profiles.$inferSelect;
@@ -35,7 +35,7 @@ function toRecord(row: ProfileRow): ProfileRecord {
 /** What every write sets besides the data: a new version and timestamp. */
 function touched() {
   return {
-    version: sql<number>`nextval('knowledge.profile_version_seq')`,
+    version: nextProfileVersion(),
     updatedAt: sql<Date>`now()`,
   };
 }
@@ -113,7 +113,11 @@ export function createDrizzleProfileRepository(db: KnowledgeDb): ProfileReposito
             .set({ ...values, ...touched() })
             .where(and(eq(profiles.ownerId, ownerId), eq(profiles.stage, 'draft')))
             .returning();
-          return row ? toRecord(row) : null;
+          if (!row) return null;
+          if (row.version === current.version) {
+            throw new Error('profile draft update did not change its version');
+          }
+          return toRecord(row);
         }
         // No draft (never was, or discarded). An owner's draft inserted
         // concurrently wins: the insert then does nothing.

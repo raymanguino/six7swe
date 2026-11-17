@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { ProfileRepository } from '../../db/api/profileRepository.js';
 import { SAMPLE_PROFILE } from './fixtures.js';
 
@@ -6,6 +6,11 @@ export interface ProfileContractTarget {
   profiles: ProfileRepository;
   /** A fresh owner id for one test, so no test sees another's rows. */
   newOwner: () => string;
+  /**
+   * Test-only: sets the draft's `updatedAt` and nothing else (its `version`
+   * is kept), to force two writes into one millisecond.
+   */
+  setDraftUpdatedAt: (ownerId: string, at: Date) => Promise<void>;
 }
 
 /**
@@ -86,52 +91,32 @@ export function describeProfileRepositoryContract(
       expect(await profiles.getPublished(owner)).toBeNull();
     });
 
-    describe('within one millisecond', () => {
-      afterEach(() => {
-        vi.useRealTimers();
-      });
+    // #184: `updatedAt` reaches callers at millisecond precision, so a check
+    // on it missed a change saved in the same millisecond as the reviewed write.
+    it('refuses a changed draft whose updatedAt equals the reviewed one', async () => {
+      const { profiles, newOwner, setDraftUpdatedAt } = target();
+      const owner = newOwner();
+      const reviewed = await profiles.saveDraft(owner, SAMPLE_PROFILE, null);
+      const changed = await profiles.saveDraft(
+        owner,
+        { ...SAMPLE_PROFILE, title: 'Changed' },
+        null,
+      );
+      await setDraftUpdatedAt(owner, reviewed.updatedAt);
+      const draft = (await profiles.getProfiles(owner)).draft;
+      expect(draft?.updatedAt.getTime()).toBe(reviewed.updatedAt.getTime());
+      expect(draft?.version).toBe(changed.version);
 
-      // #184: `updatedAt` reaches callers at millisecond precision, so a check
-      // on it missed a change saved in the same millisecond as the reviewed
-      // write. The in-memory clock is frozen here, so its writes always share
-      // a millisecond; the database keeps its own clock, so writes are
-      // repeated until two land in one millisecond (or the attempts run out,
-      // and the change is still detected).
-      it('detects a change saved in the same millisecond as the reviewed draft', async () => {
-        vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-01-01T00:00:00.000Z') });
-        const { profiles, newOwner } = target();
-        const owner = newOwner();
-        let reviewed = await profiles.saveDraft(owner, SAMPLE_PROFILE, null);
-        let changed = await profiles.saveDraft(
-          owner,
-          { ...SAMPLE_PROFILE, title: 'Changed 0' },
-          null,
-        );
-        for (
-          let i = 1;
-          i < 200 && changed.updatedAt.getTime() !== reviewed.updatedAt.getTime();
-          i++
-        ) {
-          reviewed = changed;
-          changed = await profiles.saveDraft(
-            owner,
-            { ...SAMPLE_PROFILE, title: `Changed ${i}` },
-            null,
-          );
-        }
-
-        expect(changed.version).not.toBe(reviewed.version);
-        expect(await profiles.publishDraft(owner, reviewed.version)).toMatchObject({
-          status: 'stale',
-          draft: { data: { title: changed.data.title } },
-        });
-        const drafted = { ...SAMPLE_PROFILE, title: 'Model draft' };
-        expect(
-          await profiles.saveDraftIfUnchanged(owner, drafted, null, reviewed.version),
-        ).toBeNull();
-        expect((await profiles.getProfiles(owner)).draft?.data.title).toBe(changed.data.title);
-        expect(await profiles.getPublished(owner)).toBeNull();
+      expect(await profiles.publishDraft(owner, reviewed.version)).toMatchObject({
+        status: 'stale',
+        draft: { data: { title: 'Changed' } },
       });
+      const drafted = { ...SAMPLE_PROFILE, title: 'Model draft' };
+      expect(
+        await profiles.saveDraftIfUnchanged(owner, drafted, null, reviewed.version),
+      ).toBeNull();
+      expect((await profiles.getProfiles(owner)).draft?.data.title).toBe('Changed');
+      expect(await profiles.getPublished(owner)).toBeNull();
     });
 
     it('never reuses the version of a published or discarded draft', async () => {

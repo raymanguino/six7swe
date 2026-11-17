@@ -11,12 +11,7 @@ export interface ProfileRecord {
   stage: ProfileStage;
   data: ProfileData;
   sourceDocumentId: string | null;
-  /**
-   * Changes on every write and is never reused, even across a discarded or
-   * published draft. The concurrency checks below compare it, not
-   * `updatedAt`: two writes may land in the same millisecond, the precision
-   * of a timestamp on the wire.
-   */
+  /** See `ProfileDtoSchema.version`; the checks below compare it, not `updatedAt`. */
   version: number;
   createdAt: Date;
   updatedAt: Date;
