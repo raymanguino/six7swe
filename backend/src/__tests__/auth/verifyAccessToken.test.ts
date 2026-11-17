@@ -1,5 +1,5 @@
 import { SignJWT, exportJWK, generateKeyPair, type CryptoKey, type JWTPayload } from 'jose';
-import { resetAuthConfig } from '../../config/auth';
+import { getAuthConfig, isAuthConfigured, resetAuthConfig } from '../../config/auth';
 import {
   AuthError,
   resolveUserFromToken,
@@ -14,6 +14,7 @@ import {
 const AUTH_ENV_KEYS = [
   'SUPABASE_URL',
   'SUPABASE_JWKS_URL',
+  'SUPABASE_JWT_ISSUER',
   'SUPABASE_JWT_SECRET',
   'AUTH_DEV_BYPASS',
 ] as const;
@@ -21,12 +22,16 @@ const AUTH_ENV_KEYS = [
 const HS_SECRET = 'test-secret-that-is-long-enough-for-hs256-signing';
 const SUBJECT = '00000000-0000-4000-8000-000000000001';
 const KID = 'test-key';
+const SUPABASE_URL = 'https://project.supabase.test';
+const ISSUER = `${SUPABASE_URL}/auth/v1`;
 const JWKS_BASE_URL = 'https://project.supabase.test/auth/v1/.well-known/jwks.json';
 
 const savedEnv: Partial<Record<(typeof AUTH_ENV_KEYS)[number], string>> = {};
 
 interface TokenOptions {
   audience?: string;
+  /** `null` leaves the claim out. */
+  issuer?: string | null;
   /** Seconds since the epoch; `null` leaves the claim out. */
   expiresAt?: number | null;
   notBefore?: number;
@@ -42,12 +47,14 @@ function buildToken(
   claims: JWTPayload,
   {
     audience = 'authenticated',
+    issuer = ISSUER,
     expiresAt = nowSeconds() + 3600,
     notBefore,
     subject = SUBJECT,
   }: TokenOptions,
 ): SignJWT {
   const jwt = new SignJWT(claims).setAudience(audience).setIssuedAt();
+  if (issuer !== null) jwt.setIssuer(issuer);
   if (subject !== null) jwt.setSubject(subject);
   if (expiresAt !== null) jwt.setExpirationTime(expiresAt);
   if (notBefore !== undefined) jwt.setNotBefore(notBefore);
@@ -79,6 +86,7 @@ function unsignedToken(): string {
   const payload = encode({
     sub: SUBJECT,
     aud: 'authenticated',
+    iss: ISSUER,
     iat: nowSeconds(),
     exp: nowSeconds() + 3600,
   });
@@ -100,6 +108,7 @@ beforeEach(() => {
     savedEnv[key] = process.env[key];
     delete process.env[key];
   }
+  process.env.SUPABASE_URL = SUPABASE_URL;
   resetAuthConfig();
 });
 
@@ -115,6 +124,8 @@ afterEach(() => {
 
 describe('verifyAccessToken', () => {
   it('rejects every token when no auth provider is configured', async () => {
+    delete process.env.SUPABASE_URL;
+    resetAuthConfig();
     const token = await signHs256({ email: 'user@example.com' });
     await expect(verifyAccessToken(token)).rejects.toMatchObject({
       name: 'AuthError',
@@ -124,7 +135,12 @@ describe('verifyAccessToken', () => {
 
   describe('HS256 shared secret', () => {
     beforeEach(() => {
+      // The JWKS endpoint wins whenever SUPABASE_URL is set, so the shared
+      // secret is only used without it, with the issuer given explicitly.
+      delete process.env.SUPABASE_URL;
+      process.env.SUPABASE_JWT_ISSUER = ISSUER;
       process.env.SUPABASE_JWT_SECRET = HS_SECRET;
+      resetAuthConfig();
     });
 
     it('accepts a valid token and returns its claims', async () => {
@@ -171,27 +187,52 @@ describe('verifyAccessToken', () => {
       await expectAuthError(verifyAccessToken('not-a-jwt'));
     });
 
-    // Pinned as current behaviour: jose does not require `exp` unless asked
-    // to, and the service does not ask, so a token without one is accepted.
-    it('accepts a token without an exp claim (current behaviour)', async () => {
+    it('rejects a token without an exp claim', async () => {
       const token = await signHs256({}, { expiresAt: null });
-
-      const claims = await verifyAccessToken(token);
-
-      expect(claims.sub).toBe(SUBJECT);
-      expect(claims.exp).toBeUndefined();
+      await expectAuthError(verifyAccessToken(token));
     });
 
-    // Pinned as current behaviour: `verifyAccessToken` accepts a token
-    // without `sub`, and `resolveUserFromToken` is what rejects it.
-    it('accepts a token without a sub claim, which resolveUserFromToken rejects', async () => {
+    it('rejects a token without a sub claim', async () => {
       const token = await signHs256({}, { subject: null });
+      await expectAuthError(verifyAccessToken(token));
+    });
 
-      await expect(verifyAccessToken(token)).resolves.not.toHaveProperty('sub');
+    it('rejects a token from another issuer', async () => {
+      const token = await signHs256({}, { issuer: 'https://other.supabase.test/auth/v1' });
+      await expectAuthError(verifyAccessToken(token));
+    });
+
+    it('rejects a token without an iss claim', async () => {
+      const token = await signHs256({}, { issuer: null });
+      await expectAuthError(verifyAccessToken(token));
+    });
+
+    it('rejects a validly signed token using an unlisted algorithm', async () => {
+      const token = await new SignJWT({})
+        .setProtectedHeader({ alg: 'HS512', typ: 'JWT' })
+        .setAudience('authenticated')
+        .setIssuer(ISSUER)
+        .setSubject(SUBJECT)
+        .setExpirationTime(nowSeconds() + 3600)
+        .sign(new TextEncoder().encode(HS_SECRET));
+      await expectAuthError(verifyAccessToken(token));
+    });
+
+    it('rejects every token when no issuer is configured', async () => {
+      delete process.env.SUPABASE_JWT_ISSUER;
+      resetAuthConfig();
+      const token = await signHs256({});
+      await expect(verifyAccessToken(token)).rejects.toMatchObject({
+        name: 'AuthError',
+        message: 'Authentication is not configured on this server.',
+      });
+    });
+
+    it('resolveUserFromToken rejects a token without a sub claim with a 401', async () => {
+      const token = await signHs256({}, { subject: null });
       await expect(resolveUserFromToken(token)).rejects.toMatchObject({
         name: 'AuthError',
         statusCode: 401,
-        message: 'Access token is missing a subject claim.',
       });
     });
   });
@@ -260,9 +301,12 @@ describe('verifyAccessToken', () => {
     it('rejects a token issued for another audience', async () => {
       const { privateKey, publicKey } = await generateKeyPair('RS256');
       await serveJwks(publicKey);
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
       const token = await signAsymmetric({}, privateKey, { audience: 'anon' });
 
       await expectAuthError(verifyAccessToken(token));
+      // A bad token is not an outage, so nothing is logged.
+      expect(errorSpy).not.toHaveBeenCalled();
       expectOneJwksFetch();
     });
 
@@ -300,6 +344,48 @@ describe('verifyAccessToken', () => {
       await expectAuthError(verifyAccessToken(token));
     });
 
+    it('rejects a token without an exp claim', async () => {
+      const { privateKey, publicKey } = await generateKeyPair('RS256');
+      await serveJwks(publicKey);
+      const token = await signAsymmetric({}, privateKey, { expiresAt: null });
+
+      await expectAuthError(verifyAccessToken(token));
+    });
+
+    it('rejects a token without a sub claim', async () => {
+      const { privateKey, publicKey } = await generateKeyPair('RS256');
+      await serveJwks(publicKey);
+      const token = await signAsymmetric({}, privateKey, { subject: null });
+
+      await expectAuthError(verifyAccessToken(token));
+    });
+
+    it('rejects a token from another issuer', async () => {
+      const { privateKey, publicKey } = await generateKeyPair('RS256');
+      await serveJwks(publicKey);
+      const token = await signAsymmetric({}, privateKey, {
+        issuer: 'https://other.supabase.test/auth/v1',
+      });
+
+      await expectAuthError(verifyAccessToken(token));
+    });
+
+    it('rejects a token without an iss claim', async () => {
+      const { privateKey, publicKey } = await generateKeyPair('RS256');
+      await serveJwks(publicKey);
+      const token = await signAsymmetric({}, privateKey, { issuer: null });
+
+      await expectAuthError(verifyAccessToken(token));
+    });
+
+    it('rejects a validly signed token using an unlisted algorithm', async () => {
+      const { privateKey, publicKey } = await generateKeyPair('PS256');
+      await serveJwks(publicKey);
+      const token = await signAsymmetric({}, privateKey, { alg: 'PS256' });
+
+      await expectAuthError(verifyAccessToken(token));
+    });
+
     it('rejects an unsigned (alg: none) token', async () => {
       const { publicKey } = await generateKeyPair('RS256');
       await serveJwks(publicKey);
@@ -310,19 +396,111 @@ describe('verifyAccessToken', () => {
     it('rejects every token when the JWKS endpoint answers with an error', async () => {
       const { privateKey } = await generateKeyPair('RS256');
       fetchSpy.mockResolvedValue(new Response('unavailable', { status: 503 }));
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
       const token = await signAsymmetric({}, privateKey);
 
       await expectAuthError(verifyAccessToken(token));
+      // An outage is logged, so it is not mistaken for a bad token.
+      expect(errorSpy).toHaveBeenCalledTimes(1);
       expectOneJwksFetch();
     });
 
     it('rejects every token when the JWKS endpoint cannot be reached', async () => {
       const { privateKey } = await generateKeyPair('RS256');
       fetchSpy.mockRejectedValue(new TypeError('fetch failed'));
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
       const token = await signAsymmetric({}, privateKey);
 
       await expectAuthError(verifyAccessToken(token));
+      expect(errorSpy).toHaveBeenCalledTimes(1);
       expectOneJwksFetch();
     });
+  });
+});
+
+describe('auth configuration', () => {
+  function issuerFor(url: string): string | undefined {
+    process.env.SUPABASE_URL = url;
+    resetAuthConfig();
+    return getAuthConfig().supabaseIssuer;
+  }
+
+  it.each([
+    ['https://project.supabase.test', 'https://project.supabase.test/auth/v1'],
+    ['https://project.supabase.test/', 'https://project.supabase.test/auth/v1'],
+    ['https://project.supabase.test//', 'https://project.supabase.test/auth/v1'],
+  ])('derives the issuer from SUPABASE_URL %s', (url, expected) => {
+    expect(issuerFor(url)).toBe(expected);
+  });
+
+  it('derives the JWKS URL from the same base', () => {
+    process.env.SUPABASE_URL = 'https://project.supabase.test//';
+    resetAuthConfig();
+    expect(getAuthConfig().supabaseJwksUrl).toBe(
+      'https://project.supabase.test/auth/v1/.well-known/jwks.json',
+    );
+  });
+
+  it('prefers an explicit SUPABASE_JWT_ISSUER', () => {
+    process.env.SUPABASE_JWT_ISSUER = 'https://issuer.example.test/auth/v1';
+    resetAuthConfig();
+    expect(getAuthConfig().supabaseIssuer).toBe('https://issuer.example.test/auth/v1');
+  });
+
+  it('treats blank variables as unset', () => {
+    process.env.SUPABASE_JWT_ISSUER = '  ';
+    process.env.SUPABASE_JWKS_URL = '';
+    process.env.SUPABASE_JWT_SECRET = ' ';
+    resetAuthConfig();
+
+    const config = getAuthConfig();
+
+    expect(config.supabaseIssuer).toBe(ISSUER);
+    expect(config.supabaseJwksUrl).toBe(`${ISSUER}/.well-known/jwks.json`);
+    expect(config.supabaseJwtSecret).toBeUndefined();
+  });
+
+  it('reports auth as not configured when the issuer is missing', () => {
+    delete process.env.SUPABASE_URL;
+    process.env.SUPABASE_JWT_SECRET = HS_SECRET;
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    resetAuthConfig();
+
+    expect(isAuthConfigured()).toBe(false);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports auth as configured with a key source and an issuer', () => {
+    expect(isAuthConfigured()).toBe(true);
+  });
+
+  it('fails closed on the JWKS path without an issuer, without fetching keys', async () => {
+    delete process.env.SUPABASE_URL;
+    process.env.SUPABASE_JWKS_URL = 'https://project.supabase.test/jwks-only.json';
+    jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const fetchSpy = jest.spyOn(globalThis, 'fetch');
+    resetAuthConfig();
+    const token = await signHs256({});
+
+    await expect(verifyAccessToken(token)).rejects.toMatchObject({
+      name: 'AuthError',
+      statusCode: 401,
+      message: 'Authentication is not configured on this server.',
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not log a crafted crit header as an outage', async () => {
+    delete process.env.SUPABASE_URL;
+    process.env.SUPABASE_JWT_ISSUER = ISSUER;
+    process.env.SUPABASE_JWT_SECRET = HS_SECRET;
+    resetAuthConfig();
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const encode = (value: object): string =>
+      Buffer.from(JSON.stringify(value)).toString('base64url');
+    const token = `${encode({ alg: 'HS256', crit: ['x'], x: 1 })}.${encode({ sub: SUBJECT })}.c2ln`;
+
+    await expectAuthError(verifyAccessToken(token));
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 });

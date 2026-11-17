@@ -10,6 +10,8 @@ import { z } from 'zod';
 
 const authConfigSchema = z.object({
   supabaseUrl: z.string().url().optional(),
+  /** Expected `iss` claim: `${SUPABASE_URL}/auth/v1`. Overridable with SUPABASE_JWT_ISSUER. */
+  supabaseIssuer: z.string().url().optional(),
   supabaseJwksUrl: z.string().url().optional(),
   supabaseJwtSecret: z.string().min(1).optional(),
   /** Development-only escape hatch. Refused when NODE_ENV is production. */
@@ -29,8 +31,11 @@ function readBoolean(value: string | undefined): boolean {
 export function getAuthConfig(): AuthConfig {
   if (cached) return cached;
 
-  const supabaseUrl = process.env.SUPABASE_URL?.trim();
-  const explicitJwks = process.env.SUPABASE_JWKS_URL?.trim();
+  // Blank values count as unset, so an empty variable falls back to the default.
+  const supabaseUrl = process.env.SUPABASE_URL?.trim() || undefined;
+  const explicitIssuer = process.env.SUPABASE_JWT_ISSUER?.trim() || undefined;
+  const explicitJwks = process.env.SUPABASE_JWKS_URL?.trim() || undefined;
+  const authBase = supabaseUrl ? `${supabaseUrl.replace(/\/+$/, '')}/auth/v1` : undefined;
   const devBypass = readBoolean(process.env.AUTH_DEV_BYPASS);
 
   if (devBypass && process.env.NODE_ENV === 'production') {
@@ -39,10 +44,18 @@ export function getAuthConfig(): AuthConfig {
 
   cached = authConfigSchema.parse({
     supabaseUrl,
-    supabaseJwksUrl: explicitJwks ?? (supabaseUrl ? `${supabaseUrl.replace(/\/$/, '')}/auth/v1/.well-known/jwks.json` : undefined),
-    supabaseJwtSecret: process.env.SUPABASE_JWT_SECRET?.trim(),
+    supabaseIssuer: explicitIssuer ?? authBase,
+    supabaseJwksUrl: explicitJwks ?? (authBase ? `${authBase}/.well-known/jwks.json` : undefined),
+    supabaseJwtSecret: process.env.SUPABASE_JWT_SECRET?.trim() || undefined,
     devBypass,
   });
+
+  if ((cached.supabaseJwksUrl || cached.supabaseJwtSecret) && !cached.supabaseIssuer) {
+    console.error(
+      'Auth has a key source but no token issuer, so every token is rejected. ' +
+        'Set SUPABASE_URL or SUPABASE_JWT_ISSUER.',
+    );
+  }
 
   return cached;
 }
@@ -50,7 +63,7 @@ export function getAuthConfig(): AuthConfig {
 /** True when a real auth provider is configured. */
 export function isAuthConfigured(): boolean {
   const config = getAuthConfig();
-  return Boolean(config.supabaseJwksUrl || config.supabaseJwtSecret);
+  return Boolean((config.supabaseJwksUrl || config.supabaseJwtSecret) && config.supabaseIssuer);
 }
 
 /** Clears the cached config. Used by tests. */

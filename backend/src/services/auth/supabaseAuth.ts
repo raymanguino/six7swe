@@ -1,4 +1,4 @@
-import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
+import { createRemoteJWKSet, errors, jwtVerify, type JWTPayload } from 'jose';
 import { getAuthConfig } from '../../config/auth';
 import { UnauthenticatedUser } from '../../constants';
 import type { ContextUser } from '../../types';
@@ -31,6 +31,25 @@ function getKeySet(url: string): ReturnType<typeof createRemoteJWKSet> {
 }
 
 /**
+ * True when jose rejected the token itself (bad signature, claims, algorithm,
+ * format or key id). Anything else, such as a JWKS fetch failure, is an
+ * infrastructure problem that must not look like a bad token in the logs.
+ */
+function isTokenRejection(error: unknown): boolean {
+  return (
+    error instanceof errors.JWTInvalid ||
+    error instanceof errors.JWSInvalid ||
+    error instanceof errors.JWTExpired ||
+    error instanceof errors.JWTClaimValidationFailed ||
+    error instanceof errors.JWSSignatureVerificationFailed ||
+    error instanceof errors.JOSEAlgNotAllowed ||
+    error instanceof errors.JOSENotSupported ||
+    error instanceof errors.JWKSNoMatchingKey ||
+    error instanceof errors.JWKSMultipleMatchingKeys
+  );
+}
+
+/**
  * Verifies a Supabase access token and returns its claims.
  *
  * The asymmetric (RS256) path is preferred because the signing key can be
@@ -39,25 +58,38 @@ function getKeySet(url: string): ReturnType<typeof createRemoteJWKSet> {
 export async function verifyAccessToken(token: string): Promise<SupabaseClaims> {
   const config = getAuthConfig();
 
-  if (!config.supabaseJwksUrl && !config.supabaseJwtSecret) {
+  // Without an issuer the token's origin cannot be checked, so fail closed.
+  if ((!config.supabaseJwksUrl && !config.supabaseJwtSecret) || !config.supabaseIssuer) {
     throw new AuthError('Authentication is not configured on this server.');
   }
+
+  const verifyOptions = {
+    audience: 'authenticated',
+    issuer: config.supabaseIssuer,
+    requiredClaims: ['exp', 'sub'],
+  };
 
   try {
     if (config.supabaseJwksUrl) {
       const { payload } = await jwtVerify(token, getKeySet(config.supabaseJwksUrl), {
-        audience: 'authenticated',
+        ...verifyOptions,
+        algorithms: ['RS256', 'ES256'],
       });
       return payload as SupabaseClaims;
     }
 
     const secret = config.supabaseJwtSecret!;
     const { payload } = await jwtVerify(token, new TextEncoder().encode(secret), {
-      audience: 'authenticated',
+      ...verifyOptions,
+      algorithms: ['HS256'],
     });
     return payload as SupabaseClaims;
   } catch (error) {
     if (error instanceof AuthError) throw error;
+    // A JWKS outage is not a bad token: log it so the two can be told apart.
+    if (!isTokenRejection(error)) {
+      console.error('Token verification could not complete:', error);
+    }
     throw new AuthError('Invalid or expired access token.');
   }
 }
