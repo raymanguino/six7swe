@@ -85,6 +85,9 @@ ENV COREPACK_HOME=/home/node/.cache/corepack
 USER node
 WORKDIR /app/backend
 RUN corepack install
+# Fail the build if corepack stops resolving the root pin from here (for example, if a
+# packageManager field reappears in backend/package.json), rather than run another pnpm.
+RUN test "$(pnpm --version)" = "$(node -p "require('/app/package.json').packageManager.split('@')[1].split('+')[0]")"
 
 # Railway's start command overrides this. Exec form, so it needs no shell.
 CMD ["pnpm", "start"]

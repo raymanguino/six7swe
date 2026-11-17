@@ -69,7 +69,9 @@ policy and the watch paths.
    pre-deploy command is `pnpm db:deploy`, a package script (pnpm runs scripts in a shell).
    Write any new command for this service, such as a cron command, the same way. Running from
    `backend/` still uses the root `packageManager` (`backend/package.json` has none, so corepack
-   walks up to `/app/package.json`), so the image fetches one pnpm version at build time.
+   walks up to `/app/package.json`), so build and runtime use the same pnpm version. The runtime
+   stage prefetches its own copy into `COREPACK_HOME` at build time, and fails the build if the
+   version it resolves differs from the root pin.
    The image sets `NODE_ENV=production`, which arms the guard that refuses to start with
    `AUTH_DEV_BYPASS` set.
 3. Set environment variables on the service. `.railway/railway.ts` lists each secret as
