@@ -36,6 +36,13 @@ updates:
           - react-router-dom
           - '@types/react'
           - '@types/react-dom'
+      # plugin-react majors track Vite majors (plugin-react 6 needs Vite 8), so
+      # they are proposed together, majors included, in one pull request.
+      vite:
+        patterns:
+          - vite
+          - '@vitejs/plugin-react'
+          - '@tailwindcss/vite'
       drizzle:
         patterns:
           - drizzle-orm
@@ -68,10 +75,6 @@ updates:
       #   `z.ZodType`. `structuredCompletion` needs its signature updated
       #   before the upgrade can land.
       - dependency-name: zod
-        update-types:
-          - version-update:semver-major
-      # vite 6: wants a matching @vitejs/plugin-react major.
-      - dependency-name: vite
         update-types:
           - version-update:semver-major
       # The fastify plugins move to new majors together with fastify itself.
