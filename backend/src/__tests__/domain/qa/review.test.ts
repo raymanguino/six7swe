@@ -43,6 +43,7 @@ const FULL_COVERAGE: DiffCoverage = {
   totalFiles: 3,
   omittedFiles: 0,
   shortenedPatches: 0,
+  hiddenLines: 0,
   patchChars: 900,
 };
 
@@ -50,6 +51,7 @@ const PARTIAL_COVERAGE: DiffCoverage = {
   totalFiles: 58,
   omittedFiles: 33,
   shortenedPatches: 1,
+  hiddenLines: 140,
   patchChars: 140_000,
 };
 
@@ -58,14 +60,16 @@ describe('describeCoverage', () => {
     expect(describeCoverage({ ...FULL_COVERAGE, totalFiles: 58 })).toBe('Reviewed all 58 files.');
   });
 
-  it('says how many files were reviewed, and how many patches were shortened', () => {
-    expect(describeCoverage(PARTIAL_COVERAGE)).toBe('Reviewed 25 of 58 files. 1 patch shortened.');
+  it('says how many files were reviewed, how many patches were shortened and how many lines that hid', () => {
+    expect(describeCoverage(PARTIAL_COVERAGE)).toBe(
+      'Reviewed 25 of 58 files. 1 patch shortened, 140 lines hidden.',
+    );
   });
 
   it('pluralises', () => {
-    expect(describeCoverage({ ...FULL_COVERAGE, totalFiles: 1, shortenedPatches: 2 })).toBe(
-      'Reviewed the 1 file. 2 patches shortened.',
-    );
+    expect(
+      describeCoverage({ ...FULL_COVERAGE, totalFiles: 1, shortenedPatches: 2, hiddenLines: 1 }),
+    ).toBe('Reviewed the 1 file. 2 patches shortened, 1 line hidden.');
   });
 });
 
@@ -104,18 +108,20 @@ describe('renderReviewBody', () => {
 
     expect(rendered).not.toContain('The model reported nothing');
     expect(rendered).toContain('reported 3 finding(s)');
-    expect(rendered).toContain('none of them referenced a file in this diff');
+    expect(rendered).toContain('none of them referenced a file the model was shown');
   });
 
   it('states the coverage between the gate outcome and the summary', () => {
     const rendered = body({ summary: 'The summary.', coverage: PARTIAL_COVERAGE });
 
-    const coverage = rendered.indexOf('Reviewed 25 of 58 files. 1 patch shortened.');
+    const coverage = rendered.indexOf(
+      'Reviewed 25 of 58 files. 1 patch shortened, 140 lines hidden.',
+    );
     expect(coverage).toBeGreaterThan(rendered.indexOf('**Gate outcome:'));
     expect(coverage).toBeLessThan(rendered.indexOf('The summary.'));
   });
 
-  it('says a partial review needs a human because files were not shown', () => {
+  it('says a partial review needs a human, with the shortened patches and hidden lines', () => {
     const rendered = body({
       gate: 'manual-review',
       coverage: PARTIAL_COVERAGE,
@@ -123,7 +129,7 @@ describe('renderReviewBody', () => {
     });
 
     expect(rendered).toContain(
-      'Reviewed 25 of 58 files. 33 file(s) were not shown to the model, so a clean result cannot be trusted.',
+      'Reviewed 25 of 58 files. 1 patch shortened, 140 lines hidden. 33 files were not shown to the model. A clean result cannot be trusted.',
     );
     expect(rendered).not.toContain('judges or runs the review');
   });
@@ -143,7 +149,7 @@ describe('renderReviewBody', () => {
       manualReviewReasons: ['protected-path', 'partial-coverage'],
     });
 
-    expect(rendered).toContain('33 file(s) were not shown to the model');
+    expect(rendered).toContain('33 files were not shown to the model.');
     expect(rendered).toContain('changes a path that judges or runs the review');
   });
 
@@ -154,7 +160,7 @@ describe('renderReviewBody', () => {
       manualReviewReasons: ['partial-coverage'],
     });
 
-    expect(rendered).toContain('Reviewed 25 of 58 files. 1 patch shortened.');
+    expect(rendered).toContain('Reviewed 25 of 58 files. 1 patch shortened, 140 lines hidden.');
     expect(rendered).not.toContain('cannot be trusted');
   });
 
@@ -167,8 +173,22 @@ describe('renderReviewBody', () => {
 
     expect(rendered).not.toContain('reported nothing');
     expect(rendered).toContain(
-      'No findings in the files that were reviewed. 33 file(s) were not shown to the model.',
+      'No findings in the files that were reviewed. 33 files were not shown to the model.',
     );
+  });
+
+  it('says "1 file was" for a single omitted file', () => {
+    const rendered = body({
+      gate: 'manual-review',
+      reportedCount: 0,
+      coverage: { ...PARTIAL_COVERAGE, totalFiles: 26, omittedFiles: 1 },
+      manualReviewReasons: ['partial-coverage'],
+    });
+
+    expect(rendered).toContain(
+      'Reviewed 25 of 26 files. 1 patch shortened, 140 lines hidden. 1 file was not shown to the model. A clean result cannot be trusted.',
+    );
+    expect(rendered).toContain('No findings in the files that were reviewed. 1 file was not shown');
   });
 
   it('renders a findings table', () => {

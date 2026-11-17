@@ -141,8 +141,7 @@ const CONFIG_FILE =
  * by the base name, at any depth, and only outside data fixture directories
  * (`FIXTURE_DIRECTORIES`) so a fixture `package.json` stays a fixture.
  */
-const PINNED_FILE =
-  /^(package\.json|railway\.json|dockerfile([.-].+)?|.+\.dockerfile)$/i;
+const PINNED_FILE = /^(package\.json|railway\.json|dockerfile([.-].+)?|.+\.dockerfile)$/i;
 
 /**
  * Instructions read by coding agents that have shell access. They end in
@@ -309,6 +308,11 @@ function isLockfile(filename: string): boolean {
   return LOCKFILES.includes(base);
 }
 
+/** Whether a file's patch is deliberately withheld: a lockfile, or explicitly skipped. */
+function isPatchWithheld(file: ChangedFile, budget: DiffBudget): boolean {
+  return budget.skipPatchesFor.includes(file.filename) || isLockfile(file.filename);
+}
+
 /**
  * Characters that end a line, or that a model may read as ending one: the
  * C0 controls (which include "\n" and "\r"), DEL, NEL, and the Unicode
@@ -385,6 +389,9 @@ export function allTouchedPaths(files: readonly ChangedFile[]): string[] {
   return paths;
 }
 
+/** A unified diff hunk header; group 1 is the new-revision start line, group 2 its count. */
+const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/;
+
 /**
  * The line numbers a patch touches, in the new revision of the file.
  *
@@ -395,19 +402,23 @@ export function allTouchedPaths(files: readonly ChangedFile[]): string[] {
  * It parses the patch exactly as the model is shown it (`displayPatch`,
  * split on "\n" only). A hunk header hidden behind a bare "\r" is not a
  * line of its own in the model's view, so it must not widen the set.
+ *
+ * The count in a header is clamped to the number of lines in the patch: a
+ * hunk cannot cover more new-file lines than the patch has lines, and a
+ * malformed header claiming millions must not build a set that large.
  */
 export function hunkLineNumbers(patch: string): Set<number> {
   const lines = new Set<number>();
-  const hunkHeader = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/;
+  const patchLines = displayPatch(patch).split('\n');
 
-  for (const line of displayPatch(patch).split('\n')) {
-    const match = hunkHeader.exec(line);
+  for (const line of patchLines) {
+    const match = HUNK_HEADER.exec(line);
     if (match === null) {
       continue;
     }
 
     const start = Number(match[1]);
-    const count = match[2] === undefined ? 1 : Number(match[2]);
+    const count = Math.min(match[2] === undefined ? 1 : Number(match[2]), patchLines.length);
 
     for (let offset = 0; offset < count; offset += 1) {
       lines.add(start + offset);
@@ -415,6 +426,115 @@ export function hunkLineNumbers(patch: string): Set<number> {
   }
 
   return lines;
+}
+
+/**
+ * The new-revision line numbers a cut-short patch still shows.
+ *
+ * `shownLines` are the complete patch lines that survived the cut, in the
+ * form the model is shown them. Each hunk header restarts the count; a
+ * context (" ") or added ("+") line is a line of the new file, a removed
+ * ("-") line or a "\ No newline" marker is not. The walk is intersected
+ * with the hunk ranges of the full patch, so a line the walk reaches but
+ * no hunk header claims (a malformed patch) is never treated as visible.
+ */
+function visibleLineNumbers(shownLines: readonly string[], fullPatch: string): Set<number> {
+  const inHunks = hunkLineNumbers(fullPatch);
+  const visible = new Set<number>();
+  let next: number | null = null;
+
+  for (const line of shownLines) {
+    const match = HUNK_HEADER.exec(line);
+    if (match !== null) {
+      next = Number(match[1]);
+      continue;
+    }
+
+    if (next === null || !(line.startsWith('+') || line.startsWith(' '))) {
+      continue;
+    }
+
+    if (inHunks.has(next)) {
+      visible.add(next);
+    }
+    next += 1;
+  }
+
+  return visible;
+}
+
+/**
+ * The lines of a patch. A single trailing "\n" ends the last line rather
+ * than starting an empty one, so it does not add a line.
+ */
+function patchLines(patch: string): string[] {
+  return (patch.endsWith('\n') ? patch.slice(0, -1) : patch).split('\n');
+}
+
+/**
+ * The lines of `patch` that survive a cut at `cut` characters whole.
+ *
+ * A cut that lands mid-line leaves only part of the last line, so that line
+ * is not counted: the model cannot tell what the rest of it was. A cut right
+ * before or right after a "\n" leaves the last line whole.
+ */
+function completeLinesBefore(patch: string, cut: number): string[] {
+  const text = patch.slice(0, cut);
+
+  if (text.length === 0) {
+    return [];
+  }
+  if (text.endsWith('\n')) {
+    return patchLines(text);
+  }
+
+  const lines = text.split('\n');
+  return patch.charAt(cut) === '\n' ? lines : lines.slice(0, -1);
+}
+
+/**
+ * What the model was shown of one file.
+ *
+ * The sanitizer validates findings against this, not against the pull
+ * request: a finding about a file that is not here, or about a line that is
+ * not in `lines`, points at code the model never read.
+ */
+export interface ShownFile {
+  filename: string;
+  /** The path the file had before a rename, as on `ChangedFile`. */
+  previousFilename?: string;
+  /**
+   * The new-revision line numbers the model could read. Empty when no patch
+   * text was shown: a lockfile, a skipped patch or a file with no patch.
+   */
+  lines: ReadonlySet<number>;
+}
+
+function shownFile(file: ChangedFile, lines: ReadonlySet<number>): ShownFile {
+  return file.previousFilename
+    ? { filename: file.filename, previousFilename: file.previousFilename, lines }
+    : { filename: file.filename, lines };
+}
+
+/**
+ * Every file shown in full, with every line its patch covers.
+ *
+ * For a caller that has no budgeted diff (a test, or `decideReviewEvent`
+ * called without one) and so wants every changed file treated as shown.
+ * The review script uses `prepareReviewDiff(...).shown` instead.
+ *
+ * A lockfile is listed with no lines, as the budgeted diff lists it: its
+ * patch is never shown to the model.
+ */
+export function shownInFull(files: readonly ChangedFile[]): ShownFile[] {
+  return files.map((file) =>
+    shownFile(file, isLockfile(file.filename) ? new Set() : hunkLineNumbers(file.patch ?? '')),
+  );
+}
+
+/** Coverage for a pull request whose every file was shown in full. */
+export function fullCoverage(totalFiles: number): DiffCoverage {
+  return { totalFiles, omittedFiles: 0, shortenedPatches: 0, hiddenLines: 0, patchChars: 0 };
 }
 
 interface DiffBlock {
@@ -425,6 +545,10 @@ interface DiffBlock {
   missing: boolean;
   /** The patch was cut short to fit the per-file budget. */
   shortened: boolean;
+  /** What of this file the model sees, if the block is kept. */
+  shown: ShownFile;
+  /** Patch lines the per-file budget cut away, in full or in part. */
+  hiddenLines: number;
 }
 
 function buildBlocks(files: readonly ChangedFile[], budget: DiffBudget): DiffBlock[] {
@@ -433,12 +557,14 @@ function buildBlocks(files: readonly ChangedFile[], budget: DiffBudget): DiffBlo
   for (const file of files) {
     const patch = displayPatch(file.patch ?? '');
 
-    if (budget.skipPatchesFor.includes(file.filename) || isLockfile(file.filename)) {
+    if (isPatchWithheld(file, budget)) {
       blocks.push({
         text: `${header(file)}\n${PATCH_SKIPPED_MARKER}`,
         skipped: true,
         missing: false,
         shortened: false,
+        shown: shownFile(file, new Set()),
+        hiddenLines: 0,
       });
       continue;
     }
@@ -449,12 +575,17 @@ function buildBlocks(files: readonly ChangedFile[], budget: DiffBudget): DiffBlo
         skipped: false,
         missing: true,
         shortened: false,
+        shown: shownFile(file, new Set()),
+        hiddenLines: 0,
       });
       continue;
     }
 
     const shortened = patch.length > budget.perFileChars;
     const text = shortened ? patch.slice(0, budget.perFileChars) : patch;
+
+    const completeLines = shortened ? completeLinesBefore(patch, budget.perFileChars) : [];
+    const lines = shortened ? visibleLineNumbers(completeLines, patch) : hunkLineNumbers(patch);
 
     // The notice goes immediately after the header, before the patch, so
     // that every notice the builder emits sits in the same place: on the
@@ -473,6 +604,8 @@ function buildBlocks(files: readonly ChangedFile[], budget: DiffBudget): DiffBlo
       skipped: false,
       missing: false,
       shortened,
+      shown: shownFile(file, lines),
+      hiddenLines: shortened ? patchLines(patch).length - completeLines.length : 0,
     });
   }
 
@@ -556,6 +689,11 @@ export interface DiffCoverage {
   /** Files shown, but with the patch cut to `perFileChars`. */
   shortenedPatches: number;
   /**
+   * Patch lines the shortened patches did not show, summed over every
+   * shortened patch that was kept. A line cut part-way counts as hidden.
+   */
+  hiddenLines: number;
+  /**
    * Patch characters before any budget, lockfiles and skipped files
    * excluded. Unlike the diff length, which is capped at `totalChars`, this
    * shows how far over budget a pull request was.
@@ -566,6 +704,12 @@ export interface DiffCoverage {
 export interface ReviewDiff {
   text: string;
   coverage: DiffCoverage;
+  /**
+   * The files the model was shown, each with the line numbers it could
+   * read. A file the budget dropped is absent, and a shortened patch lists
+   * only the lines before the cut. Findings are sanitized against this.
+   */
+  shown: ShownFile[];
 }
 
 /**
@@ -587,7 +731,7 @@ export function prepareReviewDiff(files: readonly ChangedFile[], budget: DiffBud
   const blocks = buildBlocks(orderByTier(files), budget);
 
   const patchChars = files
-    .filter((file) => !budget.skipPatchesFor.includes(file.filename) && !isLockfile(file.filename))
+    .filter((file) => !isPatchWithheld(file, budget))
     .reduce((sum, file) => sum + (file.patch?.length ?? 0), 0);
 
   const kept: DiffBlock[] = [];
@@ -612,8 +756,10 @@ export function prepareReviewDiff(files: readonly ChangedFile[], budget: DiffBud
       totalFiles: files.length,
       omittedFiles: omitted,
       shortenedPatches: kept.filter((block) => block.shortened).length,
+      hiddenLines: kept.reduce((sum, block) => sum + block.hiddenLines, 0),
       patchChars,
     },
+    shown: kept.map((block) => block.shown),
   });
 
   for (;;) {

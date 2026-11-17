@@ -288,11 +288,16 @@ async function main(): Promise<void> {
     // purpose, so a caller that skips this step cannot have a hallucinated
     // path or an uncapped steering finding block a merge; sanitizing is
     // idempotent, so doing it twice changes nothing.
-    const findings = sortFindingsBySeverity(sanitizeFindings(review.findings, changedFiles));
+    //
+    // Both are checked against what the model was shown, not against the
+    // whole pull request: a finding about a file the budget dropped, or a
+    // line cut from a shortened patch, is about code the model never read.
+    const findings = sortFindingsBySeverity(sanitizeFindings(review.findings, prepared.shown));
 
     const gate = decideGate({
       findings,
       changedFiles,
+      shown: prepared.shown,
       mode,
       reviewCompleted: true,
       coverage: diffCoverage,
