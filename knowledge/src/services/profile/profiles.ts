@@ -99,7 +99,7 @@ export function createProfileDrafting(deps: ProfileDraftingDeps): ProfileDraftin
     try {
       // What the draft was when this job started: the owner's edits saved
       // while the model runs must not be overwritten.
-      const before = (await deps.profiles.getProfiles(ownerId)).draft?.updatedAt ?? null;
+      const before = (await deps.profiles.getProfiles(ownerId)).draft?.version ?? null;
 
       const resume = await deps.repo.getPrimaryResume(ownerId);
       if (!resume) throw new DraftError('There is no primary resume to draft from.');

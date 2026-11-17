@@ -54,8 +54,8 @@ export function profileHandlers(ctx: KnowledgeContext) {
     /** Owner: publishes the draft the owner reviewed; 409 if it has changed since. */
     async publish(req: FastifyRequest, reply: FastifyReply) {
       const ownerId = requireOwner(req);
-      const { draftUpdatedAt } = PublishRequestSchema.parse(req.body);
-      const outcome = await ctx.profiles.publishDraft(ownerId, new Date(draftUpdatedAt));
+      const { draftVersion } = PublishRequestSchema.parse(req.body);
+      const outcome = await ctx.profiles.publishDraft(ownerId, draftVersion);
       switch (outcome.status) {
         case 'no-draft':
           return reply.code(404).send({ error: 'There is no draft to publish' });

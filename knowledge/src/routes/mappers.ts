@@ -19,6 +19,7 @@ export function toProfileDto(profile: ProfileRecord): ProfileDto {
     stage: profile.stage,
     data: profile.data,
     sourceDocumentId: profile.sourceDocumentId,
+    version: profile.version,
     createdAt: profile.createdAt.toISOString(),
     updatedAt: profile.updatedAt.toISOString(),
   };

@@ -12,7 +12,7 @@ post {
 
 body:json {
   {
-    "draftUpdatedAt": "{{draftUpdatedAt}}"
+    "draftVersion": {{draftVersion}}
   }
 }
 
@@ -20,7 +20,7 @@ script:pre-request {
   if (bru.getEnvVar("allowSideEffects") !== "true") {
     bru.runner.skipRequest();
   }
-  if (!bru.getVar("draftUpdatedAt")) {
+  if (!bru.getVar("draftVersion")) {
     bru.runner.skipRequest();
   }
 }
@@ -32,7 +32,7 @@ tests {
 }
 
 docs {
-  Publishes the draft you reviewed. 409 if it changed since; 404 when there is no draft.
+  Publishes the draft you reviewed, named by draftVersion (set by Save profile draft). 409 if it changed since; 404 when there is no draft.
   This changes the live portfolio, so it is skipped unless allowSideEffects is "true".
   Owner only: 401 when signed out, 403 for any other user. Locally set AUTH_DEV_BYPASS=true and OWNER_AUTH_ID=auth-dev-bypass (see api/README.md).
   Forwarded to the knowledge service with KNOWLEDGE_OWNER_KEY; 503 when that is not configured.

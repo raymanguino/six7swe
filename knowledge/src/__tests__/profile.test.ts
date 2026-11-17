@@ -249,7 +249,7 @@ describe('review and publish', () => {
       method: 'POST',
       url: '/profile/publish',
       headers: ownerAuth,
-      payload: { draftUpdatedAt: drafted.updatedAt },
+      payload: { draftVersion: drafted.version },
     });
     expect(stale.statusCode).toBe(409);
 
@@ -257,7 +257,7 @@ describe('review and publish', () => {
       method: 'POST',
       url: '/profile/publish',
       headers: ownerAuth,
-      payload: { draftUpdatedAt: saved.updatedAt },
+      payload: { draftVersion: saved.version },
     });
     expect(publish.statusCode).toBe(200);
     expect(await state()).toMatchObject({
@@ -269,7 +269,7 @@ describe('review and publish', () => {
       method: 'POST',
       url: '/profile/publish',
       headers: ownerAuth,
-      payload: { draftUpdatedAt: saved.updatedAt },
+      payload: { draftVersion: saved.version },
     });
     expect(again.statusCode).toBe(404);
   });
@@ -337,12 +337,12 @@ describe('public profile and resume (service routes)', () => {
       headers: ownerAuth,
       payload: { data: SAMPLE_PROFILE },
     });
-    const { updatedAt } = ProfileResponseSchema.parse(save.json()).profile;
+    const { version } = ProfileResponseSchema.parse(save.json()).profile;
     await a.inject({
       method: 'POST',
       url: '/profile/publish',
       headers: ownerAuth,
-      payload: { draftUpdatedAt: updatedAt },
+      payload: { draftVersion: version },
     });
 
     const res = await a.inject({ method: 'GET', url: '/profile/published', headers: serviceAuth });
