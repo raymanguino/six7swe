@@ -50,6 +50,11 @@ updates:
     ignore:
       # Ships its own types; the stub package only shadows them.
       - dependency-name: '@types/puppeteer'
+      # The @types/node major must track the runtime Node major (`engines.node`,
+      # backend/Dockerfile, CI), so it moves only with a deliberate Node upgrade.
+      - dependency-name: '@types/node'
+        update-types:
+          - version-update:semver-major
       # Major upgrades are deliberate, not automatic. Each of these has a
       # known blocker, so Dependabot proposes the minor and patch upgrades
       # and the majors are raised by hand.
@@ -89,8 +94,9 @@ updates:
       time: '07:00'
       timezone: America/Bogota
     ignore:
-      # Stay on Node 22: `engines.node` in the root package.json is `>=22.12 <23`,
-      # and CI tests on 22. Moving to a new major is a deliberate change to both.
+      # Stay on Node 26: `engines.node` in the root package.json is `>=26 <27`,
+      # and CI tests on 26. Moving to a new major is a deliberate change to both.
+      # The `@types/node` major moves together with this one.
       - dependency-name: node
         update-types:
           - version-update:semver-major
