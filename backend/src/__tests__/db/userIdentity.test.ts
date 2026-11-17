@@ -9,18 +9,17 @@
 
 jest.mock('../../db/index', () => ({ db: {} }));
 
-import { drizzle } from 'drizzle-orm/postgres-js';
-import postgres from 'postgres';
+import { drizzle } from 'drizzle-orm/pg-proxy';
 import { unclaimedForEmail, unclaimedOnly } from '../../db/api/user';
 import { users } from '../../db/schema/jobHunt';
 import * as schema from '../../db/schema';
 
 /**
- * A client that is never used to run a query, so nothing connects. It only
- * renders the SQL the builders produce.
+ * Drizzle's proxy driver uses the same PgDialect as the real driver, so the
+ * SQL renders identically, but it never opens a connection. It also avoids
+ * importing `postgres` (ESM-only since v4), which Jest cannot `require()`.
  */
-const client = postgres('postgres://user:pass@localhost:5432/db', { max: 1 });
-const db = drizzle(client, { schema });
+const db = drizzle(async () => ({ rows: [] }), { schema });
 
 describe('the identity guards', () => {
   it('only finds a row that nobody owns for an email', () => {
