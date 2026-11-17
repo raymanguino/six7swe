@@ -76,7 +76,8 @@ COPY --from=build --chown=node:node /app /app
 # the cron. Among other things it arms the guard that refuses to start with AUTH_DEV_BYPASS set.
 ENV NODE_ENV=production
 
-# Commands run from the backend package, so pnpm is the version backend/package.json pins.
+# Commands run from the backend package, which has no `packageManager` of its own, so corepack
+# resolves the root one (/app/package.json): one pnpm version for build and runtime.
 # Run as `node` from here on, then let corepack fetch pnpm now rather than on first use at
 # runtime. COREPACK_HOME pins the cache to node's home, so the prefetched pnpm is found at
 # runtime whatever HOME is set to and nothing is downloaded when the container starts.
