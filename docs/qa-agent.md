@@ -66,11 +66,11 @@ pnpm --filter @six7swe/backend qa:verdicts --sync > out.md
 
 In each new row in `findings`, fill in the three fields kept by hand:
 
-| Field | What to put |
-|---|---|
-| `verdict` | For a `blocker` or `major` finding: `real`, `false positive` or `unsure`. For a `minor` or `nit` finding, or a steering finding (`"steering": true`): `useful`, `noise` or `unsure`. Leave it `null` when it is not judged yet. |
-| `sameAs` | If this finding re-raises one the agent already posted on an earlier commit of the same pull request, put the **first** sighting's `findingId` here. The row then inherits that verdict, so a finding is judged once. Otherwise `null`. |
-| `note` | Why: for example "fixed in `abc1234`", or "the function body was outside the diff". |
+| Field     | What to put                                                                                                                                                                                                                             |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `verdict` | For a `blocker` or `major` finding: `real`, `false positive` or `unsure`. For a `minor` or `nit` finding, or a steering finding (`"steering": true`): `useful`, `noise` or `unsure`. Leave it `null` when it is not judged yet.         |
+| `sameAs`  | If this finding re-raises one the agent already posted on an earlier commit of the same pull request, put the **first** sighting's `findingId` here. The row then inherits that verdict, so a finding is judged once. Otherwise `null`. |
+| `note`    | Why: for example "fixed in `abc1234`", or "the function body was outside the diff".                                                                                                                                                     |
 
 Don't edit the other fields; `--sync` owns them.
 
@@ -80,13 +80,13 @@ Precision says whether the agent's findings were right. It does not say what
 the agent missed. That needs ground truth: an entry in `groundTruth` for the
 pull request, listing its real defects.
 
-| Field | Meaning |
-|---|---|
-| `readIndependently` | `true` only if you read the pull request for defects **without** looking at the agent's review first. |
-| `defects[].id` | A short lowercase slug, unique in the file. |
-| `defects[].severity`, `file`, `description` | The defect itself. |
-| `defects[].shownToModel` | Whether its file was in what the model was shown (the review's coverage line). A defect in a file the budget dropped is `missed (unseen)` and is not held against the agent. |
-| `defects[].foundBy` | The IDs, or legacy refs, of findings that reported it, each judged `real` or `useful`. Empty means the agent missed it. |
+| Field                                       | Meaning                                                                                                                                                                      |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `readIndependently`                         | `true` only if you read the pull request for defects **without** looking at the agent's review first.                                                                        |
+| `defects[].id`                              | A short lowercase slug, unique in the file.                                                                                                                                  |
+| `defects[].severity`, `file`, `description` | The defect itself.                                                                                                                                                           |
+| `defects[].shownToModel`                    | Whether its file was in what the model was shown (the review's coverage line). A defect in a file the budget dropped is `missed (unseen)` and is not held against the agent. |
+| `defects[].foundBy`                         | The IDs, or legacy refs, of findings that reported it, each judged `real` or `useful`. Empty means the agent missed it.                                                      |
 
 Missed and recall are computed only over pull requests with
 `readIndependently: true`. The others are reported as "noticed only": a floor,
@@ -112,9 +112,9 @@ pnpm --filter @six7swe/backend qa:verdicts > out.md   # renders the table, recon
 
 ## What to look at for the phase 2 decision
 
-| Command | What it reports |
-|---|---|
-| `qa:verdicts` | Blocker and major **precision** (the #59 target is at least 80%), overall and per prompt version. **Usefulness** of the minor and nit findings. Missed, recall, and a reconciliation of how many posted findings have a verdict. |
+| Command          | What it reports                                                                                                                                                                                                                                            |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `qa:verdicts`    | Blocker and major **precision** (the #59 target is at least 80%), overall and per prompt version. **Usefulness** of the minor and nit findings. Missed, recall, and a reconciliation of how many posted findings have a verdict.                           |
 | `qa:calibration` | How often the agent **would have blocked** under `enforce`, split into blocking findings and `manual-review` by cause. How often the outcome changed when a commit was reviewed more than once. Runtime, tokens, coverage, and findings dropped by reason. |
 
 Both print Markdown on stdout, and both need the token.
