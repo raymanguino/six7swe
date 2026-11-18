@@ -11,11 +11,12 @@ import {
 
 function run(overrides: Partial<QaRunStats> = {}): QaRunStats {
   return {
-    v: 3,
+    v: 4,
     pr: 1,
     sha: 'aaa',
     mode: 'comment-only',
     outcome: 'pass',
+    enforceOutcome: 'pass',
     files: 2,
     backendFiles: 1,
     frontendFiles: 0,
@@ -68,6 +69,7 @@ describe('the stats line', () => {
       patchChars: _patch,
       sanitized: _sanitized,
       findingIds: _ids,
+      enforceOutcome: _enforce,
       ...v1
     } = run({ v: 1 });
     const log = `QA_STATS ${JSON.stringify(v1)}`;
@@ -80,12 +82,19 @@ describe('the stats line', () => {
         patchChars: null,
         sanitized: null,
         findingIds: null,
+        enforceOutcome: null,
       }),
     ]);
   });
 
   it('rejects a version 2 line without its coverage counts', () => {
-    const { omittedFiles: _omitted, ...missing } = run({ v: 2 });
+    const {
+      omittedFiles: _omitted,
+      sanitized: _s,
+      findingIds: _f,
+      enforceOutcome: _e,
+      ...missing
+    } = run({ v: 2 });
 
     expect(parseStatsLines(`QA_STATS ${JSON.stringify(missing)}`)).toEqual([]);
   });
@@ -261,10 +270,10 @@ describe('the sanitizer counts in the stats line', () => {
   });
 
   it('reads a version 2 line with the counts as null', () => {
-    const { sanitized: _s, findingIds: _f, ...v2 } = run({ v: 2 });
+    const { sanitized: _s, findingIds: _f, enforceOutcome: _e, ...v2 } = run({ v: 2 });
 
     expect(parseStatsLines(`QA_STATS ${JSON.stringify(v2)}`)).toEqual([
-      run({ v: 2, sanitized: null, findingIds: null }),
+      run({ v: 2, sanitized: null, findingIds: null, enforceOutcome: null }),
     ]);
   });
 
@@ -328,5 +337,162 @@ describe('the report when no review logged sanitizer counts', () => {
 
     expect(summary.sanitized).toBeNull();
     expect(report).toContain('| Dropped: file not in the pull request | no data |');
+  });
+});
+
+describe('the outcome if enforced', () => {
+  const major = { blocker: 0, major: 1, minor: 0, nit: 0 };
+
+  it('round-trips through the stats line', () => {
+    const stats = run({ enforceOutcome: 'manual-review' });
+    const { v: _v, ...rest } = stats;
+
+    expect(parseStatsLines(formatStatsLine(rest))).toEqual([stats]);
+  });
+
+  it('reads a version 3 line with it as null', () => {
+    const { enforceOutcome: _e, ...v3 } = run({ v: 3 });
+
+    expect(parseStatsLines(`QA_STATS ${JSON.stringify(v3)}`)).toEqual([
+      run({ v: 3, enforceOutcome: null }),
+    ]);
+  });
+
+  it('rejects an older line that carries it, and a value that is not an outcome', () => {
+    const lines = [
+      `QA_STATS ${JSON.stringify(run({ v: 3, enforceOutcome: 'fail' }))}`,
+      `QA_STATS ${JSON.stringify({ ...run(), enforceOutcome: 'block' })}`,
+    ].join('\n');
+
+    expect(parseStatsLines(lines)).toEqual([]);
+  });
+
+  it('is reported next to the real outcome, with the commits it would have blocked', () => {
+    const summary = summarizeCalibration([
+      run({ sha: 'a000000', enforceOutcome: 'pass' }),
+      run({ sha: 'b000000', enforceOutcome: 'fail', reported: 1, kept: major }),
+      run({ sha: 'c000000', enforceOutcome: 'manual-review' }),
+      run({ sha: 'd000000', enforceOutcome: null }),
+      run({
+        sha: 'e000000',
+        outcome: 'fail-closed',
+        enforceOutcome: 'fail-closed',
+        reported: null,
+        kept: null,
+      }),
+    ]);
+
+    expect(summary.enforceOutcomes).toEqual({
+      pass: 1,
+      fail: 1,
+      'manual-review': 1,
+      'fail-closed': 1,
+    });
+    expect(summary.withoutEnforceOutcome).toBe(1);
+    expect(summary.enforceDecided).toBe(3);
+    expect(summary.wouldBlock.map((commit) => commit.sha)).toEqual(['b000000', 'c000000']);
+
+    const report = renderCalibrationReport(summary, CONTEXT);
+    expect(report).toContain(
+      '| Gate outcomes (comment-only) | 4 pass, 0 fail, 0 manual-review, 1 fail-closed |',
+    );
+    expect(report).toContain(
+      '| Gate outcomes (if enforced) | 1 pass, 1 fail, 1 manual-review, 1 fail-closed |',
+    );
+    expect(report).toContain('| Would have blocked if enforced | 2 of 3 (66.7%) |');
+    expect(report).toContain('- #1 `b000000`: fail, findings 1 major');
+    expect(report).toContain('- #1 `c000000`: manual-review, findings none');
+    expect(report).toContain('verdict table on #59');
+    expect(report).toContain('1 review(s) recorded no outcome if enforced');
+  });
+
+  it('reports no data when no run recorded it', () => {
+    const report = renderCalibrationReport(
+      summarizeCalibration([run({ enforceOutcome: null })]),
+      CONTEXT,
+    );
+
+    expect(report).toContain('| Gate outcomes (if enforced) | no data |');
+    expect(report).toContain('| Would have blocked if enforced | no data |');
+  });
+
+  it('labels the real outcome row "as run" when the modes differ', () => {
+    const report = renderCalibrationReport(
+      summarizeCalibration([run({ sha: 'a' }), run({ sha: 'b', mode: 'enforce' })]),
+      CONTEXT,
+    );
+
+    expect(report).toContain('| Gate outcomes (as run) |');
+  });
+});
+
+describe('commits reviewed more than once', () => {
+  const major = { blocker: 0, major: 1, minor: 0, nit: 0 };
+  const minor = { blocker: 0, major: 0, minor: 1, nit: 0 };
+
+  it('counts the commits whose enforce outcome or findings changed, and names them', () => {
+    const summary = summarizeCalibration([
+      // Flipped: the same commit failed, then passed.
+      run({ sha: 'a000000', enforceOutcome: 'fail', reported: 1, kept: major }),
+      run({ sha: 'a000000', enforceOutcome: 'pass', reported: 1, kept: minor }),
+      // Stable.
+      run({ sha: 'b000000', enforceOutcome: 'pass' }),
+      run({ sha: 'b000000', enforceOutcome: 'pass' }),
+      // Older lines: no enforce outcome, but the findings can still be compared.
+      run({ sha: 'c000000', v: 3, enforceOutcome: null, kept: major }),
+      run({ sha: 'c000000', v: 3, enforceOutcome: null, kept: minor }),
+      // A failed run reached no verdict, so it is not compared.
+      run({
+        sha: 'd000000',
+        outcome: 'fail-closed',
+        enforceOutcome: 'fail-closed',
+        reported: null,
+        kept: null,
+      }),
+      run({ sha: 'd000000', enforceOutcome: 'pass' }),
+      // Reviewed once.
+      run({ sha: 'e000000' }),
+    ]);
+
+    expect(summary.commits).toBe(5);
+    expect(summary.rereviewed.map((commit) => [commit.sha, commit.runs])).toEqual([
+      ['a000000', 2],
+      ['b000000', 2],
+      ['c000000', 2],
+      ['d000000', 2],
+    ]);
+    expect(summary.rereviewed.map((commit) => commit.outcomeChanged)).toEqual([
+      true,
+      false,
+      null,
+      null,
+    ]);
+    expect(summary.rereviewed.map((commit) => commit.findingsChanged)).toEqual([
+      true,
+      false,
+      true,
+      null,
+    ]);
+
+    const report = renderCalibrationReport(summary, CONTEXT);
+    expect(report).toContain('| Commits reviewed more than once | 4 |');
+    expect(report).toContain('| ... outcome if enforced changed between runs | 1 of 2 (50.0%) |');
+    expect(report).toContain(
+      '| ... findings changed between runs (count by severity) | 2 of 3 (66.7%) |',
+    );
+    expect(report).toContain(
+      '- #1 `a000000`: 2 runs; if enforced fail -> pass (changed); findings 1 major -> 1 minor (changed)',
+    );
+    expect(report).toContain('- #1 `c000000`: 2 runs; if enforced not recorded (not comparable)');
+  });
+
+  it('does not echo a sha that is not hex into the report', () => {
+    const report = renderCalibrationReport(
+      summarizeCalibration([run({ sha: '<img>' }), run({ sha: '<img>' })]),
+      CONTEXT,
+    );
+
+    expect(report).not.toContain('<img>');
+    expect(report).toContain('(unreadable sha)');
   });
 });

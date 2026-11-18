@@ -29,6 +29,7 @@ import { z } from 'zod';
 import {
   countAreas,
   countBySeverity,
+  decideEnforceOutcome,
   decideGate,
   describeCoverage,
   formatStatsLine,
@@ -232,6 +233,10 @@ async function main(): Promise<void> {
   // whether the review on the pull request is a real verdict.
   let decidedGate: GateOutcome | null = null;
 
+  // What the gate would have returned in `enforce` mode on the same input,
+  // for calibration only. It never sets the exit code or the review event.
+  let decidedEnforceOutcome: GateOutcome | null = null;
+
   // The duration the review body reported, so the body and the stats line
   // carry the same number. It runs from the start of the script to just
   // before the review is posted, so it excludes posting and dismissal.
@@ -247,6 +252,7 @@ async function main(): Promise<void> {
    */
   function logStats(run: {
     outcome: GateOutcome;
+    enforceOutcome: GateOutcome;
     reported: number | null;
     kept: Record<FindingSeverity, number> | null;
     sanitized: SanitizeCounts | null;
@@ -259,6 +265,7 @@ async function main(): Promise<void> {
         sha: headSha,
         mode,
         outcome,
+        enforceOutcome: run.enforceOutcome,
         files: changedFiles.length,
         ...countAreas(changedFiles),
         diffChars,
@@ -335,15 +342,19 @@ async function main(): Promise<void> {
     // computed from this list, in this order.
     const ids = findingIds({ pr: env.PR_NUMBER, sha: headSha }, findings, hashData);
 
-    const gate = decideGate({
+    const gateInput = {
       findings,
       changedFiles,
       shown: prepared.shown,
-      mode,
       reviewCompleted: true,
       coverage: diffCoverage,
-    });
+    };
+    const gate = decideGate({ ...gateInput, mode });
     decidedGate = gate;
+    // The counterfactual: the same input, judged as phase 2 would judge it.
+    // Recorded in the stats line only; `gate` alone decides what happens.
+    const enforceOutcome = decideEnforceOutcome(gateInput);
+    decidedEnforceOutcome = enforceOutcome;
 
     logLine(
       `Model returned ${review.findings.length} finding(s); ${findings.length} survived sanitizing.`,
@@ -351,7 +362,7 @@ async function main(): Promise<void> {
     for (const finding of findings) {
       logLine(`  ${severityLabel(finding)}: ${finding.message}`);
     }
-    logLine(`Gate outcome: ${gate}`);
+    logLine(`Gate outcome: ${gate} (if enforced: ${enforceOutcome})`);
 
     const event = reviewEventForGate(gate);
     reportedDurationMs = Date.now() - startedAt;
@@ -397,6 +408,7 @@ async function main(): Promise<void> {
 
     logStats({
       outcome: gate,
+      enforceOutcome,
       reported: review.findings.length,
       kept: countBySeverity(findings),
       sanitized: sanitizedResult.counts,
@@ -425,8 +437,19 @@ async function main(): Promise<void> {
     // that comes from logging or stats code, so reporting fail-closed would
     // contradict the posted review and record the wrong outcome.
     const outcome: GateOutcome = posted && decidedGate !== null ? decidedGate : 'fail-closed';
+    // `enforce` fails closed on an incomplete review too, so the
+    // counterfactual follows the same rule as the real outcome.
+    const enforceOutcome: GateOutcome =
+      posted && decidedEnforceOutcome !== null ? decidedEnforceOutcome : 'fail-closed';
 
-    logStats({ outcome, reported: null, kept: null, sanitized: null, findingIds: null });
+    logStats({
+      outcome,
+      enforceOutcome,
+      reported: null,
+      kept: null,
+      sanitized: null,
+      findingIds: null,
+    });
 
     // Whether the outcome turns the check red depends on the mode: in
     // comment-only mode the agent is an observer and nothing it does blocks

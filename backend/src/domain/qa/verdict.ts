@@ -368,6 +368,22 @@ export function decideGate(input: GateInput): GateOutcome {
 }
 
 /**
+ * The outcome `enforce` mode would have returned on the same input.
+ *
+ * In `comment-only` mode `decideGate` passes whatever the agent found, so
+ * the real outcome says nothing about how often the agent would block.
+ * This is the counterfactual the phase 2 decision is measured on (#144):
+ * the same findings, the same changed files and the same coverage, with
+ * only the mode changed.
+ *
+ * It is a measurement, not a second gate. Nothing may derive an exit code
+ * or a review event from it; those come from the real outcome only.
+ */
+export function decideEnforceOutcome(input: Omit<GateInput, 'mode'>): GateOutcome {
+  return decideGate({ ...input, mode: 'enforce' });
+}
+
+/**
  * Decides which GitHub review event the findings justify.
  *
  * The default is `comment-only`, so the safe behaviour is what you get if

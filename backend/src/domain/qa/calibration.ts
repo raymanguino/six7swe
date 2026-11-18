@@ -19,6 +19,7 @@ import { FINDING_ID_PATTERN } from './findingId';
 import {
   SANITIZE_REASONS,
   SEVERITY_ORDER,
+  gateBlocksMerge,
   zeroSanitizeCounts,
   type FindingSeverity,
   type GateOutcome,
@@ -52,8 +53,10 @@ export function neutralizeStatsPrefix(text: string): string {
  * with the coverage fields as null, so the runs logged before still count.
  * Version 3 added the sanitizer's counts by reason and the finding ids; a
  * version 1 or 2 line has them as null.
+ * Version 4 added `enforceOutcome`, the outcome `enforce` mode would have
+ * returned; an older line has it as null.
  */
-export const QA_STATS_VERSION = 3;
+export const QA_STATS_VERSION = 4;
 
 /** The tokens one review used. `reasoning` is null when MiniMax does not report it. */
 export interface RunTokens {
@@ -64,11 +67,18 @@ export interface RunTokens {
 
 /** What one run of the agent did. */
 export interface QaRunStats {
-  v: 1 | 2 | typeof QA_STATS_VERSION;
+  v: 1 | 2 | 3 | typeof QA_STATS_VERSION;
   pr: number;
   sha: string;
   mode: ReviewMode;
   outcome: GateOutcome;
+  /**
+   * What `decideGate` would have returned in `enforce` mode, on the same
+   * findings, changed files and coverage (`decideEnforceOutcome`). A
+   * measurement only: `outcome` decides the exit code and the review
+   * event. Null on a line older than version 4.
+   */
+  enforceOutcome: GateOutcome | null;
   files: number;
   backendFiles: number;
   frontendFiles: number;
@@ -166,6 +176,7 @@ function isCountOrNull(value: unknown): value is number | null {
 
 const COVERAGE_FIELDS = ['omittedFiles', 'shortenedPatches', 'patchChars'] as const;
 const SANITIZE_FIELDS = ['sanitized', 'findingIds'] as const;
+const ENFORCE_FIELDS = ['enforceOutcome'] as const;
 
 function isSanitizeCounts(value: unknown): value is SanitizeCounts {
   return isRecord(value) && SANITIZE_REASONS.every((reason) => isCount(value[reason]));
@@ -196,6 +207,10 @@ function toRunStats(value: unknown): QaRunStats | null {
   if (value.v === 1 || value.v === 2) {
     if (SANITIZE_FIELDS.some((field) => field in value)) return null;
     upgraded = { ...upgraded, sanitized: null, findingIds: null };
+  }
+  if (value.v === 1 || value.v === 2 || value.v === 3) {
+    if (ENFORCE_FIELDS.some((field) => field in value)) return null;
+    upgraded = { ...upgraded, enforceOutcome: null };
   } else if (value.v !== QA_STATS_VERSION) {
     return null;
   }
@@ -205,11 +220,12 @@ function toRunStats(value: unknown): QaRunStats | null {
 
 function isRunStats(value: Record<string, unknown>): value is Record<string, unknown> & QaRunStats {
   return (
-    (value.v === 1 || value.v === 2 || value.v === QA_STATS_VERSION) &&
+    (value.v === 1 || value.v === 2 || value.v === 3 || value.v === QA_STATS_VERSION) &&
     isCount(value.pr) &&
     typeof value.sha === 'string' &&
     (value.mode === 'comment-only' || value.mode === 'enforce') &&
     isGateOutcome(value.outcome) &&
+    (value.enforceOutcome === null || isGateOutcome(value.enforceOutcome)) &&
     isCount(value.files) &&
     isCount(value.backendFiles) &&
     isCount(value.frontendFiles) &&
@@ -261,13 +277,63 @@ interface Distribution {
   max: number;
 }
 
+/** One commit, as the calibration report names it. */
+export interface CommitRef {
+  pr: number;
+  sha: string;
+}
+
+/** A commit whose latest run would have turned the check red in `enforce` mode. */
+export interface WouldBlock extends CommitRef {
+  enforceOutcome: GateOutcome;
+  kept: Record<FindingSeverity, number> | null;
+}
+
+/**
+ * A commit that was reviewed more than once, with no code change between
+ * the runs, so any difference between them is the agent's own variance.
+ */
+export interface RereviewedCommit extends CommitRef {
+  runs: number;
+  /**
+   * The `enforce` outcome of each run that recorded one, in run order.
+   * Runs that failed closed are left out: they reached no verdict.
+   */
+  enforceOutcomes: GateOutcome[];
+  /** Null when fewer than two runs recorded an `enforce` outcome. */
+  outcomeChanged: boolean | null;
+  /** The kept findings by severity of each completed run, in run order. */
+  kept: Record<FindingSeverity, number>[];
+  /** Null when fewer than two runs completed. */
+  findingsChanged: boolean | null;
+}
+
 export interface CalibrationSummary {
   prs: number;
   backendPrs: number;
   frontendPrs: number;
   /** Distinct commits reviewed, the latest run of each. */
   commits: number;
+  /** The modes the latest runs ran in, in the order first seen. */
+  modes: ReviewMode[];
   outcomes: Record<GateOutcome, number>;
+  /**
+   * What the gate would have returned in `enforce` mode, across the latest
+   * runs that recorded it (version 4 lines).
+   */
+  enforceOutcomes: Record<GateOutcome, number>;
+  /** Latest runs whose line has no `enforce` outcome (logged before version 4). */
+  withoutEnforceOutcome: number;
+  /**
+   * Completed latest runs with an `enforce` outcome: the denominator of the
+   * block rate. A review that failed closed is left out; it is reported
+   * with the real outcomes.
+   */
+  enforceDecided: number;
+  /** The commits that would have been blocked, so each block can be judged by hand. */
+  wouldBlock: WouldBlock[];
+  /** The commits reviewed more than once, in the order first reviewed. */
+  rereviewed: RereviewedCommit[];
   /** Findings the model returned, across the completed reviews. */
   reported: number;
   /** Findings that survived sanitizing, by severity. */
@@ -295,6 +361,60 @@ export interface CalibrationSummary {
   patchChars: Distribution | null;
 }
 
+function zeroOutcomes(): Record<GateOutcome, number> {
+  return { pass: 0, fail: 0, 'manual-review': 0, 'fail-closed': 0 };
+}
+
+function sameSeverityCounts(
+  left: Record<FindingSeverity, number>,
+  right: Record<FindingSeverity, number>,
+): boolean {
+  return SEVERITY_ORDER.every((severity) => left[severity] === right[severity]);
+}
+
+/** Whether a list of at least two values holds more than one value; null below two. */
+function changed<T>(values: readonly T[], same: (left: T, right: T) => boolean): boolean | null {
+  if (values.length < 2) return null;
+  return values.some((value) => !same(value, values[0]));
+}
+
+/**
+ * Compares the runs of each commit reviewed more than once.
+ *
+ * Two runs of one commit see the same code, so a different `enforce`
+ * outcome between them is a flip: the agent's own variance, which #59
+ * asks to be tracked before the agent may block. The findings are
+ * compared by count per severity, which every version of the line carries.
+ */
+function rereviewedCommits(
+  byCommit: ReadonlyMap<string, readonly QaRunStats[]>,
+): RereviewedCommit[] {
+  const rereviewed: RereviewedCommit[] = [];
+
+  for (const runs of byCommit.values()) {
+    if (runs.length < 2) continue;
+
+    const enforceOutcomes = runs
+      .map((run) => run.enforceOutcome)
+      .filter((outcome): outcome is GateOutcome => outcome !== null && outcome !== 'fail-closed');
+    const kept = runs
+      .map((run) => run.kept)
+      .filter((counts): counts is Record<FindingSeverity, number> => counts !== null);
+
+    rereviewed.push({
+      pr: runs[0].pr,
+      sha: runs[0].sha,
+      runs: runs.length,
+      enforceOutcomes,
+      outcomeChanged: changed(enforceOutcomes, (left, right) => left === right),
+      kept,
+      findingsChanged: changed(kept, sameSeverityCounts),
+    });
+  }
+
+  return rereviewed;
+}
+
 function spread(values: readonly number[]): Spread | null {
   if (values.length === 0) return null;
   const total = values.reduce((sum, value) => sum + value, 0);
@@ -311,19 +431,22 @@ function spread(values: readonly number[]): Spread | null {
  * kind of finding calibration is about.
  */
 export function summarizeCalibration(runs: readonly QaRunStats[]): CalibrationSummary {
-  const latest = new Map<string, QaRunStats>();
-  for (const run of runs) latest.set(`${run.pr}@${run.sha}`, run);
-  const commits = [...latest.values()];
+  const byCommit = new Map<string, QaRunStats[]>();
+  for (const run of runs) {
+    const key = `${run.pr}@${run.sha}`;
+    byCommit.set(key, [...(byCommit.get(key) ?? []), run]);
+  }
+  const commits = [...byCommit.values()].map((commitRuns) => commitRuns[commitRuns.length - 1]);
 
   const prs = new Set<number>();
   const backendPrs = new Set<number>();
   const frontendPrs = new Set<number>();
-  const outcomes: Record<GateOutcome, number> = {
-    pass: 0,
-    fail: 0,
-    'manual-review': 0,
-    'fail-closed': 0,
-  };
+  const modes: ReviewMode[] = [];
+  const outcomes = zeroOutcomes();
+  const enforceOutcomes = zeroOutcomes();
+  let withoutEnforceOutcome = 0;
+  let enforceDecided = 0;
+  const wouldBlock: WouldBlock[] = [];
   const kept: Record<FindingSeverity, number> = { blocker: 0, major: 0, minor: 0, nit: 0 };
   let reported = 0;
   const sanitized = zeroSanitizeCounts();
@@ -340,7 +463,25 @@ export function summarizeCalibration(runs: readonly QaRunStats[]): CalibrationSu
     prs.add(run.pr);
     if (run.backendFiles > 0) backendPrs.add(run.pr);
     if (run.frontendFiles > 0) frontendPrs.add(run.pr);
+    if (!modes.includes(run.mode)) modes.push(run.mode);
     outcomes[run.outcome] += 1;
+
+    if (run.enforceOutcome === null) {
+      withoutEnforceOutcome += 1;
+    } else {
+      enforceOutcomes[run.enforceOutcome] += 1;
+      if (run.enforceOutcome !== 'fail-closed') {
+        enforceDecided += 1;
+        if (gateBlocksMerge(run.enforceOutcome, 'enforce')) {
+          wouldBlock.push({
+            pr: run.pr,
+            sha: run.sha,
+            enforceOutcome: run.enforceOutcome,
+            kept: run.kept,
+          });
+        }
+      }
+    }
 
     if (run.reported !== null && run.kept !== null) {
       reported += run.reported;
@@ -372,7 +513,13 @@ export function summarizeCalibration(runs: readonly QaRunStats[]): CalibrationSu
     backendPrs: backendPrs.size,
     frontendPrs: frontendPrs.size,
     commits: commits.length,
+    modes,
     outcomes,
+    enforceOutcomes,
+    withoutEnforceOutcome,
+    enforceDecided,
+    wouldBlock,
+    rereviewed: rereviewedCommits(byCommit),
     reported,
     kept,
     sanitized: withSanitizeCounts > 0 ? sanitized : null,
@@ -426,6 +573,48 @@ function reasonCount(
   return summary.sanitized ? String(summary.sanitized[reason]) : 'no data';
 }
 
+/** A share as a percentage to one decimal place, or nothing when there is no denominator. */
+function share(part: number, whole: number): string {
+  return whole > 0 ? ` (${((part / whole) * 100).toFixed(1)}%)` : '';
+}
+
+function ofCount(part: number, whole: number): string {
+  return whole > 0 ? `${part} of ${whole}${share(part, whole)}` : 'no data';
+}
+
+/**
+ * A commit as the report names it. The sha is read from a log line, so
+ * only a hex sha is printed, shortened; anything else is not echoed into
+ * Markdown that is pasted into an issue.
+ */
+function commitLabel(commit: CommitRef): string {
+  const sha = /^[0-9a-f]{7,64}$/i.test(commit.sha)
+    ? `\`${commit.sha.slice(0, 7)}\``
+    : '(unreadable sha)';
+  return `#${commit.pr} ${sha}`;
+}
+
+function formatKept(kept: Record<FindingSeverity, number>): string {
+  const present = SEVERITY_ORDER.filter((severity) => kept[severity] > 0);
+  return present.length > 0
+    ? present.map((severity) => `${kept[severity]} ${severity}`).join(', ')
+    : 'none';
+}
+
+function formatChange(changedValue: boolean | null): string {
+  if (changedValue === null) return 'not comparable';
+  return changedValue ? 'changed' : 'same';
+}
+
+function outcomeCounts(outcomes: Record<GateOutcome, number>): string {
+  return GATE_OUTCOMES.map((o) => `${outcomes[o]} ${o}`).join(', ');
+}
+
+/** The label of the real outcome row: the mode the runs ran in. */
+function modeLabel(modes: readonly ReviewMode[]): string {
+  return modes.length === 1 ? modes[0] : 'as run';
+}
+
 function formatDistribution(value: Distribution | null, budget: number): string {
   return value
     ? `${chars(value.median)} median, ${chars(value.p90)} p90, ${chars(value.max)} max (budget ${chars(budget)})`
@@ -470,7 +659,18 @@ export function renderCalibrationReport(
     `| Dropped: file in the pull request but not shown to the model | ${reasonCount(summary, 'notShown')} |`,
     `| Merged: steering findings folded into one | ${reasonCount(summary, 'steeringMerged')} |`,
     `| Kept, line number removed (line not shown to the model) | ${reasonCount(summary, 'lineCorrected')} |`,
-    `| Gate outcomes | ${GATE_OUTCOMES.map((o) => `${summary.outcomes[o]} ${o}`).join(', ')} |`,
+    `| Gate outcomes (${modeLabel(summary.modes)}) | ${outcomeCounts(summary.outcomes)} |`,
+    `| Gate outcomes (if enforced) | ${summary.commits - summary.withoutEnforceOutcome > 0 ? outcomeCounts(summary.enforceOutcomes) : 'no data'} |`,
+    `| Would have blocked if enforced | ${ofCount(summary.wouldBlock.length, summary.enforceDecided)} |`,
+    `| Commits reviewed more than once | ${summary.rereviewed.length} |`,
+    `| ... outcome if enforced changed between runs | ${ofCount(
+      summary.rereviewed.filter((commit) => commit.outcomeChanged === true).length,
+      summary.rereviewed.filter((commit) => commit.outcomeChanged !== null).length,
+    )} |`,
+    `| ... findings changed between runs (count by severity) | ${ofCount(
+      summary.rereviewed.filter((commit) => commit.findingsChanged === true).length,
+      summary.rereviewed.filter((commit) => commit.findingsChanged !== null).length,
+    )} |`,
     `| Runtime | ${formatSpread(summary.durationMs, seconds)} |`,
     `| Prompt tokens | ${formatSpread(summary.promptTokens, tokens)} |`,
     `| Completion tokens | ${formatSpread(summary.completionTokens, tokens)} |`,
@@ -508,6 +708,39 @@ export function renderCalibrationReport(
   if (summary.outcomes['fail-closed'] > 0) {
     lines.push(
       `${summary.outcomes['fail-closed']} review(s) failed closed; their findings, if any, are not counted.`,
+    );
+  }
+  if (summary.withoutEnforceOutcome > 0) {
+    lines.push(
+      `${summary.withoutEnforceOutcome} review(s) recorded no outcome if enforced (they predate version 4 of the stats line), so the enforce rows undercount.`,
+    );
+  }
+
+  if (summary.wouldBlock.length > 0) {
+    lines.push(
+      '',
+      '### Would have blocked if enforced',
+      '',
+      'Whether each block was a real defect is judged by hand in the verdict table on #59. Read the two together: the block rate above is only as good as the share of these that were real.',
+      '',
+      ...summary.wouldBlock.map(
+        (commit) =>
+          `- ${commitLabel(commit)}: ${commit.enforceOutcome}, findings ${commit.kept ? formatKept(commit.kept) : 'not recorded'}`,
+      ),
+    );
+  }
+
+  if (summary.rereviewed.length > 0) {
+    lines.push(
+      '',
+      '### Commits reviewed more than once',
+      '',
+      "The runs of one commit saw the same code, so a difference between them is the agent's own variance. Runs that failed closed are not compared.",
+      '',
+      ...summary.rereviewed.map(
+        (commit) =>
+          `- ${commitLabel(commit)}: ${commit.runs} runs; if enforced ${commit.enforceOutcomes.join(' -> ') || 'not recorded'} (${formatChange(commit.outcomeChanged)}); findings ${commit.kept.map(formatKept).join(' -> ') || 'not recorded'} (${formatChange(commit.findingsChanged)})`,
+      ),
     );
   }
 

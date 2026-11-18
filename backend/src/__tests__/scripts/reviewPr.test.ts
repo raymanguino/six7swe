@@ -651,11 +651,14 @@ describe('the script logs one stats line for calibration', () => {
     const lines = statsLines(result);
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatchObject({
-      v: 3,
+      v: 4,
       pr: 7,
       sha: 'abc123',
       mode: 'comment-only',
       outcome: 'pass',
+      // The default files include the lockfile, a protected path, so
+      // enforce mode would have sent this one to a human.
+      enforceOutcome: 'manual-review',
       files: 2,
       backendFiles: 1,
       frontendFiles: 0,
@@ -708,10 +711,45 @@ describe('the script logs one stats line for calibration', () => {
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatchObject({
       outcome: 'fail-closed',
+      enforceOutcome: 'fail-closed',
       reported: null,
       kept: null,
       tokens: { prompt: 1200, completion: 900, reasoning: 700 },
     });
+  });
+
+  it('records the enforce outcome without letting it block in comment-only mode', () => {
+    const result = runScript(BASE_ENV, {
+      modelResponse: BLOCKING_RESPONSE,
+      files: [SOURCE_FILE],
+    });
+
+    expect(statsLines(result)[0]).toMatchObject({ outcome: 'pass', enforceOutcome: 'fail' });
+    expect(result.status).toBe(0);
+    expect(reviewPost(result).event).toBe('COMMENT');
+    expect(reviewPost(result).body).not.toContain('if enforced');
+  });
+
+  it('records manual-review as the enforce outcome for a protected path', () => {
+    const result = runScript(BASE_ENV, {
+      modelResponse: BLOCKING_RESPONSE,
+      files: [SOURCE_FILE, LOCKFILE],
+    });
+
+    expect(statsLines(result)[0]).toMatchObject({
+      outcome: 'pass',
+      enforceOutcome: 'manual-review',
+    });
+    expect(result.status).toBe(0);
+  });
+
+  it('records the same outcome twice in enforce mode', () => {
+    const result = runScript(
+      { ...BASE_ENV, REVIEW_MODE: 'enforce' },
+      { modelResponse: BLOCKING_RESPONSE, files: [SOURCE_FILE] },
+    );
+
+    expect(statsLines(result)[0]).toMatchObject({ outcome: 'fail', enforceOutcome: 'fail' });
   });
 
   it('never puts a finding message in the stats line', () => {
