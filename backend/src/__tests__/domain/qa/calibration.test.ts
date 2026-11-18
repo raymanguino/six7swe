@@ -783,12 +783,25 @@ describe('the prompt version in the stats line', () => {
       line(run({ v: 4 })),
       line(withoutPrompt(run())),
       line(run({ promptVersion: 0 })),
-      line(run({ promptVersion: 99 })),
       line(run({ promptVersion: null })),
       line({ ...run(), promptVersion: '4' }),
     ].join('\n');
 
     expect(parseStatsLines(log)).toEqual([]);
+  });
+
+  it('keeps a run whose prompt version this checkout does not know, and says so', () => {
+    const newer = run({ promptVersion: 99 });
+    const { v: _v, ...rest } = newer;
+
+    const runs = parseStatsLines(formatStatsLine(rest));
+    expect(runs).toEqual([newer]);
+
+    const summary = summarizeCalibration(runs);
+    expect(summary.withUnknownPromptVersion).toBe(1);
+    expect(renderCalibrationReport(summary, CONTEXT)).toContain(
+      '1 review(s) used a prompt version unknown to this checkout',
+    );
   });
 
   it('still requires the enforce outcome on a current line', () => {

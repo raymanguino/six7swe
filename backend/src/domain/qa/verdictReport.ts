@@ -9,8 +9,8 @@
  * flattened to one line with its pipes escaped.
  */
 
-import { REVIEW_PROMPT_VERSIONS } from './promptVersion';
-import { codeSpan, flattenText } from './review';
+import { isKnownPromptVersion, REVIEW_PROMPT_VERSIONS } from './promptVersion';
+import { codeSpan, escapePipes, flattenText, stripInvisible } from './review';
 import type { QaRunStats } from './calibration';
 import type { FindingSeverity } from './verdict';
 import {
@@ -30,27 +30,6 @@ import {
 } from './verdictSummary';
 
 /**
- * Characters that change how text displays without showing themselves:
- * zero-width characters, directional marks, bidi embeddings, overrides and
- * isolates, and the byte order mark.
- */
-const INVISIBLE_CHARACTERS = /[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
-
-/** Removes the characters that could make text read as something it is not. */
-export function stripInvisible(text: string): string {
-  return text.replace(INVISIBLE_CHARACTERS, '');
-}
-
-/**
- * Escapes every pipe, so text cannot end a table cell. The review body
- * escapes its location cell the same way, and `parseAgentReview` reads
- * `\|` back as a pipe.
- */
-export function escapePipes(text: string): string {
-  return text.replace(/\|/g, '\\|');
-}
-
-/**
  * Model output in a table cell: a code span, so GitHub neither links a URL
  * nor resolves an @mention in it, with its pipes escaped.
  */
@@ -58,10 +37,73 @@ function modelCell(text: string): string {
   return escapePipes(codeSpan(stripInvisible(text)));
 }
 
-/** Hand-kept text in a table cell: its Markdown kept, on one line, with no cell boundary. */
-function handCell(text: string): string {
+/** A mention, or a bare URL GitHub would link on its own. */
+const MENTION_OR_URL =
+  /(?<![\w`])@[A-Za-z0-9][\w-]*|\b(?:https?:\/\/|www\.)[^\s<>`()]*[^\s<>`().,;:!?]/g;
+
+/** Outside a code span: the characters that open a link, an image or HTML, and the escape. */
+const ACTIVE_MARKDOWN = /[\\<>[\]]/g;
+
+/** Text outside a code span: mentions and URLs wrapped in code spans, active characters escaped. */
+function inertSegment(text: string): string {
+  let out = '';
+  let last = 0;
+  for (const match of text.matchAll(MENTION_OR_URL)) {
+    out += text.slice(last, match.index).replace(ACTIVE_MARKDOWN, '\\$&');
+    out += codeSpan(match[0]);
+    last = match.index + match[0].length;
+  }
+  return out + text.slice(last).replace(ACTIVE_MARKDOWN, '\\$&');
+}
+
+/** The start of the next backtick run of exactly `length` characters, or -1. */
+function closingFence(text: string, from: number, length: number): number {
+  const runs = /`+/g;
+  runs.lastIndex = from;
+  for (let match = runs.exec(text); match; match = runs.exec(text)) {
+    if (match[0].length === length) return match.index;
+  }
+  return -1;
+}
+
+/**
+ * Hand-kept Markdown, made inert for an issue comment.
+ *
+ * Code spans and emphasis keep working, so the notes read as written. A
+ * mention or a bare URL becomes a code span, so it notifies and links no
+ * one, and the characters that open a link, an image or HTML (an unclosed
+ * comment included) are escaped. Invisible characters are stripped and
+ * the text is flattened onto one line.
+ */
+export function inertMarkdown(text: string): string {
   const flat = flattenText(stripInvisible(text));
-  return flat.length > 0 ? escapePipes(flat) : ' ';
+  let out = '';
+  let index = 0;
+  while (index < flat.length) {
+    const tick = flat.indexOf('`', index);
+    if (tick === -1) {
+      out += inertSegment(flat.slice(index));
+      break;
+    }
+    out += inertSegment(flat.slice(index, tick));
+    const fence = /^`+/.exec(flat.slice(tick))?.[0] ?? '`';
+    const close = closingFence(flat, tick + fence.length, fence.length);
+    if (close === -1) {
+      // An unclosed fence is text, not a code span.
+      out += fence.replace(/`/g, '\\`');
+      index = tick + fence.length;
+    } else {
+      out += flat.slice(tick, close + fence.length);
+      index = close + fence.length;
+    }
+  }
+  return out;
+}
+
+/** Hand-kept text in a table cell: inert Markdown, on one line, with no cell boundary. */
+function handCell(text: string): string {
+  const safe = inertMarkdown(text);
+  return safe.length > 0 ? escapePipes(safe) : ' ';
 }
 
 function shaCell(sha: string | null): string {
@@ -69,7 +111,10 @@ function shaCell(sha: string | null): string {
 }
 
 function promptCell(version: number | null): string {
-  return version === null ? 'not recorded' : `v${version}`;
+  if (version === null) return 'not recorded';
+  return isKnownPromptVersion(version)
+    ? `v${version}`
+    : `v${version} (unknown to this checkout, update)`;
 }
 
 function coverageCell(coverage: RowCoverage | null): string {
@@ -137,6 +182,13 @@ function missCounts(tally: DefectTally): string {
   return `${tally.missed} missed, ${tally.missedUnseen} missed (unseen)`;
 }
 
+/** What the lists of the pull requests not read independently hold. */
+function noticedCounts(tally: DefectTally): string {
+  if (tally.defects === 0) return 'no defects recorded';
+  const misses = tally.missed + tally.missedUnseen === 0 ? 'no misses recorded' : missCounts(tally);
+  return `${tally.defects} defect(s) recorded, ${tally.found} found by the agent, ${misses}`;
+}
+
 /**
  * Recall over the independently read pull requests, two ways: over every
  * recorded defect, and over the defects in files the model was shown,
@@ -162,7 +214,7 @@ function missLines(misses: MissCounts): string[] {
   const noticed =
     misses.noticedOnlyPrs.length > 0
       ? [
-          `**Noticed only:** ${missCounts(misses.noticedOnly)} in ${prList(misses.noticedOnlyPrs)}, which were not read independently. These lists hold only the defects someone noticed, so this is a floor, not a measurement, and it is not part of the figures above.`,
+          `**Noticed only:** ${noticedCounts(misses.noticedOnly)}, in ${prList(misses.noticedOnlyPrs)}, which were not read independently. These lists hold only the defects someone noticed, so this is a floor, not a measurement, and it is not part of the figures above.`,
         ]
       : [];
   const uncovered =
@@ -328,7 +380,7 @@ export function renderVerdictReport(
 
   if (file.notes.length > 0) {
     lines.push('', '### Notes', '');
-    for (const note of file.notes) lines.push(stripInvisible(note), '');
+    for (const note of file.notes) lines.push(inertMarkdown(note), '');
     lines.pop();
   }
 

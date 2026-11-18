@@ -33,7 +33,7 @@ export function token(): string {
 }
 
 /** What an "owner/repo" may look like; it goes into API paths. */
-const REPOSITORY_PATTERN = /^[\w.-]+\/[\w.-]+$/;
+const REPOSITORY_PATTERN = /^[\w-][\w.-]*\/[\w-][\w.-]*$/;
 
 /** A remote URL with any credentials in it masked, for an error message. */
 function maskCredentials(url: string): string {

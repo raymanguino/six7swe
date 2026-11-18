@@ -250,12 +250,17 @@ function hasValidEnforceFields(value: Record<string, unknown>): boolean {
 }
 
 /**
- * The version 5 field: a version from the prompt history. An older line
- * has it as null (filled in by the upgrade).
+ * The version 5 field: a positive version number. An older line has it as
+ * null (filled in by the upgrade).
+ *
+ * A version this checkout's history does not know is still accepted: it is
+ * what a newer prompt logs, and a checkout that has not caught up must not
+ * drop those runs. The report counts them instead
+ * (`withUnknownPromptVersion`).
  */
 function hasValidPromptVersion(value: Record<string, unknown>): boolean {
   if (typeof value.v !== 'number' || value.v < 5) return value.promptVersion === null;
-  return isKnownPromptVersion(value.promptVersion);
+  return isCount(value.promptVersion) && value.promptVersion > 0;
 }
 
 function isSanitizeCounts(value: unknown): value is SanitizeCounts {
@@ -452,6 +457,8 @@ export interface CalibrationSummary {
   reasoningTokens: Spread | null;
   /** Completed reviews that reported no token usage. */
   withoutTokens: number;
+  /** Commits whose latest run logged a prompt version this checkout does not know. */
+  withUnknownPromptVersion: number;
   /** Reviews whose stats carry coverage (version 2 lines with a built diff). */
   withCoverage: number;
   /** Of those, the reviews that left files out. */
@@ -670,6 +677,9 @@ export function summarizeCalibration(runs: readonly QaRunStats[]): CalibrationSu
     completionTokens: spread(completionTokens),
     reasoningTokens: spread(reasoningTokens),
     withoutTokens,
+    withUnknownPromptVersion: commits.filter(
+      (run) => run.promptVersion !== null && !isKnownPromptVersion(run.promptVersion),
+    ).length,
     withCoverage: omittedFiles.length,
     withOmittedFiles: omittedFiles.filter((n) => n > 0).length,
     omittedFiles: spread(omittedFiles),
@@ -859,6 +869,11 @@ export function renderCalibrationReport(
   if (summary.withoutSanitizeCounts > 0) {
     lines.push(
       `${summary.withoutSanitizeCounts} completed review(s) logged no sanitizer counts (they predate version 3 of the stats line), so the rows above undercount.`,
+    );
+  }
+  if (summary.withUnknownPromptVersion > 0) {
+    lines.push(
+      `${summary.withUnknownPromptVersion} review(s) used a prompt version unknown to this checkout: update it before reading the numbers per prompt.`,
     );
   }
   if (summary.withoutTokens > 0) {

@@ -31,7 +31,7 @@
  *   GITHUB_REPOSITORY          optional, "owner/repo"; defaults to the `origin` remote
  */
 
-import { readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import {
@@ -50,6 +50,9 @@ import { get, PER_PAGE, readJson, readRunData, repository, token } from './qa-ru
 const FILE_PATH = path.join(__dirname, '..', 'qa', 'verdicts.json');
 const DISPLAY_PATH = 'backend/qa/verdicts.json';
 const COMMAND = 'pnpm --filter @six7swe/backend qa:verdicts';
+
+/** Past this, the report is close to GitHub's comment limit of 65,536 characters. */
+const COMMENT_WARNING_CHARS = 60_000;
 
 const MODES = ['--sync', '--offline', '--check'] as const;
 type Mode = (typeof MODES)[number] | 'render';
@@ -90,8 +93,13 @@ function readVerdictFile(): VerdictFile {
 function writeVerdictFile(file: VerdictFile): void {
   const checked = validated(file, `The synced ${DISPLAY_PATH}`);
   const temporary = `${FILE_PATH}.${process.pid}.tmp`;
-  writeFileSync(temporary, formatVerdictFile(checked), 'utf-8');
-  renameSync(temporary, FILE_PATH);
+  try {
+    writeFileSync(temporary, formatVerdictFile(checked), 'utf-8');
+    renameSync(temporary, FILE_PATH);
+  } finally {
+    // Gone after a successful rename; left behind only by a failed one.
+    rmSync(temporary, { force: true });
+  }
 }
 
 const reviewsSchema = z.array(
@@ -139,12 +147,14 @@ async function sync(
   auth: string,
 ): Promise<VerdictFile> {
   const reviews: PullRequestReview[] = [];
+  const unreadable = new Set<number>();
   for (const pr of prsToSync(file, runs)) {
     try {
       reviews.push(...(await agentReviews(repo, pr, auth)));
     } catch (error: unknown) {
       // One pull request that cannot be read (deleted, say) must not stop
-      // the others; its findings stay unrecoverable for now.
+      // the others; its findings are reported apart, below.
+      unreadable.add(pr);
       process.stderr.write(`Could not read the reviews on #${pr}: ${message(error)}\n`);
     }
   }
@@ -154,7 +164,13 @@ async function sync(
   process.stderr.write(
     `${DISPLAY_PATH}: ${result.added.length} row(s) added, ${result.updated.length} row(s) updated from their run.\n`,
   );
-  for (const missing of result.unrecoverable) {
+  const notRead = result.unrecoverable.filter((missing) => unreadable.has(missing.pr));
+  for (const missing of notRead) {
+    process.stderr.write(
+      `  ${missing.findingId} (#${missing.pr} ${missing.sha.slice(0, 7)}): logged, but the reviews on its pull request could not be read; try again later.\n`,
+    );
+  }
+  for (const missing of result.unrecoverable.filter((entry) => !unreadable.has(entry.pr))) {
     process.stderr.write(
       `  ${missing.findingId} (#${missing.pr} ${missing.sha.slice(0, 7)}): logged, but no review the agent posted shows it; it stays unadjudicated.\n`,
     );
@@ -200,9 +216,13 @@ async function main(): Promise<void> {
     }
   }
 
-  process.stdout.write(
-    renderVerdictReport(file, runs, { command: COMMAND, filePath: DISPLAY_PATH }),
-  );
+  const report = renderVerdictReport(file, runs, { command: COMMAND, filePath: DISPLAY_PATH });
+  if (report.length > COMMENT_WARNING_CHARS) {
+    process.stderr.write(
+      `The report is ${report.length.toLocaleString('en-US')} characters; a GitHub comment holds at most 65,536. Split it, for example the findings table into its own comment.\n`,
+    );
+  }
+  process.stdout.write(report);
 }
 
 main().catch((error: unknown) => {

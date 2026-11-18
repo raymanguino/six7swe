@@ -305,9 +305,14 @@ const verdictFileSchema = verdictFileShape.superRefine((file, ctx) => {
           continue;
         }
         if (pr !== entry.pr) issue(`${ref} is a finding on #${pr}, not #${entry.pr}`, path);
+        // Only a finding judged to have found something real can be credited
+        // with a defect; an unjudged or unsure one would inflate the recall.
         const verdict = row ? resolvedVerdict(row, byId) : legacy?.verdict;
-        if (verdict === 'false positive' || verdict === 'noise') {
-          issue(`${ref} is judged "${verdict}", so it cannot have found a defect`, path);
+        if (verdict !== 'real' && verdict !== 'useful') {
+          issue(
+            `${ref} is ${verdict ? `judged "${verdict}"` : 'not judged'}; only a real or useful finding can have found a defect`,
+            path,
+          );
         }
       }
     });

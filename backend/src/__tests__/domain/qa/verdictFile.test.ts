@@ -211,7 +211,13 @@ describe('validating the verdict file', () => {
       errorsOf(
         file({ findings: [row({ verdict: 'false positive' })], groundTruth: [truth([ID_1])] }),
       )[0],
-    ).toContain('cannot have found a defect');
+    ).toContain('judged "false positive"; only a real or useful finding can have found a defect');
+    expect(
+      errorsOf(file({ findings: [row({ verdict: 'unsure' })], groundTruth: [truth([ID_1])] }))[0],
+    ).toContain('judged "unsure"; only a real or useful finding');
+    expect(errorsOf(file({ findings: [row()], groundTruth: [truth([ID_1])] }))[0]).toContain(
+      'is not judged; only a real or useful finding',
+    );
     expect(errorsOf(file({ legacy: [legacy()], groundTruth: [truth(['legacy-1'])] }))[0]).toContain(
       'is a finding on #5, not #7',
     );
@@ -517,7 +523,7 @@ describe('summarising the verdicts', () => {
       '**Missed:** 0 missed, 0 missed (unseen), over the 1 pull request(s) read independently of the agent (#7).',
     );
     expect(report).toContain(
-      '**Noticed only:** 1 missed, 0 missed (unseen) in #8, which were not read independently.',
+      '**Noticed only:** 1 defect(s) recorded, 0 found by the agent, 1 missed, 0 missed (unseen), in #8, which were not read independently.',
     );
     expect(report).toContain('this is a floor, not a measurement');
   });
@@ -654,8 +660,10 @@ describe('rendering the verdict report', () => {
   });
 
   it('strips bidi and zero-width characters from what it renders', () => {
-    const invisible = [0x202e, 0x200b, 0x2066, 0xfeff].map((code) => String.fromCharCode(code));
-    const hidden = `a${invisible[0]}b${invisible[1]}c${invisible[2]}d${invisible[3]}e`;
+    const invisible = [0x202e, 0x200b, 0x2066, 0xfeff, 0x00ad, 0x180e, 0xfe0f].map((code) =>
+      String.fromCharCode(code),
+    );
+    const hidden = `a${invisible[0]}b${invisible[1]}c${invisible[2]}d${invisible[3]}e${invisible.slice(4).join('')}`;
     const report = renderVerdictReport(
       file({
         findings: [row({ message: hidden, note: hidden, verdict: 'real' })],
@@ -684,5 +692,58 @@ describe('rendering the verdict report', () => {
     expect(renderVerdictReport(file({ findings, legacy: legacyRows }), null, context)).toContain(
       '39 real of 49 -- 79.6%, against a target of at least 80%',
     );
+  });
+
+  it('marks a prompt version this checkout does not know, rather than dropping the row', () => {
+    const report = renderVerdictReport(
+      file({ findings: [row({ promptVersion: 99, verdict: 'real' })] }),
+      null,
+      context,
+    );
+
+    expect(report).toContain('| v99 (unknown to this checkout, update) |');
+    expect(report).toContain('v99 (unknown to this checkout, update): 1 real of 1');
+  });
+
+  it('says "no defects recorded" for pull requests not read independently that list none', () => {
+    const report = renderVerdictReport(
+      file({ groundTruth: [{ pr: 72, readIndependently: false, note: '', defects: [] }] }),
+      null,
+      context,
+    );
+
+    expect(report).toContain('**Noticed only:** no defects recorded, in #72,');
+  });
+});
+
+describe('rendering hand-kept text', () => {
+  const context = { command: 'x', filePath: 'y' };
+  const hostile =
+    'Ask @raymanguino, see [here](https://evil.example) and ![x](https://evil.example/i.png), <b>bold</b> <!-- hide';
+
+  function render(overrides: Partial<VerdictFile>): string {
+    return renderVerdictReport(file(overrides), null, context);
+  }
+
+  it('makes a mention, a link, an image and HTML inert in a table cell', () => {
+    const report = render({ legacy: [legacy({ note: hostile })] });
+    const line = report.split('\n').find((candidate) => candidate.startsWith('| legacy-1')) ?? '';
+
+    expect(line).toContain('`@raymanguino`');
+    expect(line).toContain('\\[here\\](`https://evil.example`)');
+    expect(line).toContain('!\\[x\\](`https://evil.example/i.png`)');
+    expect(line).toContain('\\<b\\>bold\\</b\\>');
+    expect(line).toContain('\\<!-- hide');
+    expect(line).not.toMatch(/(^|[^\\`])[<[]/);
+  });
+
+  it('does the same in the notes, and keeps code spans and emphasis readable', () => {
+    const report = render({
+      notes: [`**Bold** with \`a <tag> @inside\` and ${hostile}`, 'An unclosed ` tick <!--'],
+    });
+
+    expect(report).toContain('**Bold** with `a <tag> @inside` and Ask `@raymanguino`');
+    expect(report).toContain('\\<!-- hide');
+    expect(report).toContain('An unclosed \\` tick \\<!--');
   });
 });
