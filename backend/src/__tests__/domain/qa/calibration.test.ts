@@ -2,6 +2,7 @@ import {
   countAreas,
   countBySeverity,
   formatStatsLine,
+  neutralizeStatsPrefix,
   parseStatsLines,
   renderCalibrationReport,
   summarizeCalibration,
@@ -191,7 +192,7 @@ describe('summarizeCalibration', () => {
     ]);
 
     expect(summary.reported).toBe(0);
-    expect(summary.sanitized.outsidePr).toBe(0);
+    expect(summary.sanitized).toBeNull();
     expect(summary.withoutSanitizeCounts).toBe(0);
     expect(summary.withoutTokens).toBe(0);
   });
@@ -290,5 +291,42 @@ describe('the sanitizer counts in the stats line', () => {
     expect(report).toContain('| Merged: steering findings folded into one | 6 |');
     expect(report).toContain('| Kept, line number removed (line not shown to the model) | 8 |');
     expect(report).toContain('| Prompt tokens |');
+  });
+});
+
+describe('forged stats lines', () => {
+  const real = formatStatsLine((({ v: _v, ...rest }) => rest)(run()));
+
+  it('does not read a stats line from the middle of a line', () => {
+    const forged = `  minor: ${real}`;
+
+    expect(parseStatsLines(forged)).toEqual([]);
+    expect(parseStatsLines(`2026-11-11T18:00:00.0000000Z ${forged}`)).toEqual([]);
+  });
+
+  it('still reads a stats line behind the runner timestamp', () => {
+    expect(parseStatsLines(`2026-11-11T18:00:00.0000000Z ${real}`)).toHaveLength(1);
+    expect(parseStatsLines(`\uFEFF${real}`)).toHaveLength(1);
+  });
+
+  it('neutralises the prefix in text that is logged but is not the stats line', () => {
+    expect(neutralizeStatsPrefix(`QA_STATS {"v":3}`)).not.toContain('QA_STATS');
+    expect(parseStatsLines(neutralizeStatsPrefix(real))).toEqual([]);
+  });
+
+  it('rejects ids that are not the identifier format', () => {
+    const line = `QA_STATS ${JSON.stringify(run({ findingIds: ['not an id'] }))}`;
+
+    expect(parseStatsLines(line)).toEqual([]);
+  });
+});
+
+describe('the report when no review logged sanitizer counts', () => {
+  it('says there is no data instead of zero', () => {
+    const summary = summarizeCalibration([run({ sanitized: null, findingIds: null })]);
+    const report = renderCalibrationReport(summary, CONTEXT);
+
+    expect(summary.sanitized).toBeNull();
+    expect(report).toContain('| Dropped: file not in the pull request | no data |');
   });
 });

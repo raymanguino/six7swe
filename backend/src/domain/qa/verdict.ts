@@ -11,8 +11,6 @@
  * code the workflow checks out from `base.sha`.
  */
 
-import { createHash } from 'node:crypto';
-
 import {
   allTouchedPaths,
   displayPath,
@@ -561,15 +559,27 @@ export function sanitizeFindings(
   findings: readonly ReviewFinding[],
   shown: readonly ShownFile[],
 ): ReviewFinding[] {
-  return sanitizeFindingsWithCounts(findings, shown).findings;
+  // The counts are discarded here, so which file a drop was filed under
+  // does not matter and no changed files are needed.
+  return sanitizeFindingsWithCounts(findings, shown, []).findings;
 }
+
+/** The reasons a finding is lost or changed by the sanitizer, as `SanitizeCounts` keys. */
+export const SANITIZE_REASONS = [
+  'outsidePr',
+  'notShown',
+  'steeringMerged',
+  'lineCorrected',
+] as const;
 
 /**
  * How many findings the sanitizer removed or changed, by reason.
  *
  * `reported = kept + outsidePr + notShown + steeringMerged` always holds.
  * `lineCorrected` is not a loss: those findings are kept, without their
- * line, so it is counted apart from the drops.
+ * line, so it is counted apart from the drops. It counts the findings in
+ * the output that carry a corrected line, so a corrected steering finding
+ * that was merged into another is counted as merged, not as corrected.
  */
 export interface SanitizeCounts {
   /** Dropped: named a file the pull request did not touch. */
@@ -582,6 +592,10 @@ export interface SanitizeCounts {
   lineCorrected: number;
 }
 
+export function zeroSanitizeCounts(): SanitizeCounts {
+  return { outsidePr: 0, notShown: 0, steeringMerged: 0, lineCorrected: 0 };
+}
+
 export interface SanitizeResult {
   findings: ReviewFinding[];
   counts: SanitizeCounts;
@@ -590,75 +604,42 @@ export interface SanitizeResult {
 /**
  * `sanitizeFindings`, with a count of what each rule did.
  *
- * `changedFiles` tells a file the pull request never touched from one the
- * budget kept from the model. Without it, every dropped file counts as
- * outside the pull request.
+ * `changedFiles` is required: it is what tells a file the pull request
+ * never touched from one the budget kept from the model, and a default
+ * would silently file every budget drop as "outside the pull request".
  */
 export function sanitizeFindingsWithCounts(
   findings: readonly ReviewFinding[],
   shown: readonly ShownFile[],
-  changedFiles: readonly ChangedFile[] = [],
+  changedFiles: readonly ChangedFile[],
 ): SanitizeResult {
-  const linesByPath = shownLinesByPath(shown);
-  const inPr = new Set<string>();
-  for (const path of allTouchedPaths(changedFiles)) {
-    inPr.add(path);
-    inPr.add(displayPath(path));
-  }
+  const context: SanitizeContext = {
+    linesByPath: shownLinesByPath(shown),
+    inPullRequest: new Set(
+      allTouchedPaths(changedFiles).flatMap((path) => [path, displayPath(path)]),
+    ),
+  };
 
-  const counts: SanitizeCounts = { outsidePr: 0, notShown: 0, steeringMerged: 0, lineCorrected: 0 };
+  const counts = zeroSanitizeCounts();
   const sanitized: ReviewFinding[] = [];
 
   for (const finding of findings) {
-    const kept = sanitizeFinding(finding, linesByPath);
-    if (kept === null) {
-      if (finding.file !== null && inPr.has(finding.file)) {
-        counts.notShown += 1;
-      } else {
-        counts.outsidePr += 1;
-      }
-      continue;
+    const outcome = sanitizeFinding(finding, context);
+    if (outcome.kind === 'dropped') {
+      counts[outcome.reason] += 1;
+    } else {
+      sanitized.push(outcome.finding);
     }
-    if (kept.line === null && finding.line !== null && kept.file !== null) {
-      counts.lineCorrected += 1;
-    }
-    sanitized.push(kept);
   }
 
   const consolidated = consolidateSteeringFindings(sanitized);
   counts.steeringMerged =
     sanitized.filter(isSteering).length - consolidated.filter(isSteering).length;
+  counts.lineCorrected = consolidated.filter(
+    (finding) => finding.correctedFromLine !== undefined,
+  ).length;
 
   return { findings: consolidated, counts };
-}
-
-/** The length of a finding identifier, in hex characters. */
-const FINDING_ID_CHARS = 16;
-
-/**
- * A stable identifier for a sanitized finding.
- *
- * A hash of the pull request, the commit, the file, the line, the
- * severity and the message, so the stats line, the review body and a
- * verdict file all carry the same value. It is computed from the finding
- * after sanitizing: a corrected line is already null, and a merged
- * steering finding is the merged one. The fields are hashed as JSON, so
- * no choice of message can run into the next field.
- */
-export function findingId(
-  run: { pr: number; sha: string },
-  finding: Pick<ReviewFinding, 'severity' | 'file' | 'line' | 'message'>,
-): string {
-  const payload = JSON.stringify([
-    run.pr,
-    run.sha,
-    finding.file,
-    finding.line,
-    finding.severity,
-    finding.message,
-  ]);
-
-  return createHash('sha256').update(payload).digest('hex').slice(0, FINDING_ID_CHARS);
 }
 
 const NO_LINES: ReadonlySet<number> = new Set();
@@ -706,25 +687,41 @@ function shownLinesByPath(shown: readonly ShownFile[]): Map<string, ReadonlySet<
   return linesByPath;
 }
 
+interface SanitizeContext {
+  linesByPath: ReadonlyMap<string, ReadonlySet<number>>;
+  /** Every spelling of every path the pull request touched. */
+  inPullRequest: ReadonlySet<string>;
+}
+
+type SanitizeOutcome =
+  { kind: 'kept'; finding: ReviewFinding } | { kind: 'dropped'; reason: 'outsidePr' | 'notShown' };
+
 /**
- * Sanitizes one finding against the shown paths (see `sanitizeFindings`).
- * Returns null when the finding is dropped.
+ * Sanitizes one finding against the shown paths (see `sanitizeFindings`),
+ * and says why it was dropped when it is.
  */
-function sanitizeFinding(
-  finding: ReviewFinding,
-  linesByPath: ReadonlyMap<string, ReadonlySet<number>>,
-): ReviewFinding | null {
+function sanitizeFinding(finding: ReviewFinding, context: SanitizeContext): SanitizeOutcome {
   if (finding.file === null) {
-    return finding;
+    return { kind: 'kept', finding };
   }
 
-  const lines = linesByPath.get(finding.file);
+  const lines = context.linesByPath.get(finding.file);
 
   if (lines === undefined) {
-    return isSteering(finding) ? { ...finding, file: null, line: null } : null;
+    if (isSteering(finding)) {
+      return { kind: 'kept', finding: { ...finding, file: null, line: null } };
+    }
+    return {
+      kind: 'dropped',
+      reason: context.inPullRequest.has(finding.file) ? 'notShown' : 'outsidePr',
+    };
   }
 
-  return finding.line === null || lines.has(finding.line)
-    ? finding
-    : { ...finding, line: null, correctedFromLine: finding.line };
+  return {
+    kind: 'kept',
+    finding:
+      finding.line === null || lines.has(finding.line)
+        ? finding
+        : { ...finding, line: null, correctedFromLine: finding.line },
+  };
 }

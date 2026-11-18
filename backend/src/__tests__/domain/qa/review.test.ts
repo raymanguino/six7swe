@@ -13,6 +13,7 @@ import {
   severityLabel,
   type ReviewBodyInput,
 } from '../../../domain/qa/review';
+import { findingIds } from '../../../domain/qa/findingId';
 import type { DiffCoverage } from '../../../domain/qa/diff';
 import type { ReviewFinding } from '../../../domain/qa/verdict';
 
@@ -526,5 +527,26 @@ describe('a corrected line in the review body', () => {
 
   it('shows a finding with no named line as before', () => {
     expect(body({ findings: [finding()], reportedCount: 1 })).not.toContain('is not in the diff');
+  });
+});
+
+describe('finding ids in the review body', () => {
+  const list = [
+    finding({ severity: 'major', message: 'Same.' }),
+    finding({ severity: 'major', message: 'Same.' }),
+    finding({ severity: 'nit', message: 'Other.' }),
+  ];
+
+  it('shows each finding with the id the stats line carries for the same list', () => {
+    const text = body({ findings: list, reportedCount: 3, pr: 7 });
+    const ids = findingIds({ pr: 7, sha: 'abc123' }, list);
+
+    expect(text).toContain('| Severity | Location | Finding | ID |');
+    for (const id of ids) expect(text).toContain(`\`${id}\``);
+    expect(new Set(ids).size).toBe(3);
+  });
+
+  it('has no id column when the pull request is not given', () => {
+    expect(body({ findings: list, reportedCount: 3 })).not.toContain('| ID |');
   });
 });

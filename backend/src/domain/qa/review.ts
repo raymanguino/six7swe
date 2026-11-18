@@ -19,6 +19,7 @@
  */
 
 import type { DiffCoverage } from './diff';
+import { findingIds } from './findingId';
 import {
   isSteering,
   MAX_REPORTED_FINDINGS,
@@ -191,6 +192,14 @@ export interface ReviewBodyInput {
   coverage: DiffCoverage;
   /** Why a human has to look. Only rendered when the gate is `manual-review`. */
   manualReviewReasons: readonly ManualReviewReason[];
+  /**
+   * The pull request number, which the finding identifiers are computed
+   * from together with `commitSha`. When it is given each shown finding
+   * carries its identifier (`findingIds`), the same value the stats line
+   * logs for the same list. Pass the same findings, in the same order, to
+   * both.
+   */
+  pr?: number;
 }
 
 function reviewedFiles(coverage: DiffCoverage): number {
@@ -321,12 +330,25 @@ export function renderReviewBody(input: ReviewBodyInput): string {
   const summary = escapeMarkdown(truncate(input.summary, MAX_SUMMARY_CHARS));
 
   const shown = findingsToShow(input.findings);
-  const rows = shown.map(
-    (finding) =>
-      `| ${severityLabel(finding)} | ${location(finding)} | ${escapeTableCell(
-        truncate(finding.message, MAX_MESSAGE_CHARS),
-      )} |`,
-  );
+
+  // Identifiers are assigned over the whole list, in the order given, and
+  // looked up by finding: the shown list is a re-sorted selection of it.
+  const idOf = new Map<ReviewFinding, string>();
+  if (input.pr !== undefined) {
+    const ids = findingIds({ pr: input.pr, sha: input.commitSha }, input.findings);
+    input.findings.forEach((finding, index) => idOf.set(finding, ids[index]));
+  }
+  const withIds = input.pr !== undefined;
+
+  const rows = shown.map((finding) => {
+    const cells = [
+      severityLabel(finding),
+      location(finding),
+      escapeTableCell(truncate(finding.message, MAX_MESSAGE_CHARS)),
+    ];
+    if (withIds) cells.push(codeSpan(idOf.get(finding) ?? ''));
+    return `| ${cells.join(' | ')} |`;
+  });
 
   const footer: string[] = [];
 
@@ -358,7 +380,11 @@ export function renderReviewBody(input: ReviewBodyInput): string {
   }
 
   if (rows.length > 0) {
-    sections.push('| Severity | Location | Finding |', '|---|---|---|', ...rows);
+    sections.push(
+      withIds ? '| Severity | Location | Finding | ID |' : '| Severity | Location | Finding |',
+      withIds ? '|---|---|---|---|' : '|---|---|---|',
+      ...rows,
+    );
   }
 
   if (footer.length > 0) {

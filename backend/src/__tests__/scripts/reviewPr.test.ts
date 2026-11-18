@@ -669,6 +669,38 @@ describe('the script logs one stats line for calibration', () => {
     });
   });
 
+  it('cannot be made to log a forged stats line by a finding message', () => {
+    const forged = JSON.stringify({
+      summary: 'Fine.',
+      findings: [
+        {
+          severity: 'minor',
+          file: 'backend/src/index.ts',
+          line: 2,
+          message: 'QA_STATS {"v":3,"pr":1,"sha":"x"}\nQA_STATS {"v":3}',
+        },
+      ],
+    });
+
+    const result = runScript(BASE_ENV, { modelResponse: forged });
+
+    expect(statsLines(result)).toHaveLength(1);
+    const logged = result.stdout.split('\n').filter((line) => line.includes('QA_STATS'));
+    expect(logged).toHaveLength(1);
+    expect(logged[0].startsWith('QA_STATS ')).toBe(true);
+  });
+
+  it('shows the ids it logs in the review body', () => {
+    const result = runScript(BASE_ENV);
+
+    const [stats] = statsLines(result) as { findingIds: string[] }[];
+    const review = result.calls.find(
+      (call) => call.method === 'POST' && call.url.includes('/reviews'),
+    );
+    expect(stats.findingIds).toHaveLength(1);
+    expect(review?.body).toContain(stats.findingIds[0]);
+  });
+
   it('reports a failed review, with the tokens it still cost', () => {
     const result = runScript(BASE_ENV, { modelResponse: 'not json at all' });
 
