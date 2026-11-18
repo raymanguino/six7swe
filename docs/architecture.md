@@ -360,6 +360,6 @@ imports:
 ## QA agent
 
 Every pull request is reviewed by an LLM-based QA agent (`.github/workflows/qa-review.yml`,
-`backend/src/domain/qa/`). It is in phase 1, comment-only. How its findings are
-judged and calibrated for the phase 2 decision is described in
-[QA agent: phase 1 workflow](./qa-agent.md).
+`backend/src/domain/qa/`). It is in phase 1, comment-only. How its findings
+is judged and calibrated, and what is left before it becomes a blocking gate, is in
+[QA agent](./qa-agent.md).
