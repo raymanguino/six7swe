@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   LINK_KEYS,
   type ProfileData,
@@ -124,9 +124,18 @@ export default function ProfileDraftEditor({ formId, initial, saving, onSave, on
       form.projects.map((p, j) => (j === i ? { ...p, ...patch } : p)),
     );
 
+  // `saving` arrives a render late, so a quick second submit would get past
+  // it and send a second save expecting the same draft (a false conflict).
+  const submitting = useRef(false);
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (await onSave(toData(form))) onCancel();
+    if (submitting.current) return;
+    submitting.current = true;
+    try {
+      if (await onSave(toData(form))) onCancel();
+    } finally {
+      submitting.current = false;
+    }
   };
 
   return (
@@ -354,8 +363,9 @@ export default function ProfileDraftEditor({ formId, initial, saving, onSave, on
         </button>
         <button
           type="button"
+          disabled={saving}
           onClick={onCancel}
-          className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+          className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
         >
           Cancel
         </button>

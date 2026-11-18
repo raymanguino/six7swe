@@ -60,6 +60,13 @@ export function describeProfileRepositoryContract(
       };
       await expect(profiles.saveOwnerDraft(newOwner(), bad)).rejects.toThrow();
       await expect(profiles.saveDraftIfUnchanged(newOwner(), bad, null, null)).rejects.toThrow();
+
+      // Validated before the version check: bad data is an error, never "stale".
+      const owner = newOwner();
+      await seedDraft(profiles, owner, SAMPLE_PROFILE, null);
+      await expect(profiles.saveOwnerDraft(owner, bad, 999)).rejects.toThrow();
+      await expect(profiles.saveOwnerDraft(owner, bad, null)).rejects.toThrow();
+      await expect(profiles.saveDraftIfUnchanged(owner, bad, null, 999)).rejects.toThrow();
     });
 
     it('publishes the reviewed draft and removes it', async () => {

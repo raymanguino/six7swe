@@ -5,7 +5,8 @@ import { createDrizzleEvalRepository } from '../db/api/drizzleEvalRepository.js'
 import { createDrizzleProfileRepository } from '../db/api/drizzleProfileRepository.js';
 import { createDrizzleRepository } from '../db/api/drizzleRepository.js';
 import type { KnowledgeRepository, NewChunk, NewDocument } from '../db/api/repository.js';
-import { createDb, type DbHandle } from '../db/index.js';
+import type { ProfileRepository } from '../db/api/profileRepository.js';
+import { createDb, type DbHandle, type KnowledgeTx } from '../db/index.js';
 import {
   corpusState,
   documents,
@@ -188,68 +189,103 @@ describe.skipIf(!url)('Drizzle profile repository: concurrent redraft and owner 
     }
   });
 
-  // With no draft there is no row to lock: the primary key decides.
-  it('writes exactly one of them when neither expects a draft', async () => {
-    const repo = createDrizzleProfileRepository(db().handle.db);
-    for (let i = 0; i < 20; i++) {
-      const owner = freshOwner();
-      const { document: resume } = await db().repo.createDocument(newSource(owner, 'new.md'));
-      const redraftData = { ...SAMPLE_PROFILE, title: `Redraft ${i}` };
-      const ownerData = { ...SAMPLE_PROFILE, title: `Owner ${i}` };
-      const [redrafted, saved] = await Promise.all([
-        repo.saveDraftIfUnchanged(owner, redraftData, resume.id, null),
-        repo.saveOwnerDraft(owner, ownerData, null),
-      ]);
-      const draft = (await repo.getProfiles(owner)).draft;
+  // The tests below are deterministic, unlike the race above: a transaction
+  // holds the draft (its row lock, or its uncommitted insert), the writer is
+  // started, and Postgres confirms it is blocked before the holder commits.
 
-      if (redrafted) {
-        expect(saved).toEqual({ status: 'stale', draft: redrafted });
-        expect(draft).toEqual(redrafted);
-      } else {
-        expect(saved.status).toBe('saved');
-        expect(draft).toMatchObject({ data: ownerData, sourceDocumentId: null });
-      }
-    }
-  });
-
-  // Deterministic, unlike the races above: if the owner's save read the
-  // draft without locking it, it would pass the check against the old
-  // version and then overwrite the change committed meanwhile.
+  // If the owner's save read the draft without locking it, it would pass the
+  // check against the old version and then overwrite the change committed
+  // meanwhile.
   it('checks the owner’s save only once a transaction holding the draft commits', async () => {
-    const { handle: h } = db();
-    const repo = createDrizzleProfileRepository(h.db);
+    const repo = createDrizzleProfileRepository(db().handle.db);
     const owner = freshOwner();
     const opened = await seedDraft(repo, owner, SAMPLE_PROFILE, null);
-    const isDraft = and(eq(profiles.ownerId, owner), eq(profiles.stage, 'draft'));
+    const isDraft = draftOf(owner);
 
-    const locked = deferred();
-    const release = deferred();
-    const holder = h.db.transaction(async (tx) => {
-      await tx.select().from(profiles).where(isDraft).for('update');
-      locked.resolve();
-      await release.promise;
-      await tx
-        .update(profiles)
-        .set({ title: 'Redrafted', version: nextProfileVersion() })
-        .where(isDraft);
-    });
-    await locked.promise;
-
-    let settled = false;
-    const save = repo
-      .saveOwnerDraft(owner, { ...SAMPLE_PROFILE, title: 'Owner edit' }, opened.version)
-      .finally(() => {
-        settled = true;
-      });
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    expect(settled).toBe(false);
-
-    release.resolve();
-    await holder;
-    expect(await save).toMatchObject({ status: 'stale', draft: { data: { title: 'Redrafted' } } });
+    const save = await whileHolding(
+      async (tx) => {
+        await tx.select().from(profiles).where(isDraft).for('update');
+      },
+      async (tx) => {
+        await tx
+          .update(profiles)
+          .set({ title: 'Redrafted', version: nextProfileVersion() })
+          .where(isDraft);
+      },
+      () => repo.saveOwnerDraft(owner, { ...SAMPLE_PROFILE, title: 'Owner edit' }, opened.version),
+    );
+    expect(save).toMatchObject({ status: 'stale', draft: { data: { title: 'Redrafted' } } });
     expect((await repo.getProfiles(owner)).draft?.data.title).toBe('Redrafted');
   });
+
+  // With no draft there is no row to lock: the writer's insert waits on the
+  // primary key for a draft inserted concurrently, and then defers to it as
+  // its expected version says.
+  describe('when a draft is inserted while the writer finds none', () => {
+    const newData = { ...SAMPLE_PROFILE, title: 'Writer' };
+
+    /**
+     * Runs `write` while another transaction's insert of a draft titled
+     * "Committed" is uncommitted, then reads the draft as it ends up.
+     */
+    async function raceInsert<T>(write: (repo: ProfileRepository, owner: string) => Promise<T>) {
+      const repo = createDrizzleProfileRepository(db().handle.db);
+      const owner = freshOwner();
+      const { document: source } = await db().repo.createDocument(newSource(owner, 'resume.md'));
+      const result = await whileHolding(
+        async (tx) => {
+          await tx.insert(profiles).values({
+            ownerId: owner,
+            stage: 'draft',
+            name: SAMPLE_PROFILE.name,
+            title: 'Committed',
+            location: SAMPLE_PROFILE.location,
+            summary: SAMPLE_PROFILE.summary,
+            skills: SAMPLE_PROFILE.skills,
+            experience: SAMPLE_PROFILE.experience,
+            projects: SAMPLE_PROFILE.projects,
+            links: SAMPLE_PROFILE.links,
+            sourceDocumentId: source.id,
+          });
+        },
+        async () => undefined,
+        () => write(repo, owner),
+      );
+      const after = (await repo.getProfiles(owner)).draft;
+      return { source: source.id, result, after };
+    }
+
+    it('refuses a checked owner save with the committed draft', async () => {
+      const { result, after, source } = await raceInsert((repo, owner) =>
+        repo.saveOwnerDraft(owner, newData, null),
+      );
+      expect(after).toMatchObject({ data: { title: 'Committed' }, sourceDocumentId: source });
+      expect(result).toEqual({ status: 'stale', draft: after });
+    });
+
+    it('writes nothing for the drafter', async () => {
+      const { result, after } = await raceInsert((repo, owner) =>
+        repo.saveDraftIfUnchanged(owner, newData, null, null),
+      );
+      expect(result).toBeNull();
+      expect(after?.data.title).toBe('Committed');
+    });
+
+    it('writes an unchecked owner save, keeping the committed draft’s source', async () => {
+      const { result, after, source } = await raceInsert((repo, owner) =>
+        repo.saveOwnerDraft(owner, newData),
+      );
+      expect(result).toMatchObject({
+        status: 'saved',
+        profile: { data: { title: 'Writer' }, sourceDocumentId: source },
+      });
+      expect(after).toMatchObject({ data: { title: 'Writer' }, sourceDocumentId: source });
+    });
+  });
 });
+
+const draftOf = (ownerId: string) =>
+  and(eq(profiles.ownerId, ownerId), eq(profiles.stage, 'draft'));
 
 /** A promise and the function that resolves it. */
 function deferred(): { promise: Promise<void>; resolve: () => void } {
@@ -258,6 +294,80 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
     resolve = r;
   });
   return { promise, resolve };
+}
+
+/** How long a writer may take to block on the holder; under vitest's 5 s test timeout. */
+const BLOCK_TIMEOUT_MS = 2_000;
+
+/**
+ * Opens a transaction, runs `hold` in it and keeps it open; starts `write`
+ * and waits until Postgres reports it blocked by that transaction; then runs
+ * `finish`, commits, and returns what `write` resolved to. The transaction
+ * is released whatever happens, so a failure cannot leave a lock (or a pool
+ * connection) behind for the next test and the cleanup.
+ */
+async function whileHolding<T>(
+  hold: (tx: KnowledgeTx) => Promise<unknown>,
+  finish: (tx: KnowledgeTx) => Promise<void>,
+  write: () => Promise<T>,
+): Promise<T> {
+  const { db: d } = db().handle;
+  const held = deferred();
+  const release = deferred();
+  let holderPid: number | undefined;
+  const holder = d.transaction(async (tx) => {
+    const [row] = await tx.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`);
+    holderPid = row?.pid;
+    await hold(tx);
+    held.resolve();
+    await release.promise;
+    await finish(tx);
+  });
+  // Observed here, so a holder that fails is never an unhandled rejection.
+  const holderDone = holder.then(
+    () => ({ ok: true as const }),
+    (error: unknown) => ({ ok: false as const, error }),
+  );
+
+  let pending: Promise<T> | undefined;
+  let done: Awaited<typeof holderDone>;
+  try {
+    // A holder that fails before it holds anything ends the wait too.
+    const first = await Promise.race([held.promise.then(() => null), holderDone]);
+    if (first && !first.ok) throw first.error;
+    if (holderPid === undefined) throw new Error('the holder has no backend pid');
+
+    pending = write();
+    // Observed now, so a failure while blocked is not unhandled; awaited below.
+    pending.catch(() => undefined);
+    await waitUntilBlockedBy(holderPid);
+  } finally {
+    release.resolve();
+    done = await holderDone;
+  }
+  if (!done.ok) throw done.error;
+  if (!pending) throw new Error('the write never started');
+  return pending;
+}
+
+/** Waits until some backend in this database is waiting on a lock `pid` holds. */
+async function waitUntilBlockedBy(pid: number): Promise<void> {
+  const { db: d } = db().handle;
+  const deadline = Date.now() + BLOCK_TIMEOUT_MS;
+  for (;;) {
+    const [row] = await d.execute<{ blocked: number }>(sql`
+      select count(*)::int as blocked
+      from pg_stat_activity
+      where datname = current_database()
+        and wait_event_type = 'Lock'
+        and ${pid} = any(pg_blocking_pids(pid))
+    `);
+    if ((row?.blocked ?? 0) > 0) return;
+    if (Date.now() > deadline) {
+      throw new Error(`no backend blocked on pid ${pid} within ${BLOCK_TIMEOUT_MS} ms`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
 }
 
 describeEvalRepositoryContract(

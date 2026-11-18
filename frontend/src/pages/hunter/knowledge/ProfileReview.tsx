@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import ProfileDraftEditor from './ProfileDraftEditor';
 import {
   diffProfiles,
@@ -42,12 +42,19 @@ export default function ProfileReview({ profile }: { profile: KnowledgeProfile }
   const [conflict, setConflict] = useState<{ current: Profile | null } | null>(null);
   const [showUnchanged, setShowUnchanged] = useState(false);
   const { state, loading, error, busy } = profile;
+  /**
+   * Bumped whenever the editor opens or closes, so a save that finishes
+   * after that (its answer is for an editor that is gone) changes nothing.
+   */
+  const session = useRef(0);
 
   const startEditing = (data: ProfileData, draft: Profile | null) => {
+    session.current += 1;
     setConflict(null);
     setEditing({ data, version: expectedVersionOf(draft) });
   };
   const stopEditing = () => {
+    session.current += 1;
     setConflict(null);
     setEditing(null);
   };
@@ -60,10 +67,13 @@ export default function ProfileReview({ profile }: { profile: KnowledgeProfile }
    */
   const save = async (data: ProfileData): Promise<boolean> => {
     if (!editing) return false;
+    const started = session.current;
     const result = await profile.saveDraft(data, editing.version);
+    if (started !== session.current) return false;
     if (result.status === 'conflict') {
+      const version = expectedVersionOf(result.current);
       setConflict({ current: result.current });
-      setEditing({ ...editing, version: expectedVersionOf(result.current) });
+      setEditing((current) => current && { ...current, version });
     }
     return result.status === 'saved';
   };
