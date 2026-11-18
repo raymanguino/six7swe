@@ -292,8 +292,11 @@ export interface GateInput {
   coverage: DiffCoverage;
 }
 
+/** Every reason a pull request can need a human, as `ManualReviewReason` values. */
+export const MANUAL_REVIEW_REASONS = ['protected-path', 'partial-coverage'] as const;
+
 /** Why a pull request needs a human, when the gate says `manual-review`. */
-export type ManualReviewReason = 'protected-path' | 'partial-coverage';
+export type ManualReviewReason = (typeof MANUAL_REVIEW_REASONS)[number];
 
 /**
  * Every reason a human has to look, whether or not it decided the gate.
@@ -365,6 +368,23 @@ export function decideGate(input: GateInput): GateOutcome {
   }
 
   return reasons.includes('partial-coverage') ? 'manual-review' : 'pass';
+}
+
+/**
+ * The outcome `enforce` mode would have returned on the same input.
+ *
+ * In `comment-only` mode `decideGate` passes whatever the agent found, so
+ * the real outcome says nothing about how often the agent would block.
+ * This is the counterfactual the phase 2 decision is measured on (#144):
+ * every input field - the findings, the changed files, `shown`, the
+ * coverage, `protectedPaths` and `reviewCompleted` - is used unchanged,
+ * and only the mode is set, to `enforce`.
+ *
+ * It is a measurement, not a second gate. Nothing may derive an exit code
+ * or a review event from it; those come from the real outcome only.
+ */
+export function decideEnforceOutcome(input: Omit<GateInput, 'mode'>): GateOutcome {
+  return decideGate({ ...input, mode: 'enforce' });
 }
 
 /**

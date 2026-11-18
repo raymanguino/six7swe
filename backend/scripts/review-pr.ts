@@ -19,7 +19,7 @@
  *   GITHUB_TOKEN        required, the token the review is posted with
  *   GITHUB_REPOSITORY   required, in "owner/repo" form
  *   PR_NUMBER           required, the pull request number
- *   PR_HEAD_SHA         required, the pull request head SHA at event time
+ *   PR_HEAD_SHA         required, the pull request head SHA at event time (40 hex characters)
  *   PR_TITLE            optional, defaults to empty
  *   PR_DESCRIPTION      optional, defaults to empty
  *   REVIEW_MODE         optional, "comment-only" (default) or "enforce"
@@ -29,6 +29,7 @@ import { z } from 'zod';
 import {
   countAreas,
   countBySeverity,
+  decideEnforceOutcome,
   decideGate,
   describeCoverage,
   formatStatsLine,
@@ -48,7 +49,9 @@ import {
   type ChangedFile,
   type DiffCoverage,
   type FindingSeverity,
+  type GateInput,
   type GateOutcome,
+  type ManualReviewReason,
   type SanitizeCounts,
 } from '../src/domain/qa';
 import { hashData } from '../src/util/hash';
@@ -98,7 +101,15 @@ const envSchema = z.object({
     .number({ error: 'PR_NUMBER is required' })
     .int('PR_NUMBER must be an integer')
     .positive('PR_NUMBER must be a positive integer'),
-  PR_HEAD_SHA: required('PR_HEAD_SHA'),
+  /**
+   * A full commit sha. `qa:calibration` drops a stats line whose sha is
+   * not one, so a malformed value fails here, loudly, rather than costing
+   * the run's data silently.
+   */
+  PR_HEAD_SHA: required('PR_HEAD_SHA').regex(
+    /^[0-9a-f]{40}$/i,
+    'PR_HEAD_SHA must be a full commit SHA (40 hex characters)',
+  ),
   PR_TITLE: z.string().default(''),
   PR_DESCRIPTION: z.string().default(''),
   /**
@@ -113,6 +124,17 @@ const envSchema = z.object({
    */
   REVIEW_MODE: z.enum(['comment-only', 'enforce']).default('comment-only'),
 });
+
+/**
+ * What a run decided: the real gate, the gate `enforce` mode would have
+ * returned, and why the review needs a human. `reasons` is null only when
+ * the review failed closed before the gate was decided.
+ */
+interface Decided {
+  gate: GateOutcome;
+  enforce: GateOutcome;
+  reasons: ManualReviewReason[] | null;
+}
 
 /** How many times the head SHA is re-checked when the pull request moves. */
 const HEAD_READ_ATTEMPTS = 3;
@@ -228,9 +250,13 @@ async function main(): Promise<void> {
   // must not post a second review for the same run.
   let posted = false;
 
-  // The gate this run decided, once it has. Together with `posted` it says
-  // whether the review on the pull request is a real verdict.
-  let decidedGate: GateOutcome | null = null;
+  // What this run decided, once it has. Together with `posted` it says
+  // whether the review on the pull request is a real verdict. `enforce` is
+  // what the gate would have returned in `enforce` mode on the same input,
+  // for calibration only: it never sets the exit code or the review event.
+  // `reasons` is why the review needs a human, the cause of an enforce
+  // outcome of `manual-review`.
+  let decided: Decided | null = null;
 
   // The duration the review body reported, so the body and the stats line
   // carry the same number. It runs from the start of the script to just
@@ -247,6 +273,8 @@ async function main(): Promise<void> {
    */
   function logStats(run: {
     outcome: GateOutcome;
+    enforceOutcome: GateOutcome;
+    manualReviewReasons: ManualReviewReason[] | null;
     reported: number | null;
     kept: Record<FindingSeverity, number> | null;
     sanitized: SanitizeCounts | null;
@@ -259,6 +287,8 @@ async function main(): Promise<void> {
         sha: headSha,
         mode,
         outcome,
+        enforceOutcome: run.enforceOutcome,
+        manualReviewReasons: run.manualReviewReasons,
         files: changedFiles.length,
         ...countAreas(changedFiles),
         diffChars,
@@ -335,15 +365,19 @@ async function main(): Promise<void> {
     // computed from this list, in this order.
     const ids = findingIds({ pr: env.PR_NUMBER, sha: headSha }, findings, hashData);
 
-    const gate = decideGate({
+    const gateInput: Omit<GateInput, 'mode'> = {
       findings,
       changedFiles,
       shown: prepared.shown,
-      mode,
       reviewCompleted: true,
       coverage: diffCoverage,
-    });
-    decidedGate = gate;
+    };
+    const gate = decideGate({ ...gateInput, mode });
+    // The counterfactual: the same input, judged as phase 2 would judge it.
+    // Recorded in the stats line only; `gate` alone decides what happens.
+    const enforceOutcome = decideEnforceOutcome(gateInput);
+    const reasons = manualReviewReasons({ changedFiles, coverage: diffCoverage });
+    decided = { gate, enforce: enforceOutcome, reasons };
 
     logLine(
       `Model returned ${review.findings.length} finding(s); ${findings.length} survived sanitizing.`,
@@ -351,7 +385,7 @@ async function main(): Promise<void> {
     for (const finding of findings) {
       logLine(`  ${severityLabel(finding)}: ${finding.message}`);
     }
-    logLine(`Gate outcome: ${gate}`);
+    logLine(`Gate outcome: ${gate} (if enforced: ${enforceOutcome})`);
 
     const event = reviewEventForGate(gate);
     reportedDurationMs = Date.now() - startedAt;
@@ -363,7 +397,7 @@ async function main(): Promise<void> {
       commitSha: headSha,
       ids: { pr: env.PR_NUMBER, hash: hashData },
       coverage: diffCoverage,
-      manualReviewReasons: manualReviewReasons({ changedFiles, coverage: diffCoverage }),
+      manualReviewReasons: reasons,
       durationMs: reportedDurationMs,
     });
 
@@ -397,6 +431,8 @@ async function main(): Promise<void> {
 
     logStats({
       outcome: gate,
+      enforceOutcome,
+      manualReviewReasons: reasons,
       reported: review.findings.length,
       kept: countBySeverity(findings),
       sanitized: sanitizedResult.counts,
@@ -424,9 +460,23 @@ async function main(): Promise<void> {
     // Once the review is posted it is the verdict of record. A throw after
     // that comes from logging or stats code, so reporting fail-closed would
     // contradict the posted review and record the wrong outcome.
-    const outcome: GateOutcome = posted && decidedGate !== null ? decidedGate : 'fail-closed';
+    // `enforce` fails closed on an incomplete review too, so the
+    // counterfactual follows the same rule as the real outcome.
+    const recorded: Decided =
+      posted && decided !== null
+        ? decided
+        : { gate: 'fail-closed', enforce: 'fail-closed', reasons: null };
+    const { gate: outcome, enforce: enforceOutcome } = recorded;
 
-    logStats({ outcome, reported: null, kept: null, sanitized: null, findingIds: null });
+    logStats({
+      outcome,
+      enforceOutcome,
+      manualReviewReasons: recorded.reasons,
+      reported: null,
+      kept: null,
+      sanitized: null,
+      findingIds: null,
+    });
 
     // Whether the outcome turns the check red depends on the mode: in
     // comment-only mode the agent is an observer and nothing it does blocks

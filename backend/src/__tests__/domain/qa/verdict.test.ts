@@ -1,5 +1,6 @@
 import {
   consolidateSteeringFindings,
+  decideEnforceOutcome,
   decideGate,
   STEERING_SEVERITY,
   decideReviewEvent,
@@ -1145,5 +1146,44 @@ describe('sanitizeFindingsWithCounts', () => {
       steeringMerged: 0,
       lineCorrected: first.counts.lineCorrected,
     });
+  });
+});
+
+describe('decideEnforceOutcome', () => {
+  const clean = {
+    findings: [] as ReviewFinding[],
+    changedFiles: [patchedFile()],
+    shown: shownInFull([patchedFile()]),
+    reviewCompleted: true,
+    coverage: FULL,
+  };
+
+  it('fails for a blocker, which comment-only mode passes', () => {
+    const input = { ...clean, findings: [finding({ severity: 'blocker' })] };
+
+    expect(decideGate({ ...input, mode: 'comment-only' })).toBe('pass');
+    expect(decideEnforceOutcome(input)).toBe('fail');
+  });
+
+  it('sends a protected path to a human', () => {
+    const lockfile: ChangedFile = {
+      filename: 'pnpm-lock.yaml',
+      status: 'modified',
+      additions: 1,
+      deletions: 1,
+    };
+    const changedFiles = [patchedFile(), lockfile];
+
+    expect(decideEnforceOutcome({ ...clean, changedFiles, shown: shownInFull(changedFiles) })).toBe(
+      'manual-review',
+    );
+  });
+
+  it('passes a clean review', () => {
+    expect(decideEnforceOutcome(clean)).toBe('pass');
+  });
+
+  it('fails closed when the review could not be completed', () => {
+    expect(decideEnforceOutcome({ ...clean, reviewCompleted: false })).toBe('fail-closed');
   });
 });
