@@ -16,13 +16,14 @@ function sha(prefix: string): string {
 
 function run(overrides: Partial<QaRunStats> = {}): QaRunStats {
   return {
-    v: 4,
+    v: 5,
     pr: 1,
     sha: sha('aaa'),
     mode: 'comment-only',
     outcome: 'pass',
     enforceOutcome: 'pass',
     manualReviewReasons: [],
+    promptVersion: 4,
     files: 2,
     backendFiles: 1,
     frontendFiles: 0,
@@ -38,6 +39,12 @@ function run(overrides: Partial<QaRunStats> = {}): QaRunStats {
     durationMs: 30_000,
     ...overrides,
   };
+}
+
+/** A run as a line older than version 5 writes it: without the prompt version. */
+function withoutPrompt(stats: QaRunStats): Omit<QaRunStats, 'promptVersion'> {
+  const { promptVersion: _promptVersion, ...rest } = stats;
+  return rest;
 }
 
 const CONTEXT = { runs: 1, runsWithoutStats: 0, runsWithExpiredLogs: 0, diffBudgetChars: 60_000 };
@@ -77,6 +84,7 @@ describe('the stats line', () => {
       findingIds: _ids,
       enforceOutcome: _enforce,
       manualReviewReasons: _reasons,
+      promptVersion: _prompt,
       ...v1
     } = run({ v: 1 });
     const log = `QA_STATS ${JSON.stringify(v1)}`;
@@ -91,6 +99,7 @@ describe('the stats line', () => {
         findingIds: null,
         enforceOutcome: null,
         manualReviewReasons: null,
+        promptVersion: null,
       }),
     ]);
   });
@@ -102,6 +111,7 @@ describe('the stats line', () => {
       findingIds: _f,
       enforceOutcome: _e,
       manualReviewReasons: _r,
+      promptVersion: _p,
       ...missing
     } = run({ v: 2 });
 
@@ -289,6 +299,7 @@ describe('the sanitizer counts in the stats line', () => {
       findingIds: _f,
       enforceOutcome: _e,
       manualReviewReasons: _r,
+      promptVersion: _p,
       ...v2
     } = run({ v: 2 });
 
@@ -299,6 +310,7 @@ describe('the sanitizer counts in the stats line', () => {
         findingIds: null,
         enforceOutcome: null,
         manualReviewReasons: null,
+        promptVersion: null,
       }),
     ]);
   });
@@ -377,16 +389,16 @@ describe('the outcome if enforced', () => {
   });
 
   it('reads a version 3 line with it as null', () => {
-    const { enforceOutcome: _e, manualReviewReasons: _r, ...v3 } = run({ v: 3 });
+    const { enforceOutcome: _e, manualReviewReasons: _r, ...v3 } = withoutPrompt(run({ v: 3 }));
 
     expect(parseStatsLines(`QA_STATS ${JSON.stringify(v3)}`)).toEqual([
-      run({ v: 3, enforceOutcome: null, manualReviewReasons: null }),
+      run({ v: 3, enforceOutcome: null, manualReviewReasons: null, promptVersion: null }),
     ]);
   });
 
   it('rejects an older line that carries it, and a value that is not an outcome', () => {
     const lines = [
-      `QA_STATS ${JSON.stringify(run({ v: 3, enforceOutcome: 'fail' }))}`,
+      `QA_STATS ${JSON.stringify(withoutPrompt(run({ v: 3, enforceOutcome: 'fail' })))}`,
       `QA_STATS ${JSON.stringify({ ...run(), enforceOutcome: 'block' })}`,
     ].join('\n');
 
@@ -541,8 +553,8 @@ describe('enforce outcomes across re-runs and line versions', () => {
   });
 
   it('rejects a version 3 line that carries an enforce outcome, even a null one', () => {
-    expect(parseStatsLines(line(run({ v: 3, enforceOutcome: 'pass' })))).toEqual([]);
-    expect(parseStatsLines(line(run({ v: 3, enforceOutcome: null })))).toEqual([]);
+    expect(parseStatsLines(line(withoutPrompt(run({ v: 3, enforceOutcome: 'pass' }))))).toEqual([]);
+    expect(parseStatsLines(line(withoutPrompt(run({ v: 3, enforceOutcome: null }))))).toEqual([]);
   });
 
   it('rejects a sha that is short or not hex, and lowercases a full one', () => {
@@ -565,14 +577,24 @@ describe('enforce outcomes across re-runs and line versions', () => {
     expect(summarizeCalibration(parseStatsLines(log)).commits).toBe(1);
   });
 
-  it('reads a history that mixes version 3 and version 4 lines', () => {
-    const { enforceOutcome: _e, manualReviewReasons: _r, ...v3 } = run({ v: 3, sha: sha('a') });
+  it('reads a history that mixes version 3 and current lines', () => {
+    const {
+      enforceOutcome: _e,
+      manualReviewReasons: _r,
+      ...v3
+    } = withoutPrompt(run({ v: 3, sha: sha('a') }));
     const v4 = run({ sha: sha('b'), enforceOutcome: 'fail', reported: 1, kept: major });
     const { v: _v, ...v4Stats } = v4;
 
     const runs = parseStatsLines([line(v3), formatStatsLine(v4Stats)].join('\n'));
     expect(runs).toEqual([
-      run({ v: 3, sha: sha('a'), enforceOutcome: null, manualReviewReasons: null }),
+      run({
+        v: 3,
+        sha: sha('a'),
+        enforceOutcome: null,
+        manualReviewReasons: null,
+        promptVersion: null,
+      }),
       v4,
     ]);
 
@@ -737,5 +759,52 @@ describe('the manual-review reasons in the stats line', () => {
     expect(report).toContain('- #1 `affffff`: manual-review (protected path)');
     expect(report).toContain('- #1 `bffffff`: manual-review (partial coverage)');
     expect(report).toContain('- #1 `cffffff`: manual-review (protected path or partial coverage)');
+  });
+});
+
+describe('the prompt version in the stats line', () => {
+  const line = (value: unknown): string => `QA_STATS ${JSON.stringify(value)}`;
+
+  it('round-trips through the stats line', () => {
+    const stats = run({ promptVersion: 3 });
+    const { v: _v, ...rest } = stats;
+
+    expect(parseStatsLines(formatStatsLine(rest))).toEqual([stats]);
+  });
+
+  it('reads a version 4 line with it as null', () => {
+    expect(parseStatsLines(line(withoutPrompt(run({ v: 4 }))))).toEqual([
+      run({ v: 4, promptVersion: null }),
+    ]);
+  });
+
+  it('rejects a version 4 line that carries it, a current line without it, and a bad value', () => {
+    const log = [
+      line(run({ v: 4 })),
+      line(withoutPrompt(run())),
+      line(run({ promptVersion: 0 })),
+      line(run({ promptVersion: null })),
+      line({ ...run(), promptVersion: '4' }),
+    ].join('\n');
+
+    expect(parseStatsLines(log)).toEqual([]);
+  });
+
+  it('keeps a run whose prompt version this checkout does not know, and says so', () => {
+    const newer = run({ promptVersion: 99 });
+    const { v: _v, ...rest } = newer;
+
+    const runs = parseStatsLines(formatStatsLine(rest));
+    expect(runs).toEqual([newer]);
+
+    const summary = summarizeCalibration(runs);
+    expect(summary.withUnknownPromptVersion).toBe(1);
+    expect(renderCalibrationReport(summary, CONTEXT)).toContain(
+      '1 review(s) used a prompt version unknown to this checkout',
+    );
+  });
+
+  it('still requires the enforce outcome on a current line', () => {
+    expect(parseStatsLines(line(run({ enforceOutcome: null })))).toEqual([]);
   });
 });

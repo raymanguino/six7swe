@@ -16,6 +16,7 @@
 
 import { allTouchedPaths, type ChangedFile } from './diff';
 import { FINDING_ID_PATTERN } from './findingId';
+import { isKnownPromptVersion } from './promptVersion';
 import {
   MANUAL_REVIEW_REASONS,
   SANITIZE_REASONS,
@@ -57,8 +58,10 @@ export function neutralizeStatsPrefix(text: string): string {
  * Version 4 added `enforceOutcome`, the outcome `enforce` mode would have
  * returned, and `manualReviewReasons`, why that review would need a human;
  * an older line has them as null.
+ * Version 5 added `promptVersion`, the version of the review prompt the
+ * run used (`REVIEW_PROMPT_VERSION`); an older line has it as null.
  */
-export const QA_STATS_VERSION = 4;
+export const QA_STATS_VERSION = 5;
 
 /** The tokens one review used. `reasoning` is null when MiniMax does not report it. */
 export interface RunTokens {
@@ -69,7 +72,7 @@ export interface RunTokens {
 
 /** What one run of the agent did. */
 export interface QaRunStats {
-  v: 1 | 2 | 3 | typeof QA_STATS_VERSION;
+  v: 1 | 2 | 3 | 4 | typeof QA_STATS_VERSION;
   pr: number;
   sha: string;
   mode: ReviewMode;
@@ -89,6 +92,11 @@ export interface QaRunStats {
    * before the gate was decided.
    */
   manualReviewReasons: ManualReviewReason[] | null;
+  /**
+   * The version of the review prompt the run used (`REVIEW_PROMPT_VERSION`),
+   * so findings are compared per prompt. Null on a line older than version 5.
+   */
+  promptVersion: number | null;
   files: number;
   backendFiles: number;
   frontendFiles: number;
@@ -197,9 +205,10 @@ const FIELDS_ADDED_IN: readonly { since: QaRunStats['v']; fields: readonly strin
   { since: 2, fields: COVERAGE_FIELDS },
   { since: 3, fields: ['sanitized', 'findingIds'] },
   { since: 4, fields: ['enforceOutcome', 'manualReviewReasons'] },
+  { since: 5, fields: ['promptVersion'] },
 ];
 
-const STATS_VERSIONS: readonly QaRunStats['v'][] = [1, 2, 3, QA_STATS_VERSION];
+const STATS_VERSIONS: readonly QaRunStats['v'][] = [1, 2, 3, 4, QA_STATS_VERSION];
 
 function isStatsVersion(value: unknown): value is QaRunStats['v'] {
   return STATS_VERSIONS.some((version) => version === value);
@@ -230,7 +239,7 @@ function isReasonList(value: unknown): value is ManualReviewReason[] {
  * decided. An older line has both as null (filled in by the upgrade).
  */
 function hasValidEnforceFields(value: Record<string, unknown>): boolean {
-  if (value.v !== QA_STATS_VERSION) {
+  if (typeof value.v !== 'number' || value.v < 4) {
     return value.enforceOutcome === null && value.manualReviewReasons === null;
   }
   return (
@@ -238,6 +247,20 @@ function hasValidEnforceFields(value: Record<string, unknown>): boolean {
     (isReasonList(value.manualReviewReasons) ||
       (value.manualReviewReasons === null && value.enforceOutcome === 'fail-closed'))
   );
+}
+
+/**
+ * The version 5 field: a positive version number. An older line has it as
+ * null (filled in by the upgrade).
+ *
+ * A version this checkout's history does not know is still accepted: it is
+ * what a newer prompt logs, and a checkout that has not caught up must not
+ * drop those runs. The report counts them instead
+ * (`withUnknownPromptVersion`).
+ */
+function hasValidPromptVersion(value: Record<string, unknown>): boolean {
+  if (typeof value.v !== 'number' || value.v < 5) return value.promptVersion === null;
+  return isCount(value.promptVersion) && value.promptVersion > 0;
 }
 
 function isSanitizeCounts(value: unknown): value is SanitizeCounts {
@@ -284,6 +307,7 @@ function isRunStats(value: Record<string, unknown>): value is Record<string, unk
     (value.mode === 'comment-only' || value.mode === 'enforce') &&
     isGateOutcome(value.outcome) &&
     hasValidEnforceFields(value) &&
+    hasValidPromptVersion(value) &&
     isCount(value.files) &&
     isCount(value.backendFiles) &&
     isCount(value.frontendFiles) &&
@@ -433,6 +457,8 @@ export interface CalibrationSummary {
   reasoningTokens: Spread | null;
   /** Completed reviews that reported no token usage. */
   withoutTokens: number;
+  /** Commits whose latest run logged a prompt version this checkout does not know. */
+  withUnknownPromptVersion: number;
   /** Reviews whose stats carry coverage (version 2 lines with a built diff). */
   withCoverage: number;
   /** Of those, the reviews that left files out. */
@@ -651,6 +677,9 @@ export function summarizeCalibration(runs: readonly QaRunStats[]): CalibrationSu
     completionTokens: spread(completionTokens),
     reasoningTokens: spread(reasoningTokens),
     withoutTokens,
+    withUnknownPromptVersion: commits.filter(
+      (run) => run.promptVersion !== null && !isKnownPromptVersion(run.promptVersion),
+    ).length,
     withCoverage: omittedFiles.length,
     withOmittedFiles: omittedFiles.filter((n) => n > 0).length,
     omittedFiles: spread(omittedFiles),
@@ -840,6 +869,11 @@ export function renderCalibrationReport(
   if (summary.withoutSanitizeCounts > 0) {
     lines.push(
       `${summary.withoutSanitizeCounts} completed review(s) logged no sanitizer counts (they predate version 3 of the stats line), so the rows above undercount.`,
+    );
+  }
+  if (summary.withUnknownPromptVersion > 0) {
+    lines.push(
+      `${summary.withUnknownPromptVersion} review(s) used a prompt version unknown to this checkout: update it before reading the numbers per prompt.`,
     );
   }
   if (summary.withoutTokens > 0) {

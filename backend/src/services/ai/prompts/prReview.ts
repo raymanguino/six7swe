@@ -27,6 +27,10 @@
  * - "file" must be a path present in the diff, or null. The domain module
  *   drops any finding whose file is not in the diff, so an invented path
  *   means the finding is discarded rather than reported.
+ *
+ * Any change to the prompt's text is a new prompt version: bump
+ * `REVIEW_PROMPT_VERSION` in `backend/src/domain/qa/promptVersion.ts`, so
+ * the findings it produces are not compared with the old prompt's (#146).
  */
 import { MAX_REPORTED_FINDINGS, STEERING_SEVERITY } from '../../../domain/qa/verdict';
 

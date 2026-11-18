@@ -125,6 +125,30 @@ export function codeSpan(text: string): string {
   return `${fence}${padded}${fence}`;
 }
 
+/**
+ * Escapes every pipe, so text cannot end a table cell, even inside a code
+ * span. `parseAgentReview` reads `\|` back as a pipe, and the verdict
+ * report escapes its cells with this same function.
+ */
+export function escapePipes(text: string): string {
+  return text.replace(/\|/g, '\\|');
+}
+
+/**
+ * Characters that change how text displays without showing themselves:
+ * every format character (bidi controls, zero-width characters, the soft
+ * hyphen, the byte order mark), the Mongolian vowel separator and the
+ * variation selectors.
+ */
+// Each variation selector is matched on its own, which is the point here.
+// eslint-disable-next-line no-misleading-character-class
+const INVISIBLE_CHARACTERS = /[\p{Cf}\u180E\uFE00-\uFE0F]/gu;
+
+/** Removes the characters that could make text read as something it is not. */
+export function stripInvisible(text: string): string {
+  return text.replace(INVISIBLE_CHARACTERS, '');
+}
+
 function truncate(text: string, limit: number): string {
   if (text.length <= limit) {
     return text;
@@ -171,12 +195,12 @@ function location(finding: ReviewFinding): string {
 
   if (finding.line === null && finding.correctedFromLine !== undefined) {
     const note = `line ${finding.correctedFromLine} is not in the diff`;
-    return `${codeSpan(finding.file).replace(/\|/g, '\\|')} (${note})`;
+    return `${escapePipes(codeSpan(finding.file))} (${note})`;
   }
 
   const text = finding.line === null ? finding.file : `${finding.file}:${finding.line}`;
 
-  return codeSpan(text).replace(/\|/g, '\\|');
+  return escapePipes(codeSpan(text));
 }
 
 export interface ReviewBodyInput {
