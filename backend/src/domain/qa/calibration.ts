@@ -19,7 +19,6 @@ import { FINDING_ID_PATTERN } from './findingId';
 import {
   SANITIZE_REASONS,
   SEVERITY_ORDER,
-  gateBlocksMerge,
   zeroSanitizeCounts,
   type FindingSeverity,
   type GateOutcome,
@@ -175,8 +174,31 @@ function isCountOrNull(value: unknown): value is number | null {
 }
 
 const COVERAGE_FIELDS = ['omittedFiles', 'shortenedPatches', 'patchChars'] as const;
-const SANITIZE_FIELDS = ['sanitized', 'findingIds'] as const;
-const ENFORCE_FIELDS = ['enforceOutcome'] as const;
+
+/**
+ * The fields each version of the line added, oldest first.
+ *
+ * A line older than `since` must not carry them, and they are filled in as
+ * null; a line from `since` on must carry them. Bump `QA_STATS_VERSION` and
+ * add a row here when the line gains a field.
+ */
+const FIELDS_ADDED_IN: readonly { since: QaRunStats['v']; fields: readonly string[] }[] = [
+  { since: 2, fields: COVERAGE_FIELDS },
+  { since: 3, fields: ['sanitized', 'findingIds'] },
+  { since: 4, fields: ['enforceOutcome'] },
+];
+
+const STATS_VERSIONS: readonly QaRunStats['v'][] = [1, 2, 3, QA_STATS_VERSION];
+
+function isStatsVersion(value: unknown): value is QaRunStats['v'] {
+  return STATS_VERSIONS.some((version) => version === value);
+}
+
+/**
+ * A full commit sha. The script logs the head sha GitHub reports, which is
+ * always 40 hex characters; anything else is not a line the script wrote.
+ */
+const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 
 function isSanitizeCounts(value: unknown): value is SanitizeCounts {
   return isRecord(value) && SANITIZE_REASONS.every((reason) => isCount(value[reason]));
@@ -198,34 +220,31 @@ function isIdList(value: unknown): value is string[] {
 function toRunStats(value: unknown): QaRunStats | null {
   if (!isRecord(value)) return null;
 
-  let upgraded: Record<string, unknown> = value;
+  const version = value.v;
+  if (!isStatsVersion(version)) return null;
 
-  if (value.v === 1) {
-    if (COVERAGE_FIELDS.some((field) => field in value)) return null;
-    upgraded = { ...upgraded, omittedFiles: null, shortenedPatches: null, patchChars: null };
-  }
-  if (value.v === 1 || value.v === 2) {
-    if (SANITIZE_FIELDS.some((field) => field in value)) return null;
-    upgraded = { ...upgraded, sanitized: null, findingIds: null };
-  }
-  if (value.v === 1 || value.v === 2 || value.v === 3) {
-    if (ENFORCE_FIELDS.some((field) => field in value)) return null;
-    upgraded = { ...upgraded, enforceOutcome: null };
-  } else if (value.v !== QA_STATS_VERSION) {
-    return null;
+  const upgraded: Record<string, unknown> = { ...value };
+  for (const { since, fields } of FIELDS_ADDED_IN) {
+    if (version >= since) continue;
+    if (fields.some((field) => field in value)) return null;
+    for (const field of fields) upgraded[field] = null;
   }
 
-  return isRunStats(upgraded) ? upgraded : null;
+  if (!isRunStats(upgraded)) return null;
+  // One commit, one key: the sha is compared, so it is compared in one case.
+  return { ...upgraded, sha: upgraded.sha.toLowerCase() };
 }
 
 function isRunStats(value: Record<string, unknown>): value is Record<string, unknown> & QaRunStats {
   return (
-    (value.v === 1 || value.v === 2 || value.v === 3 || value.v === QA_STATS_VERSION) &&
+    isStatsVersion(value.v) &&
     isCount(value.pr) &&
     typeof value.sha === 'string' &&
+    SHA_PATTERN.test(value.sha) &&
     (value.mode === 'comment-only' || value.mode === 'enforce') &&
     isGateOutcome(value.outcome) &&
-    (value.enforceOutcome === null || isGateOutcome(value.enforceOutcome)) &&
+    // A version 4 line always records it; null means the line is older.
+    (value.v >= 4 ? isGateOutcome(value.enforceOutcome) : value.enforceOutcome === null) &&
     isCount(value.files) &&
     isCount(value.backendFiles) &&
     isCount(value.frontendFiles) &&
@@ -283,9 +302,24 @@ export interface CommitRef {
   sha: string;
 }
 
-/** A commit whose latest run would have turned the check red in `enforce` mode. */
+/** An `enforce` outcome that is a verdict: the review completed. */
+export type EnforceVerdict = Exclude<GateOutcome, 'fail-closed'>;
+
+/**
+ * Why a commit would have been blocked.
+ *
+ * The stats line does not say which rule sent a review to a human, but
+ * `decideGate` checks protected paths before findings and findings before
+ * coverage. So `manual-review` with no omitted file can only be a
+ * protected path; with omitted files it may be either.
+ */
+export type BlockCause =
+  'blocking-finding' | 'protected-path' | 'protected-path-or-partial-coverage' | 'not-recorded';
+
+/** A commit that would have turned the check red in `enforce` mode. */
 export interface WouldBlock extends CommitRef {
-  enforceOutcome: GateOutcome;
+  enforceOutcome: Exclude<EnforceVerdict, 'pass'>;
+  cause: BlockCause;
   kept: Record<FindingSeverity, number> | null;
 }
 
@@ -299,7 +333,7 @@ export interface RereviewedCommit extends CommitRef {
    * The `enforce` outcome of each run that recorded one, in run order.
    * Runs that failed closed are left out: they reached no verdict.
    */
-  enforceOutcomes: GateOutcome[];
+  enforceOutcomes: EnforceVerdict[];
   /** Null when fewer than two runs recorded an `enforce` outcome. */
   outcomeChanged: boolean | null;
   /** The kept findings by severity of each completed run, in run order. */
@@ -318,15 +352,16 @@ export interface CalibrationSummary {
   modes: ReviewMode[];
   outcomes: Record<GateOutcome, number>;
   /**
-   * What the gate would have returned in `enforce` mode, across the latest
-   * runs that recorded it (version 4 lines).
+   * What the gate would have returned in `enforce` mode, one per commit,
+   * from the commit's latest run that reached a verdict (or its latest run
+   * when none did). See `tallyEnforce`.
    */
   enforceOutcomes: Record<GateOutcome, number>;
-  /** Latest runs whose line has no `enforce` outcome (logged before version 4). */
+  /** Commits with no `enforce` outcome on record (logged before version 4). */
   withoutEnforceOutcome: number;
   /**
-   * Completed latest runs with an `enforce` outcome: the denominator of the
-   * block rate. A review that failed closed is left out; it is reported
+   * Commits with an `enforce` verdict: the denominator of the block rate.
+   * A commit whose every run failed closed is left out; it is reported
    * with the real outcomes.
    */
   enforceDecided: number;
@@ -394,9 +429,7 @@ function rereviewedCommits(
   for (const runs of byCommit.values()) {
     if (runs.length < 2) continue;
 
-    const enforceOutcomes = runs
-      .map((run) => run.enforceOutcome)
-      .filter((outcome): outcome is GateOutcome => outcome !== null && outcome !== 'fail-closed');
+    const enforceOutcomes = runs.map((run) => run.enforceOutcome).filter(isEnforceVerdict);
     const kept = runs
       .map((run) => run.kept)
       .filter((counts): counts is Record<FindingSeverity, number> => counts !== null);
@@ -415,6 +448,63 @@ function rereviewedCommits(
   return rereviewed;
 }
 
+function isEnforceVerdict(outcome: GateOutcome | null): outcome is EnforceVerdict {
+  return outcome !== null && outcome !== 'fail-closed';
+}
+
+function blockCause(run: QaRunStats, outcome: Exclude<EnforceVerdict, 'pass'>): BlockCause {
+  if (outcome === 'fail') return 'blocking-finding';
+  if (run.omittedFiles === null) return 'not-recorded';
+  return run.omittedFiles === 0 ? 'protected-path' : 'protected-path-or-partial-coverage';
+}
+
+type EnforceTally = Pick<
+  CalibrationSummary,
+  'enforceOutcomes' | 'withoutEnforceOutcome' | 'enforceDecided' | 'wouldBlock'
+>;
+
+/**
+ * Tallies the `enforce` outcomes, one per commit.
+ *
+ * Each commit counts by its latest run that reached a verdict, and by its
+ * latest run only when none did. A re-run that failed closed - an API
+ * error, a timeout - says nothing about the code, so it must not erase an
+ * earlier run's block and pull the block rate down.
+ */
+function tallyEnforce(byCommit: ReadonlyMap<string, readonly QaRunStats[]>): EnforceTally {
+  const enforceOutcomes = zeroOutcomes();
+  let withoutEnforceOutcome = 0;
+  let enforceDecided = 0;
+  const wouldBlock: WouldBlock[] = [];
+
+  for (const runs of byCommit.values()) {
+    const run =
+      [...runs].reverse().find((candidate) => isEnforceVerdict(candidate.enforceOutcome)) ??
+      runs[runs.length - 1];
+    const outcome = run.enforceOutcome;
+
+    if (outcome === null) {
+      withoutEnforceOutcome += 1;
+      continue;
+    }
+    enforceOutcomes[outcome] += 1;
+    if (!isEnforceVerdict(outcome)) continue;
+
+    enforceDecided += 1;
+    if (outcome !== 'pass') {
+      wouldBlock.push({
+        pr: run.pr,
+        sha: run.sha,
+        enforceOutcome: outcome,
+        cause: blockCause(run, outcome),
+        kept: run.kept,
+      });
+    }
+  }
+
+  return { enforceOutcomes, withoutEnforceOutcome, enforceDecided, wouldBlock };
+}
+
 function spread(values: readonly number[]): Spread | null {
   if (values.length === 0) return null;
   const total = values.reduce((sum, value) => sum + value, 0);
@@ -426,7 +516,9 @@ function spread(values: readonly number[]): Spread | null {
  *
  * The input is in run order, oldest first. A commit that was reviewed more
  * than once (a re-run) counts once, by its latest run, so a re-run does not
- * double its findings. Different commits on the same pull request each
+ * double its findings. The `enforce` rows are the exception: they count a
+ * commit by its latest run that reached a verdict (see `tallyEnforce`).
+ * Different commits on the same pull request each
  * count: a finding raised on one push and fixed by the next is exactly the
  * kind of finding calibration is about.
  */
@@ -443,10 +535,6 @@ export function summarizeCalibration(runs: readonly QaRunStats[]): CalibrationSu
   const frontendPrs = new Set<number>();
   const modes: ReviewMode[] = [];
   const outcomes = zeroOutcomes();
-  const enforceOutcomes = zeroOutcomes();
-  let withoutEnforceOutcome = 0;
-  let enforceDecided = 0;
-  const wouldBlock: WouldBlock[] = [];
   const kept: Record<FindingSeverity, number> = { blocker: 0, major: 0, minor: 0, nit: 0 };
   let reported = 0;
   const sanitized = zeroSanitizeCounts();
@@ -465,23 +553,6 @@ export function summarizeCalibration(runs: readonly QaRunStats[]): CalibrationSu
     if (run.frontendFiles > 0) frontendPrs.add(run.pr);
     if (!modes.includes(run.mode)) modes.push(run.mode);
     outcomes[run.outcome] += 1;
-
-    if (run.enforceOutcome === null) {
-      withoutEnforceOutcome += 1;
-    } else {
-      enforceOutcomes[run.enforceOutcome] += 1;
-      if (run.enforceOutcome !== 'fail-closed') {
-        enforceDecided += 1;
-        if (gateBlocksMerge(run.enforceOutcome, 'enforce')) {
-          wouldBlock.push({
-            pr: run.pr,
-            sha: run.sha,
-            enforceOutcome: run.enforceOutcome,
-            kept: run.kept,
-          });
-        }
-      }
-    }
 
     if (run.reported !== null && run.kept !== null) {
       reported += run.reported;
@@ -515,10 +586,7 @@ export function summarizeCalibration(runs: readonly QaRunStats[]): CalibrationSu
     commits: commits.length,
     modes,
     outcomes,
-    enforceOutcomes,
-    withoutEnforceOutcome,
-    enforceDecided,
-    wouldBlock,
+    ...tallyEnforce(byCommit),
     rereviewed: rereviewedCommits(byCommit),
     reported,
     kept,
@@ -588,9 +656,7 @@ function ofCount(part: number, whole: number): string {
  * Markdown that is pasted into an issue.
  */
 function commitLabel(commit: CommitRef): string {
-  const sha = /^[0-9a-f]{7,64}$/i.test(commit.sha)
-    ? `\`${commit.sha.slice(0, 7)}\``
-    : '(unreadable sha)';
+  const sha = SHA_PATTERN.test(commit.sha) ? `\`${commit.sha.slice(0, 7)}\`` : '(unreadable sha)';
   return `#${commit.pr} ${sha}`;
 }
 
@@ -599,6 +665,33 @@ function formatKept(kept: Record<FindingSeverity, number>): string {
   return present.length > 0
     ? present.map((severity) => `${kept[severity]} ${severity}`).join(', ')
     : 'none';
+}
+
+const CAUSE_LABELS: Record<BlockCause, string> = {
+  'blocking-finding': 'blocking finding',
+  'protected-path': 'protected path',
+  'protected-path-or-partial-coverage': 'protected path or partial coverage',
+  'not-recorded': 'reason not recorded',
+};
+
+/** The block rate, then how many blocks each outcome accounts for. */
+function blockRate(summary: CalibrationSummary): string {
+  const rate = ofCount(summary.wouldBlock.length, summary.enforceDecided);
+  if (summary.enforceDecided === 0) return rate;
+  const count = (outcome: WouldBlock['enforceOutcome']): number =>
+    summary.wouldBlock.filter((commit) => commit.enforceOutcome === outcome).length;
+  return `${rate}: ${count('fail')} fail, ${count('manual-review')} manual-review`;
+}
+
+/** How many re-reviewed commits changed between runs, of those that can be compared. */
+function changedRow(
+  commits: readonly RereviewedCommit[],
+  key: 'outcomeChanged' | 'findingsChanged',
+): string {
+  return ofCount(
+    commits.filter((commit) => commit[key] === true).length,
+    commits.filter((commit) => commit[key] !== null).length,
+  );
 }
 
 function formatChange(changedValue: boolean | null): string {
@@ -661,16 +754,10 @@ export function renderCalibrationReport(
     `| Kept, line number removed (line not shown to the model) | ${reasonCount(summary, 'lineCorrected')} |`,
     `| Gate outcomes (${modeLabel(summary.modes)}) | ${outcomeCounts(summary.outcomes)} |`,
     `| Gate outcomes (if enforced) | ${summary.commits - summary.withoutEnforceOutcome > 0 ? outcomeCounts(summary.enforceOutcomes) : 'no data'} |`,
-    `| Would have blocked if enforced | ${ofCount(summary.wouldBlock.length, summary.enforceDecided)} |`,
+    `| Would have blocked if enforced | ${blockRate(summary)} |`,
     `| Commits reviewed more than once | ${summary.rereviewed.length} |`,
-    `| ... outcome if enforced changed between runs | ${ofCount(
-      summary.rereviewed.filter((commit) => commit.outcomeChanged === true).length,
-      summary.rereviewed.filter((commit) => commit.outcomeChanged !== null).length,
-    )} |`,
-    `| ... findings changed between runs (count by severity) | ${ofCount(
-      summary.rereviewed.filter((commit) => commit.findingsChanged === true).length,
-      summary.rereviewed.filter((commit) => commit.findingsChanged !== null).length,
-    )} |`,
+    `| ... outcome if enforced changed between runs | ${changedRow(summary.rereviewed, 'outcomeChanged')} |`,
+    `| ... findings changed between runs (count by severity) | ${changedRow(summary.rereviewed, 'findingsChanged')} |`,
     `| Runtime | ${formatSpread(summary.durationMs, seconds)} |`,
     `| Prompt tokens | ${formatSpread(summary.promptTokens, tokens)} |`,
     `| Completion tokens | ${formatSpread(summary.completionTokens, tokens)} |`,
@@ -679,7 +766,7 @@ export function renderCalibrationReport(
     `| Omitted files per review | ${formatSpread(summary.omittedFiles, files)} |`,
     `| Reviewable size (patch characters) | ${formatDistribution(summary.patchChars, context.diffBudgetChars)} |`,
     '',
-    `Counted from ${context.runs - context.runsWithoutStats - context.runsWithExpiredLogs} of ${context.runs} workflow run(s). A commit reviewed more than once counts once, by its latest run.`,
+    `Counted from ${context.runs - context.runsWithoutStats - context.runsWithExpiredLogs} of ${context.runs} workflow run(s). A commit reviewed more than once counts once, by its latest run; the rows about enforce mode use its latest run that reached a verdict, so a re-run that failed closed does not hide an earlier block.`,
   ];
 
   if (context.runsWithoutStats > 0) {
@@ -725,7 +812,7 @@ export function renderCalibrationReport(
       '',
       ...summary.wouldBlock.map(
         (commit) =>
-          `- ${commitLabel(commit)}: ${commit.enforceOutcome}, findings ${commit.kept ? formatKept(commit.kept) : 'not recorded'}`,
+          `- ${commitLabel(commit)}: ${commit.enforceOutcome} (${CAUSE_LABELS[commit.cause]}), findings ${commit.kept ? formatKept(commit.kept) : 'not recorded'}`,
       ),
     );
   }

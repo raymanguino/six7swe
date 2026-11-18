@@ -49,6 +49,7 @@ import {
   type ChangedFile,
   type DiffCoverage,
   type FindingSeverity,
+  type GateInput,
   type GateOutcome,
   type SanitizeCounts,
 } from '../src/domain/qa';
@@ -229,13 +230,11 @@ async function main(): Promise<void> {
   // must not post a second review for the same run.
   let posted = false;
 
-  // The gate this run decided, once it has. Together with `posted` it says
-  // whether the review on the pull request is a real verdict.
-  let decidedGate: GateOutcome | null = null;
-
-  // What the gate would have returned in `enforce` mode on the same input,
-  // for calibration only. It never sets the exit code or the review event.
-  let decidedEnforceOutcome: GateOutcome | null = null;
+  // What this run decided, once it has. Together with `posted` it says
+  // whether the review on the pull request is a real verdict. `enforce` is
+  // what the gate would have returned in `enforce` mode on the same input,
+  // for calibration only: it never sets the exit code or the review event.
+  let decided: { gate: GateOutcome; enforce: GateOutcome } | null = null;
 
   // The duration the review body reported, so the body and the stats line
   // carry the same number. It runs from the start of the script to just
@@ -342,7 +341,7 @@ async function main(): Promise<void> {
     // computed from this list, in this order.
     const ids = findingIds({ pr: env.PR_NUMBER, sha: headSha }, findings, hashData);
 
-    const gateInput = {
+    const gateInput: Omit<GateInput, 'mode'> = {
       findings,
       changedFiles,
       shown: prepared.shown,
@@ -350,11 +349,10 @@ async function main(): Promise<void> {
       coverage: diffCoverage,
     };
     const gate = decideGate({ ...gateInput, mode });
-    decidedGate = gate;
     // The counterfactual: the same input, judged as phase 2 would judge it.
     // Recorded in the stats line only; `gate` alone decides what happens.
     const enforceOutcome = decideEnforceOutcome(gateInput);
-    decidedEnforceOutcome = enforceOutcome;
+    decided = { gate, enforce: enforceOutcome };
 
     logLine(
       `Model returned ${review.findings.length} finding(s); ${findings.length} survived sanitizing.`,
@@ -436,11 +434,11 @@ async function main(): Promise<void> {
     // Once the review is posted it is the verdict of record. A throw after
     // that comes from logging or stats code, so reporting fail-closed would
     // contradict the posted review and record the wrong outcome.
-    const outcome: GateOutcome = posted && decidedGate !== null ? decidedGate : 'fail-closed';
     // `enforce` fails closed on an incomplete review too, so the
     // counterfactual follows the same rule as the real outcome.
-    const enforceOutcome: GateOutcome =
-      posted && decidedEnforceOutcome !== null ? decidedEnforceOutcome : 'fail-closed';
+    const recorded: { gate: GateOutcome; enforce: GateOutcome } =
+      posted && decided !== null ? decided : { gate: 'fail-closed', enforce: 'fail-closed' };
+    const { gate: outcome, enforce: enforceOutcome } = recorded;
 
     logStats({
       outcome,

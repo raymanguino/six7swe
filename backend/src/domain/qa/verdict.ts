@@ -373,8 +373,9 @@ export function decideGate(input: GateInput): GateOutcome {
  * In `comment-only` mode `decideGate` passes whatever the agent found, so
  * the real outcome says nothing about how often the agent would block.
  * This is the counterfactual the phase 2 decision is measured on (#144):
- * the same findings, the same changed files and the same coverage, with
- * only the mode changed.
+ * every input field - the findings, the changed files, `shown`, the
+ * coverage, `protectedPaths` and `reviewCompleted` - is used unchanged,
+ * and only the mode is set, to `enforce`.
  *
  * It is a measurement, not a second gate. Nothing may derive an exit code
  * or a review event from it; those come from the real outcome only.
