@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { parseStatsLines, REVIEW_MARKER } from '../../domain/qa';
+import { parseStatsLines, REVIEW_MARKER, REVIEW_PROMPT_VERSION } from '../../domain/qa';
 
 /**
  * Exercises the script end to end with the network stubbed.
@@ -657,7 +657,7 @@ describe('the script logs one stats line for calibration', () => {
     const lines = statsLines(result);
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatchObject({
-      v: 4,
+      v: 5,
       pr: 7,
       sha: HEAD_SHA,
       mode: 'comment-only',
@@ -666,6 +666,7 @@ describe('the script logs one stats line for calibration', () => {
       // enforce mode would have sent this one to a human.
       enforceOutcome: 'manual-review',
       manualReviewReasons: ['protected-path'],
+      promptVersion: REVIEW_PROMPT_VERSION,
       files: 2,
       backendFiles: 1,
       frontendFiles: 0,
@@ -771,7 +772,7 @@ describe('the script logs one stats line for calibration', () => {
     const [logged] = statsLines(result);
     expect(parseStatsLines(result.stdout)).toEqual([logged]);
     expect(parseStatsLines(result.stdout)[0]).toMatchObject({
-      v: 4,
+      v: 5,
       sha: HEAD_SHA,
       enforceOutcome: 'fail',
       manualReviewReasons: [],

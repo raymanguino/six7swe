@@ -57,8 +57,10 @@ export function neutralizeStatsPrefix(text: string): string {
  * Version 4 added `enforceOutcome`, the outcome `enforce` mode would have
  * returned, and `manualReviewReasons`, why that review would need a human;
  * an older line has them as null.
+ * Version 5 added `promptVersion`, the version of the review prompt the
+ * run used (`REVIEW_PROMPT_VERSION`); an older line has it as null.
  */
-export const QA_STATS_VERSION = 4;
+export const QA_STATS_VERSION = 5;
 
 /** The tokens one review used. `reasoning` is null when MiniMax does not report it. */
 export interface RunTokens {
@@ -69,7 +71,7 @@ export interface RunTokens {
 
 /** What one run of the agent did. */
 export interface QaRunStats {
-  v: 1 | 2 | 3 | typeof QA_STATS_VERSION;
+  v: 1 | 2 | 3 | 4 | typeof QA_STATS_VERSION;
   pr: number;
   sha: string;
   mode: ReviewMode;
@@ -89,6 +91,11 @@ export interface QaRunStats {
    * before the gate was decided.
    */
   manualReviewReasons: ManualReviewReason[] | null;
+  /**
+   * The version of the review prompt the run used (`REVIEW_PROMPT_VERSION`),
+   * so findings are compared per prompt. Null on a line older than version 5.
+   */
+  promptVersion: number | null;
   files: number;
   backendFiles: number;
   frontendFiles: number;
@@ -197,9 +204,10 @@ const FIELDS_ADDED_IN: readonly { since: QaRunStats['v']; fields: readonly strin
   { since: 2, fields: COVERAGE_FIELDS },
   { since: 3, fields: ['sanitized', 'findingIds'] },
   { since: 4, fields: ['enforceOutcome', 'manualReviewReasons'] },
+  { since: 5, fields: ['promptVersion'] },
 ];
 
-const STATS_VERSIONS: readonly QaRunStats['v'][] = [1, 2, 3, QA_STATS_VERSION];
+const STATS_VERSIONS: readonly QaRunStats['v'][] = [1, 2, 3, 4, QA_STATS_VERSION];
 
 function isStatsVersion(value: unknown): value is QaRunStats['v'] {
   return STATS_VERSIONS.some((version) => version === value);
@@ -230,7 +238,7 @@ function isReasonList(value: unknown): value is ManualReviewReason[] {
  * decided. An older line has both as null (filled in by the upgrade).
  */
 function hasValidEnforceFields(value: Record<string, unknown>): boolean {
-  if (value.v !== QA_STATS_VERSION) {
+  if (typeof value.v !== 'number' || value.v < 4) {
     return value.enforceOutcome === null && value.manualReviewReasons === null;
   }
   return (
@@ -284,6 +292,7 @@ function isRunStats(value: Record<string, unknown>): value is Record<string, unk
     (value.mode === 'comment-only' || value.mode === 'enforce') &&
     isGateOutcome(value.outcome) &&
     hasValidEnforceFields(value) &&
+    (value.promptVersion === null || (isCount(value.promptVersion) && value.promptVersion > 0)) &&
     isCount(value.files) &&
     isCount(value.backendFiles) &&
     isCount(value.frontendFiles) &&
