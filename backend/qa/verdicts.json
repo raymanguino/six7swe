@@ -1,0 +1,299 @@
+{
+  "version": 1,
+  "findings": [],
+  "legacy": [
+    {
+      "ref": "legacy-1",
+      "pr": 72,
+      "sha": "c06c746",
+      "severity": "minor",
+      "finding": "fail-closed stats line skipped if posting the failure review throws",
+      "coverage": "10/10, 1 shortened",
+      "coverageSource": "replayed budget",
+      "promptVersion": 1,
+      "verdict": "noise",
+      "note": "Also wrong about the code (recorded as \"false positive / noise\" before this file). `postFailureReview` catches everything, so it cannot throw. The agent saw the call site but not the function body."
+    },
+    {
+      "ref": "legacy-2",
+      "pr": 75,
+      "sha": "6b861a6",
+      "severity": "major",
+      "finding": "`puppeteer browsers install chrome` installs latest stable, not puppeteer's pinned Chrome",
+      "coverage": "5/5",
+      "coverageSource": "replayed budget",
+      "promptVersion": 1,
+      "verdict": "false positive",
+      "note": "puppeteer's CLI defaults to `pinned` (`PUPPETEER_REVISIONS.chrome` = 157.0.8103.50 in 25.17.0), which is what got installed. The agent couldn't see that inside `node_modules`, and read the PR body's Chrome 145 (main on puppeteer 24) as a mismatch with 157."
+    },
+    {
+      "ref": "legacy-3",
+      "pr": 100,
+      "sha": null,
+      "severity": "major",
+      "finding": "`migrations/meta/_journal.json` classed as inert tier 4, but the migrator reads it",
+      "coverage": "3/3, 2 shortened",
+      "coverageSource": "replayed budget",
+      "promptVersion": 1,
+      "verdict": "unsure",
+      "note": "#97 itself lists `meta/*.json` as inert. The journal is data, and a change that matters arrives as a `.sql` file (tier 1). A journal-only reorder is a narrow residual risk. The finding was posted once and was absent from the next run on the same unchanged code."
+    },
+    {
+      "ref": "legacy-4",
+      "pr": 100,
+      "sha": null,
+      "severity": "major",
+      "finding": "`PINNED_FILE` misses `Dockerfile-production` and similar",
+      "coverage": "3/3, 2 shortened",
+      "coverageSource": "replayed budget",
+      "promptVersion": 1,
+      "verdict": "real",
+      "note": "Fixed in 9fd60cc (`dockerfile([.-].+)?`)."
+    },
+    {
+      "ref": "legacy-5",
+      "pr": 105,
+      "sha": "b979bc6",
+      "severity": "major",
+      "finding": "profile `resumeFilename` joined onto `public/` unchecked, so `../x` escapes it",
+      "coverage": "8/8",
+      "coverageSource": "replayed budget",
+      "promptVersion": 1,
+      "verdict": "real",
+      "note": "Fixed in a1750a2 (`safeResumeFilename`). The gap predates the PR (the old handler joined the name the same way), and only the DB owner can write the column, so it is defence in depth rather than an exploitable hole."
+    },
+    {
+      "ref": "legacy-6",
+      "pr": 105,
+      "sha": "b979bc6",
+      "severity": "minor",
+      "finding": "`as never` cast on the mocked `getPortfolioData` value hides fixture type errors",
+      "coverage": "8/8",
+      "coverageSource": "replayed budget",
+      "promptVersion": 1,
+      "verdict": "useful",
+      "note": "Replaced with a typed `PortfolioData` fixture in a1750a2."
+    },
+    {
+      "ref": "legacy-7",
+      "pr": 105,
+      "sha": "a1750a2",
+      "severity": "major",
+      "finding": "`isResumeAvailable()` checks `isPortfolioMcpEnabled()`, not the handler's source + connection predicate",
+      "coverage": "8/8",
+      "coverageSource": "review body",
+      "promptVersion": 1,
+      "verdict": "false positive",
+      "note": "`isPortfolioMcpEnabled()` *is* `source === 'mcp' && isMcpConnectionConfigured()` (`config/portfolioMcp.ts`, not in the diff), and a test in the diff asserts the exact case described."
+    },
+    {
+      "ref": "legacy-8",
+      "pr": 105,
+      "sha": "a1750a2",
+      "severity": "major",
+      "finding": "service does filesystem I/O (`fs.existsSync`, `process.cwd()`) instead of an infrastructure layer",
+      "coverage": "8/8",
+      "coverageSource": "review body",
+      "promptVersion": 1,
+      "verdict": "false positive",
+      "note": "Comes from the agent's own prompt (`prReview.ts`: \"infrastructure owns every side effect\"). The backend has no infrastructure layer: services own I/O (`emailService.ts`: \"side effect stays inside the service layer\"). The PR moved the I/O *out of* a route into a service."
+    },
+    {
+      "ref": "legacy-9",
+      "pr": 122,
+      "sha": null,
+      "severity": "minor",
+      "finding": "a successful `/version` poll clears the cooldown set by a failed `/retrieve`",
+      "coverage": "23/38, 2 shortened",
+      "coverageSource": "assumed from later runs",
+      "promptVersion": 3,
+      "verdict": "useful",
+      "note": "Fixed in 56fc905. Coverage assumed from the later runs: the review body was rewritten in place and this run's line is gone."
+    },
+    {
+      "ref": "legacy-10",
+      "pr": 122,
+      "sha": null,
+      "severity": "major",
+      "finding": "`domain/chatEval` imports a type from `data/chatContext`, which depends on services",
+      "coverage": "23/38, 2 shortened",
+      "coverageSource": "assumed from later runs",
+      "promptVersion": 3,
+      "verdict": "real",
+      "note": "Fixed in 38707d7: the type is defined in the domain, and an assignability check sits outside `domain/`. Coverage assumed from the later runs: the review body was rewritten in place and this run's line is gone."
+    },
+    {
+      "ref": "legacy-11",
+      "pr": 122,
+      "sha": null,
+      "severity": "minor",
+      "finding": "`awaitKnowledgeReady` retries every error, so 401/403 or a bad URL waits out the full timeout and loses the cause",
+      "coverage": "23/38, 2 shortened",
+      "coverageSource": "assumed from later runs",
+      "promptVersion": 3,
+      "verdict": "useful",
+      "note": "Fixed in 026b49a. Coverage assumed from the later runs: the review body was rewritten in place and this run's line is gone."
+    },
+    {
+      "ref": "legacy-12",
+      "pr": 122,
+      "sha": null,
+      "severity": "minor",
+      "finding": "cooldown ordering by millisecond timestamp lets a same-millisecond failure be cleared",
+      "coverage": "23/38, 2 shortened",
+      "coverageSource": "assumed from later runs",
+      "promptVersion": 3,
+      "verdict": "useful",
+      "note": "Fixed in 9102fad with a sequence counter. Coverage assumed from the later runs: the review body was rewritten in place and this run's line is gone."
+    },
+    {
+      "ref": "legacy-13",
+      "pr": 122,
+      "sha": "8d99c0c",
+      "severity": "minor",
+      "finding": "chat history cut to the last 20 entries before Zod runs, so an invalid entry older than that is accepted",
+      "coverage": "23/38, 2 shortened",
+      "coverageSource": "review body",
+      "promptVersion": 3,
+      "verdict": "useful",
+      "note": "Fixed in 70cb9d3."
+    },
+    {
+      "ref": "legacy-14",
+      "pr": 122,
+      "sha": "70cb9d3",
+      "severity": "blocker",
+      "finding": "Dockerfile runtime stage doesn't copy `packages/knowledge-types`",
+      "coverage": "23/38, 2 shortened",
+      "coverageSource": "review body",
+      "promptVersion": 3,
+      "verdict": "false positive",
+      "note": "`COPY --from=build /app /app` (line 67) copies it, but that line falls outside the diff's context. The Dockerfile diff was unchanged since the first review; the finding first appeared on 70cb9d3. Explained in a PR comment."
+    }
+  ],
+  "groundTruth": [
+    {
+      "pr": 72,
+      "readIndependently": false,
+      "note": "Seeded from the findings judged real or useful; the pull request has not been read for defects independently of the agent, so a miss here is unknown.",
+      "defects": []
+    },
+    {
+      "pr": 75,
+      "readIndependently": false,
+      "note": "Seeded from the findings judged real or useful; the pull request has not been read for defects independently of the agent, so a miss here is unknown.",
+      "defects": []
+    },
+    {
+      "pr": 100,
+      "readIndependently": false,
+      "note": "Seeded from the findings judged real or useful; the pull request has not been read for defects independently of the agent, so a miss here is unknown.",
+      "defects": [
+        {
+          "id": "pr100-pinned-file-dockerfile-variants",
+          "severity": "major",
+          "file": null,
+          "description": "`PINNED_FILE` misses `Dockerfile-production` and similar",
+          "shownToModel": true,
+          "foundBy": [
+            "legacy-4"
+          ]
+        }
+      ]
+    },
+    {
+      "pr": 105,
+      "readIndependently": false,
+      "note": "Seeded from the findings judged real or useful; the pull request has not been read for defects independently of the agent, so a miss here is unknown.",
+      "defects": [
+        {
+          "id": "pr105-resume-filename-escapes-public",
+          "severity": "major",
+          "file": null,
+          "description": "profile `resumeFilename` joined onto `public/` unchecked (defence in depth: the gap predates the PR)",
+          "shownToModel": true,
+          "foundBy": [
+            "legacy-5"
+          ]
+        },
+        {
+          "id": "pr105-as-never-fixture-cast",
+          "severity": "minor",
+          "file": null,
+          "description": "`as never` cast on a mocked value hides fixture type errors",
+          "shownToModel": true,
+          "foundBy": [
+            "legacy-6"
+          ]
+        }
+      ]
+    },
+    {
+      "pr": 122,
+      "readIndependently": false,
+      "note": "Seeded from the findings judged real or useful; the pull request has not been read for defects independently of the agent, so a miss here is unknown.",
+      "defects": [
+        {
+          "id": "pr122-version-poll-clears-cooldown",
+          "severity": "minor",
+          "file": null,
+          "description": "a successful `/version` poll clears the cooldown set by a failed `/retrieve`",
+          "shownToModel": true,
+          "foundBy": [
+            "legacy-9"
+          ]
+        },
+        {
+          "id": "pr122-domain-imports-data-type",
+          "severity": "major",
+          "file": null,
+          "description": "`domain/chatEval` imports a type from `data/chatContext`, which depends on services",
+          "shownToModel": true,
+          "foundBy": [
+            "legacy-10"
+          ]
+        },
+        {
+          "id": "pr122-await-ready-retries-every-error",
+          "severity": "minor",
+          "file": null,
+          "description": "`awaitKnowledgeReady` retries every error and loses the cause",
+          "shownToModel": true,
+          "foundBy": [
+            "legacy-11"
+          ]
+        },
+        {
+          "id": "pr122-cooldown-same-millisecond",
+          "severity": "minor",
+          "file": null,
+          "description": "a same-millisecond failure can be cleared by the cooldown ordering",
+          "shownToModel": true,
+          "foundBy": [
+            "legacy-12"
+          ]
+        },
+        {
+          "id": "pr122-history-cut-before-validation",
+          "severity": "minor",
+          "file": null,
+          "description": "chat history cut before Zod runs, so an older invalid entry is accepted",
+          "shownToModel": true,
+          "foundBy": [
+            "legacy-13"
+          ]
+        }
+      ]
+    }
+  ],
+  "notes": [
+    "**Prompt versions of the legacy rows** are inferred from when each run happened against when each prompt change merged (the agent runs the base branch's code): #72, #75, #100 and #105 ran before PR #107 merged (v1); #122 ran on 2026-11-14, after PR #109 and before PR #133 (v3). Rows with an id carry the version their run logged.",
+    "**Stability (#100):** the same finding appeared on one run and not on the next, with the flagged code unchanged. The review body was rewritten in place (before #142), so the first run's text is gone from the PR; it is recorded here only because the finding was seen.",
+    "**Stability (#105):** the reverse case. Run 1 (b979bc6) did not flag `isResumeAvailable()` or the `fs.existsSync` lookup. Run 2 (a1750a2) posted both as `major`, although the fix commit left those functions unchanged. Under `enforce` this would have taken a green PR red, on two false positives, after a commit that only addressed the earlier review.",
+    "**Stability (#122):** the #105 case again. The Dockerfile diff did not change across the earlier runs, none of which flagged it; the run on 70cb9d3 (a commit that only touched the chat handler and its test) posted it as a `blocker`. Under `enforce` this would have turned a green PR red after an unrelated fix.",
+    "**Pattern so far:** four of the five false positives (#72, #75, #105's MCP finding, #122's Dockerfile finding) came from judging code the agent could not see: a function body outside the diff, a library default inside `node_modules`, a predicate defined in a file outside the diff, and a later line of the same file that fell outside the patch's context. If this keeps happening, the fix is more context, or rating findings that depend on unseen code as `unsure`, not a change to the severity thresholds. The other one (#105's I/O finding) came from prompt v1's layering rule, which v2 replaced.",
+    "**Prompt v2 (#106, PR #107):** the prompt describes the real layers by path: pure `domain/`, thin handlers, services own I/O (still reviewed under Security), queries in `db/api/` called from services and plugins, scraping in `services/jobFetchers/`, and `portfolioService.ts` as a known exception until #88. Watch for findings that read a handler calling a `db/api` plugin decorator as a handler querying the database.",
+    "**Prompt v3 (#108, PR #109):** steering attempts are reported as **one** finding with `kind: steering`, at fixed severity `minor`, listed after every code finding; the domain enforces the same rule. Severity counts before and after v3 are not directly comparable for diffs that contain steering text. The Security class names `PUBLIC_ROUTE`, `backend/src/services/auth/` and `AUTH_DEV_BYPASS`. Watch for a real defect labelled `steering`; that is the known residual risk.",
+    "**Coverage is not the cause so far.** Every legacy row except #122's is fully covered, and in #122 the Dockerfile was among the files read. Coverage measures what the budget dropped, not code outside the diff, and code outside the diff is what misled the agent here."
+  ]
+}
