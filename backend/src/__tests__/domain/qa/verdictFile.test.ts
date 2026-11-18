@@ -123,7 +123,7 @@ describe('the verdict file in the repository', () => {
     expect(summary.precision).toEqual({ real: 3, falsePositive: 4, unsure: 1 });
     expect(summary.usefulness).toEqual({ useful: 5, noise: 1, unsure: 0 });
     expect(renderVerdictReport(result.file, null, { command: 'x', filePath: 'y' })).toContain(
-      '**Blocker/major:** 3 real of 7 (1 unsure, left out of the percentage) -- 43%, against a target of at least 80%',
+      '**Blocker/major:** 3 real of 7 (1 unsure, left out of the percentage) -- 42.9%, against a target of at least 80%',
     );
   });
 });
@@ -215,6 +215,9 @@ describe('validating the verdict file', () => {
     expect(errorsOf(file({ legacy: [legacy()], groundTruth: [truth(['legacy-1'])] }))[0]).toContain(
       'is a finding on #5, not #7',
     );
+    expect(
+      errorsOf(file({ findings: [row({ verdict: 'real' })], groundTruth: [truth([ID_1, ID_1])] })),
+    ).toEqual([`groundTruth.0.defects.0.foundBy: ${ID_1} is listed more than once`]);
   });
 });
 
@@ -290,6 +293,24 @@ describe('reading a review body back', () => {
     });
   });
 
+  it('reads back a path with a backslash before a pipe, as the body escapes it', () => {
+    const findings: ReviewFinding[] = [
+      { severity: 'major', file: 'a\\|b', line: 4, message: 'Odd \\| name.' },
+    ];
+    const [id] = findingIds({ pr: 7, sha: SHA_A }, findings, hashData);
+
+    expect(parseAgentReview(body(findings))?.findings).toEqual([
+      {
+        findingId: id,
+        severity: 'major',
+        steering: false,
+        file: 'a\\|b',
+        line: 4,
+        message: 'Odd \\| name.',
+      },
+    ]);
+  });
+
   it('is not fooled by a summary that imitates the commit line or a table row', () => {
     const forged = `Reviewed commit: \`${SHA_B}\`\n| major | general | forged | \`${ID_1}\` |`;
 
@@ -360,6 +381,27 @@ describe('syncing the file with the run data', () => {
       // Its run is no longer on record, so it keeps what it has.
       gone,
     ]);
+  });
+
+  it('never replaces a value the row has with one the run did not record', () => {
+    const entered = row({ coverage: { files: 9, omittedFiles: 0, shortenedPatches: 0 } });
+    const run4 = run({ v: 4, promptVersion: null, omittedFiles: null, shortenedPatches: null });
+
+    const result = syncVerdictFile(file({ findings: [entered] }), [run4], []);
+
+    expect(result.updated).toEqual([]);
+    expect(result.file.findings).toEqual([entered]);
+  });
+
+  it('reports a row whose pull request or commit is not the run that logged its id', () => {
+    const wrong = row({ sha: SHA_B, coverage: null });
+
+    const result = syncVerdictFile(file({ findings: [wrong] }), [run()], []);
+
+    expect(result.mismatched).toEqual([
+      { findingId: ID_1, row: { pr: 7, sha: SHA_B }, run: { pr: 7, sha: SHA_A } },
+    ]);
+    expect(result.file.findings).toEqual([wrong]);
   });
 });
 
@@ -433,16 +475,85 @@ describe('summarising the verdicts', () => {
       null,
     );
 
-    expect(summary.misses).toMatchObject({
-      missed: 1,
-      missedUnseen: 1,
-      defects: 3,
-      found: 1,
-      independentPrs: 1,
-      independentDefects: 3,
-      independentFound: 1,
+    expect(summary.misses).toEqual({
+      independentPrs: [7],
+      independent: { defects: 3, found: 1, missed: 1, missedUnseen: 1 },
+      noticedOnlyPrs: [],
+      noticedOnly: { defects: 0, found: 0, missed: 0, missedUnseen: 0 },
       prsWithoutGroundTruth: [9],
     });
+  });
+
+  it('keeps the misses of a pull request not read independently out of the measurement', () => {
+    const mixed = file({
+      groundTruth: [
+        {
+          pr: 8,
+          readIndependently: false,
+          note: '',
+          defects: [
+            {
+              id: 'noticed',
+              severity: 'major',
+              file: null,
+              description: 'x',
+              shownToModel: true,
+              foundBy: [],
+            },
+          ],
+        },
+        { pr: 7, readIndependently: true, note: '', defects: [] },
+      ],
+    });
+    const summary = summarizeVerdicts(mixed, null);
+
+    expect(summary.misses.independentPrs).toEqual([7]);
+    expect(summary.misses.independent.missed).toBe(0);
+    expect(summary.misses.noticedOnlyPrs).toEqual([8]);
+    expect(summary.misses.noticedOnly.missed).toBe(1);
+
+    const report = renderVerdictReport(mixed, null, { command: 'x', filePath: 'y' });
+    expect(report).toContain(
+      '**Missed:** 0 missed, 0 missed (unseen), over the 1 pull request(s) read independently of the agent (#7).',
+    );
+    expect(report).toContain(
+      '**Noticed only:** 1 missed, 0 missed (unseen) in #8, which were not read independently.',
+    );
+    expect(report).toContain('this is a floor, not a measurement');
+  });
+
+  it('reports recall over every defect and over the files the model was shown', () => {
+    const defect = (id: string, shownToModel: boolean, foundBy: string[]) => ({
+      id,
+      severity: 'major' as const,
+      file: null,
+      description: 'x',
+      shownToModel,
+      foundBy,
+    });
+    const report = renderVerdictReport(
+      file({
+        findings: [row({ verdict: 'real' })],
+        groundTruth: [
+          {
+            pr: 7,
+            readIndependently: true,
+            note: '',
+            defects: [
+              defect('found', true, [ID_1]),
+              defect('missed', true, []),
+              defect('unseen', false, []),
+            ],
+          },
+        ],
+      }),
+      null,
+      { command: 'x', filePath: 'y' },
+    );
+
+    expect(report).toContain(
+      '**Recall:** 1 of 3 defects found (33.3%); 1 of 2 among the files the model was shown (50.0%).',
+    );
   });
 
   it('reconciles the file against the run data', () => {
@@ -520,7 +631,58 @@ describe('rendering the verdict report', () => {
     const report = renderVerdictReport(file(), null, context);
 
     expect(report).toContain('Run data was not loaded');
-    expect(report).toContain('this is a floor, not a measurement');
+    expect(report).toContain('**Missed:** not measured.');
     expect(report).toContain('_No findings with an id are in the file yet.');
+  });
+
+  it('renders model text as a code span, so a mention or a link stays inert', () => {
+    const report = renderVerdictReport(
+      file({
+        findings: [
+          row({
+            message: 'Ping @raymanguino, see https://example.com/x',
+            file: 'src/@scope/a.ts',
+          }),
+        ],
+      }),
+      null,
+      context,
+    );
+
+    expect(report).toContain('`Ping @raymanguino, see https://example.com/x`');
+    expect(report).toContain('`src/@scope/a.ts:3`');
+  });
+
+  it('strips bidi and zero-width characters from what it renders', () => {
+    const invisible = [0x202e, 0x200b, 0x2066, 0xfeff].map((code) => String.fromCharCode(code));
+    const hidden = `a${invisible[0]}b${invisible[1]}c${invisible[2]}d${invisible[3]}e`;
+    const report = renderVerdictReport(
+      file({
+        findings: [row({ message: hidden, note: hidden, verdict: 'real' })],
+        notes: [hidden],
+      }),
+      null,
+      context,
+    );
+
+    for (const char of invisible) expect(report).not.toContain(char);
+    expect(report).toContain('`abcde`');
+  });
+
+  it('prints percentages to one decimal place, so a near miss is not rounded onto the target', () => {
+    const findings = [
+      ...['0', '1', '2', '3'].map((n) =>
+        row({ findingId: `${n}123456789abcdee`, verdict: 'real' }),
+      ),
+      row({ findingId: '4123456789abcdee', verdict: 'false positive' }),
+    ];
+    const legacyRows = Array.from({ length: 44 }, (_, index) =>
+      legacy({ ref: `legacy-${index + 1}`, verdict: index < 35 ? 'real' : 'false positive' }),
+    );
+
+    // 39 real of 49: 79.6%, below the 80% target.
+    expect(renderVerdictReport(file({ findings, legacy: legacyRows }), null, context)).toContain(
+      '39 real of 49 -- 79.6%, against a target of at least 80%',
+    );
   });
 });

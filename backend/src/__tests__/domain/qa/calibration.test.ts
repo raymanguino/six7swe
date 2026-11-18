@@ -766,7 +766,7 @@ describe('the prompt version in the stats line', () => {
   const line = (value: unknown): string => `QA_STATS ${JSON.stringify(value)}`;
 
   it('round-trips through the stats line', () => {
-    const stats = run({ promptVersion: 7 });
+    const stats = run({ promptVersion: 3 });
     const { v: _v, ...rest } = stats;
 
     expect(parseStatsLines(formatStatsLine(rest))).toEqual([stats]);
@@ -783,6 +783,8 @@ describe('the prompt version in the stats line', () => {
       line(run({ v: 4 })),
       line(withoutPrompt(run())),
       line(run({ promptVersion: 0 })),
+      line(run({ promptVersion: 99 })),
+      line(run({ promptVersion: null })),
       line({ ...run(), promptVersion: '4' }),
     ].join('\n');
 

@@ -16,6 +16,7 @@
 
 import { allTouchedPaths, type ChangedFile } from './diff';
 import { FINDING_ID_PATTERN } from './findingId';
+import { isKnownPromptVersion } from './promptVersion';
 import {
   MANUAL_REVIEW_REASONS,
   SANITIZE_REASONS,
@@ -248,6 +249,15 @@ function hasValidEnforceFields(value: Record<string, unknown>): boolean {
   );
 }
 
+/**
+ * The version 5 field: a version from the prompt history. An older line
+ * has it as null (filled in by the upgrade).
+ */
+function hasValidPromptVersion(value: Record<string, unknown>): boolean {
+  if (typeof value.v !== 'number' || value.v < 5) return value.promptVersion === null;
+  return isKnownPromptVersion(value.promptVersion);
+}
+
 function isSanitizeCounts(value: unknown): value is SanitizeCounts {
   return isRecord(value) && SANITIZE_REASONS.every((reason) => isCount(value[reason]));
 }
@@ -292,7 +302,7 @@ function isRunStats(value: Record<string, unknown>): value is Record<string, unk
     (value.mode === 'comment-only' || value.mode === 'enforce') &&
     isGateOutcome(value.outcome) &&
     hasValidEnforceFields(value) &&
-    (value.promptVersion === null || (isCount(value.promptVersion) && value.promptVersion > 0)) &&
+    hasValidPromptVersion(value) &&
     isCount(value.files) &&
     isCount(value.backendFiles) &&
     isCount(value.frontendFiles) &&

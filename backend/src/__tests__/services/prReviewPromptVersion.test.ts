@@ -7,8 +7,8 @@ import { hashData } from '../../util/hash';
  *
  * Findings are compared per prompt version, so the version has to change
  * whenever the text does. If this test fails because the prompt changed,
- * bump `REVIEW_PROMPT_VERSION`, add a row to `REVIEW_PROMPT_VERSIONS`, and
- * record the new hash here.
+ * add a row to `REVIEW_PROMPT_VERSIONS` (which moves `REVIEW_PROMPT_VERSION`
+ * on) and record the new hash here.
  */
 const PROMPT_HASHES: Record<number, string> = {
   4: 'df3fce19cde44c0073d2376bf996bc7fd389f8681e52b3c6e9b08e8df98f39ee',
@@ -22,7 +22,7 @@ describe('the review prompt version', () => {
     expect(hashData(text)).toBe(PROMPT_HASHES[REVIEW_PROMPT_VERSION]);
   });
 
-  it('is the latest version in the history, which counts up from 1', () => {
+  it('is the last version in the history, which is numbered from 1 with no gaps', () => {
     expect(REVIEW_PROMPT_VERSIONS.map((entry) => entry.version)).toEqual(
       REVIEW_PROMPT_VERSIONS.map((_, index) => index + 1),
     );

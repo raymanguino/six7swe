@@ -12,9 +12,11 @@
  * With --sync it first brings the file up to date: every finding id a run
  * logged gets a row, filled from the review the agent posted for that
  * commit, and the coverage and prompt version of each row are taken from
- * its run. Only reviews posted by the workflow's own account are read, and
- * only ids the stats line logged for the same commit are accepted. The
- * hand-kept columns are never changed. Review the diff before committing.
+ * its run. Only reviews posted by the agent's own accounts, on the commit
+ * their body names, are read, and only ids the stats line logged for the
+ * same commit are accepted. The hand-kept columns are never changed. The
+ * result is validated before it is written, and written atomically. Review
+ * the diff before committing.
  *
  * Usage:
  *   pnpm --filter @six7swe/backend qa:verdicts            # render, reconciled with the runs
@@ -23,12 +25,15 @@
  *   pnpm --filter @six7swe/backend qa:verdicts --check    # validate the file only
  *
  * Environment (not needed with --offline or --check):
- *   GITHUB_TOKEN or GH_TOKEN   required, a token that can read the repository's Actions logs and pull requests
+ *   GITHUB_TOKEN or GH_TOKEN   required. The least it needs is a fine-grained
+ *                              personal access token for this repository with
+ *                              read-only "Actions" and read-only "Pull requests".
  *   GITHUB_REPOSITORY          optional, "owner/repo"; defaults to the `origin` remote
  */
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { z } from 'zod';
 import {
   formatVerdictFile,
   parseAgentReview,
@@ -39,14 +44,12 @@ import {
   type QaRunStats,
   type VerdictFile,
 } from '../src/domain/qa';
-import { get, PER_PAGE, readRunData, repository, token } from './qa-runs';
+import { AGENT_BOT_LOGINS } from '../src/services/github/prClient';
+import { get, PER_PAGE, readJson, readRunData, repository, token } from './qa-runs';
 
 const FILE_PATH = path.join(__dirname, '..', 'qa', 'verdicts.json');
 const DISPLAY_PATH = 'backend/qa/verdicts.json';
 const COMMAND = 'pnpm --filter @six7swe/backend qa:verdicts';
-
-/** The account the workflow posts its reviews with (`GITHUB_TOKEN`). */
-const AGENT_LOGIN = 'github-actions[bot]';
 
 const MODES = ['--sync', '--offline', '--check'] as const;
 type Mode = (typeof MODES)[number] | 'render';
@@ -59,43 +62,59 @@ function mode(args: readonly string[]): Mode {
   return picked[0] ?? 'render';
 }
 
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function validated(json: unknown, what: string): VerdictFile {
+  const result = parseVerdictFile(json);
+  if (!result.ok) throw new Error(`${what} is not valid:\n  ${result.errors.join('\n  ')}`);
+  return result.file;
+}
+
 function readVerdictFile(): VerdictFile {
   let json: unknown;
   try {
     json = JSON.parse(readFileSync(FILE_PATH, 'utf-8'));
   } catch (error: unknown) {
-    throw new Error(
-      `Cannot read ${DISPLAY_PATH}: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
-    );
+    throw new Error(`Cannot read ${DISPLAY_PATH}: ${message(error)}`, { cause: error });
   }
-  const result = parseVerdictFile(json);
-  if (!result.ok) {
-    throw new Error(`${DISPLAY_PATH} is not valid:\n  ${result.errors.join('\n  ')}`);
-  }
-  return result.file;
+  return validated(json, DISPLAY_PATH);
 }
 
-interface Review {
-  user: { login: string } | null;
-  body: string | null;
+/**
+ * Writes the file, but only once it validates, and atomically: a temporary
+ * file renamed over the old one, so an interrupted run never leaves half a
+ * file behind.
+ */
+function writeVerdictFile(file: VerdictFile): void {
+  const checked = validated(file, `The synced ${DISPLAY_PATH}`);
+  const temporary = `${FILE_PATH}.${process.pid}.tmp`;
+  writeFileSync(temporary, formatVerdictFile(checked), 'utf-8');
+  renameSync(temporary, FILE_PATH);
 }
+
+const reviewsSchema = z.array(
+  z.looseObject({
+    user: z.looseObject({ login: z.string() }).nullable(),
+    body: z.string().nullable(),
+    commit_id: z.string().nullable(),
+  }),
+);
 
 /** The reviews the agent posted on a pull request, read back. */
 async function agentReviews(repo: string, pr: number, auth: string): Promise<PullRequestReview[]> {
   const reviews: PullRequestReview[] = [];
   for (let page = 1; ; page += 1) {
-    const response = await get(
-      `/repos/${repo}/pulls/${pr}/reviews?per_page=${PER_PAGE}&page=${page}`,
-      auth,
-    );
-    const batch = (await response.json()) as Review[];
+    const apiPath = `/repos/${repo}/pulls/${pr}/reviews?per_page=${PER_PAGE}&page=${page}`;
+    const batch = await readJson(await get(apiPath, auth), reviewsSchema, apiPath);
     for (const review of batch) {
       // Anyone can post a review that starts with the marker; only the
-      // workflow's own account posts the agent's.
-      if (review.user?.login !== AGENT_LOGIN || !review.body) continue;
+      // agent's own accounts post the agent's.
+      if (!review.user || !AGENT_BOT_LOGINS.includes(review.user.login) || !review.body) continue;
       const parsed = parseAgentReview(review.body);
-      if (parsed) reviews.push({ pr, ...parsed });
+      // The review must be on the commit its body names.
+      if (parsed && review.commit_id?.toLowerCase() === parsed.sha) reviews.push({ pr, ...parsed });
     }
     if (batch.length < PER_PAGE) break;
   }
@@ -112,14 +131,25 @@ function prsToSync(file: VerdictFile, runs: readonly QaRunStats[]): number[] {
   return [...prs].sort((a, b) => a - b);
 }
 
-async function sync(file: VerdictFile, runs: readonly QaRunStats[], repo: string, auth: string) {
+/** Merges the run data into the file and reports what changed; the caller writes it. */
+async function sync(
+  file: VerdictFile,
+  runs: readonly QaRunStats[],
+  repo: string,
+  auth: string,
+): Promise<VerdictFile> {
   const reviews: PullRequestReview[] = [];
   for (const pr of prsToSync(file, runs)) {
-    reviews.push(...(await agentReviews(repo, pr, auth)));
+    try {
+      reviews.push(...(await agentReviews(repo, pr, auth)));
+    } catch (error: unknown) {
+      // One pull request that cannot be read (deleted, say) must not stop
+      // the others; its findings stay unrecoverable for now.
+      process.stderr.write(`Could not read the reviews on #${pr}: ${message(error)}\n`);
+    }
   }
 
   const result = syncVerdictFile(file, runs, reviews);
-  writeFileSync(FILE_PATH, formatVerdictFile(result.file), 'utf-8');
 
   process.stderr.write(
     `${DISPLAY_PATH}: ${result.added.length} row(s) added, ${result.updated.length} row(s) updated from their run.\n`,
@@ -127,6 +157,11 @@ async function sync(file: VerdictFile, runs: readonly QaRunStats[], repo: string
   for (const missing of result.unrecoverable) {
     process.stderr.write(
       `  ${missing.findingId} (#${missing.pr} ${missing.sha.slice(0, 7)}): logged, but no review the agent posted shows it; it stays unadjudicated.\n`,
+    );
+  }
+  for (const mismatch of result.mismatched) {
+    process.stderr.write(
+      `  ${mismatch.findingId}: the row says #${mismatch.row.pr} ${mismatch.row.sha.slice(0, 7)}, but the run that logged it is #${mismatch.run.pr} ${mismatch.run.sha.slice(0, 7)}; left unchanged.\n`,
     );
   }
   return result.file;
@@ -154,7 +189,15 @@ async function main(): Promise<void> {
         `${data.runsWithExpiredLogs} run(s) could not be read: GitHub has deleted their logs.\n`,
       );
     }
-    if (selected === '--sync') file = await sync(file, runs, repo, auth);
+    if (data.capped) {
+      process.stderr.write(
+        "GitHub's 1,000-result cap cut the run list short, so the oldest runs are missing.\n",
+      );
+    }
+    if (selected === '--sync') {
+      file = await sync(file, runs, repo, auth);
+      writeVerdictFile(file);
+    }
   }
 
   process.stdout.write(
@@ -163,6 +206,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  process.stderr.write(`${message(error)}\n`);
   process.exitCode = 1;
 });

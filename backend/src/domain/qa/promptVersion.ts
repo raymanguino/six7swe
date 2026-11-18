@@ -7,8 +7,8 @@
  * each run used, so the verdict table can filter by it instead of relying
  * on prose that says which rows came before which change.
  *
- * Bump `REVIEW_PROMPT_VERSION` and add a row to `REVIEW_PROMPT_VERSIONS`
- * whenever the system prompt's text changes
+ * Add a row to `REVIEW_PROMPT_VERSIONS` (the current version is its last
+ * row) whenever the system prompt's text changes
  * (`backend/src/services/ai/prompts/prReview.ts`). A test pins the
  * prompt's hash to the version, so a change that forgets the bump fails.
  */
@@ -21,8 +21,8 @@ export interface PromptVersionInfo {
   change: string;
 }
 
-/** Every version of the review prompt, oldest first. */
-export const REVIEW_PROMPT_VERSIONS: readonly PromptVersionInfo[] = [
+/** Every version of the review prompt, oldest first, numbered from 1. */
+export const REVIEW_PROMPT_VERSIONS = [
   {
     version: 1,
     since: 'the first prompt (2026-11-10)',
@@ -43,7 +43,13 @@ export const REVIEW_PROMPT_VERSIONS: readonly PromptVersionInfo[] = [
     since: 'PR #133 (2026-11-14)',
     change: 'frontend stack versions corrected',
   },
-];
+] as const satisfies readonly PromptVersionInfo[];
 
-/** The version of the prompt the agent runs with now. */
-export const REVIEW_PROMPT_VERSION = 4;
+/** The version of the prompt the agent runs with now: the last one in the history. */
+export const REVIEW_PROMPT_VERSION: number =
+  REVIEW_PROMPT_VERSIONS[REVIEW_PROMPT_VERSIONS.length - 1].version;
+
+/** Whether a value names a version in the history. */
+export function isKnownPromptVersion(value: unknown): value is number {
+  return REVIEW_PROMPT_VERSIONS.some((entry) => entry.version === value);
+}

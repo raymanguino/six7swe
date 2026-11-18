@@ -8,11 +8,15 @@
  * says how many runs could not be read.
  *
  * Environment:
- *   GITHUB_TOKEN or GH_TOKEN   required, a token that can read the repository's Actions logs
+ *   GITHUB_TOKEN or GH_TOKEN   required. The least it needs is a fine-grained
+ *                              personal access token for this repository with
+ *                              read-only "Actions" (and read-only "Pull
+ *                              requests" for `qa:verdicts --sync`).
  *   GITHUB_REPOSITORY          optional, "owner/repo"; defaults to the `origin` remote
  */
 
 import { execFileSync } from 'node:child_process';
+import { z } from 'zod';
 import { parseStatsLines, type QaRunStats } from '../src/domain/qa';
 
 const API = 'https://api.github.com';
@@ -28,13 +32,28 @@ export function token(): string {
   return value;
 }
 
+/** What an "owner/repo" may look like; it goes into API paths. */
+const REPOSITORY_PATTERN = /^[\w.-]+\/[\w.-]+$/;
+
+/** A remote URL with any credentials in it masked, for an error message. */
+function maskCredentials(url: string): string {
+  return url.replace(/\/\/[^/@]*@/, '//***@');
+}
+
 /** The repository, from the environment or the `origin` remote. */
 export function repository(): string {
   const fromEnv = process.env.GITHUB_REPOSITORY;
-  if (fromEnv) return fromEnv;
+  if (fromEnv) {
+    if (!REPOSITORY_PATTERN.test(fromEnv)) {
+      throw new Error('GITHUB_REPOSITORY must be in "owner/repo" form');
+    }
+    return fromEnv;
+  }
   const remote = execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf-8' }).trim();
   const match = /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/.exec(remote);
-  if (!match) throw new Error(`Cannot read owner/repo from the origin remote: ${remote}`);
+  if (!match || !REPOSITORY_PATTERN.test(match[1])) {
+    throw new Error(`Cannot read owner/repo from the origin remote: ${maskCredentials(remote)}`);
+  }
   return match[1];
 }
 
@@ -56,41 +75,64 @@ export async function get(path: string, auth: string): Promise<Response> {
   return response;
 }
 
-interface WorkflowRun {
-  id: number;
-  created_at: string;
+/**
+ * GitHub's list endpoints return at most this many results for a filtered
+ * query, however many pages are asked for.
+ */
+const LIST_RESULT_CAP = 1000;
+
+const workflowRunsSchema = z.looseObject({
+  total_count: z.number().int().nonnegative(),
+  workflow_runs: z.array(z.looseObject({ id: z.number().int(), created_at: z.string() })),
+});
+
+const jobsSchema = z.looseObject({
+  jobs: z.array(
+    z.looseObject({ id: z.number().int(), name: z.string(), conclusion: z.string().nullable() }),
+  ),
+});
+
+/** Parses a GitHub response body, naming the endpoint when it has the wrong shape. */
+export async function readJson<T>(
+  response: Response,
+  schema: z.ZodType<T>,
+  path: string,
+): Promise<T> {
+  const result = schema.safeParse(await response.json());
+  if (!result.success) throw new Error(`GitHub answered ${path} with an unexpected shape`);
+  return result.data;
 }
 
-interface Job {
-  id: number;
-  name: string;
-  conclusion: string | null;
-}
+type WorkflowRun = z.infer<typeof workflowRunsSchema>['workflow_runs'][number];
 
-async function listRuns(repo: string, auth: string): Promise<WorkflowRun[]> {
+async function listRuns(
+  repo: string,
+  auth: string,
+): Promise<{ runs: WorkflowRun[]; capped: boolean }> {
   const runs: WorkflowRun[] = [];
   for (let page = 1; ; page += 1) {
-    const response = await get(
-      `/repos/${repo}/actions/workflows/${WORKFLOW_FILE}/runs?status=completed&per_page=${PER_PAGE}&page=${page}`,
-      auth,
-    );
-    const body = (await response.json()) as { workflow_runs: WorkflowRun[] };
+    // Only pull request runs post a review; the workflow has no other trigger
+    // today, and the filter keeps it that way if one is added.
+    const path = `/repos/${repo}/actions/workflows/${WORKFLOW_FILE}/runs?status=completed&event=pull_request&per_page=${PER_PAGE}&page=${page}`;
+    const body = await readJson(await get(path, auth), workflowRunsSchema, path);
     runs.push(...body.workflow_runs);
-    if (body.workflow_runs.length < PER_PAGE) break;
+    if (body.workflow_runs.length < PER_PAGE || runs.length >= LIST_RESULT_CAP) {
+      // Oldest first, so the summary keeps the latest run of a re-run commit.
+      runs.sort((a, b) => a.created_at.localeCompare(b.created_at));
+      return { runs, capped: body.total_count > runs.length && runs.length >= LIST_RESULT_CAP };
+    }
   }
-  // Oldest first, so the summary keeps the latest run of a re-run commit.
-  return runs.sort((a, b) => a.created_at.localeCompare(b.created_at));
 }
 
 type RunLog = { kind: 'stats'; stats: QaRunStats[] } | { kind: 'none' } | { kind: 'expired' };
 
 async function readRun(repo: string, runId: number, auth: string): Promise<RunLog> {
-  const jobsResponse = await get(`/repos/${repo}/actions/runs/${runId}/jobs`, auth);
-  const { jobs } = (await jobsResponse.json()) as { jobs: Job[] };
-  const job = jobs.find((candidate) => candidate.name === JOB_NAME);
-  if (!job || job.conclusion === 'skipped') return { kind: 'none' };
-
   try {
+    const path = `/repos/${repo}/actions/runs/${runId}/jobs`;
+    const { jobs } = await readJson(await get(path, auth), jobsSchema, path);
+    const job = jobs.find((candidate) => candidate.name === JOB_NAME);
+    if (!job || job.conclusion === 'skipped') return { kind: 'none' };
+
     const log = await (await get(`/repos/${repo}/actions/jobs/${job.id}/logs`, auth)).text();
     const stats = parseStatsLines(log);
     return stats.length > 0 ? { kind: 'stats', stats } : { kind: 'none' };
@@ -109,11 +151,13 @@ export interface RunData {
   runsWithoutStats: number;
   /** Runs whose log GitHub no longer has. */
   runsWithExpiredLogs: number;
+  /** True when GitHub's result cap cut the run list short: the oldest runs are missing. */
+  capped: boolean;
 }
 
 /** Reads every completed run's stats line, oldest first. */
 export async function readRunData(repo: string, auth: string): Promise<RunData> {
-  const runs = await listRuns(repo, auth);
+  const { runs, capped } = await listRuns(repo, auth);
 
   const stats: QaRunStats[] = [];
   let runsWithoutStats = 0;
@@ -126,5 +170,5 @@ export async function readRunData(repo: string, auth: string): Promise<RunData> 
     else runsWithoutStats += 1;
   }
 
-  return { stats, runs: runs.length, runsWithoutStats, runsWithExpiredLogs };
+  return { stats, runs: runs.length, runsWithoutStats, runsWithExpiredLogs, capped };
 }

@@ -14,6 +14,7 @@
  *
  * Environment:
  *   GITHUB_TOKEN or GH_TOKEN   required, a token that can read the repository's Actions logs
+ *                              (at least a fine-grained token with read-only "Actions")
  *   GITHUB_REPOSITORY          optional, "owner/repo"; defaults to the `origin` remote
  */
 
@@ -26,6 +27,11 @@ import { readRunData, repository, token } from './qa-runs';
 
 async function main(): Promise<void> {
   const data = await readRunData(repository(), token());
+  if (data.capped) {
+    process.stderr.write(
+      "GitHub's 1,000-result cap cut the run list short, so the oldest runs are missing.\n",
+    );
+  }
 
   process.stdout.write(
     renderCalibrationReport(summarizeCalibration(data.stats), {
