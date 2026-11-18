@@ -218,6 +218,13 @@ async function main(): Promise<void> {
   // whether the review on the pull request is a real verdict.
   let decidedGate: GateOutcome | null = null;
 
+  // The duration the review body reported, so the body and the stats line
+  // carry the same number. It runs from the start of the script to just
+  // before the review is posted, so it excludes posting and dismissal.
+  // The stats line used to cover the whole run, so compare calibration
+  // rows from before and after this change with that in mind.
+  let reportedDurationMs: number | null = null;
+
   /**
    * Writes the one stats line this run reports, for `qa:calibration`.
    *
@@ -250,7 +257,7 @@ async function main(): Promise<void> {
               reasoning: usage.reasoningTokens,
             }
           : null,
-        durationMs: Date.now() - startedAt,
+        durationMs: reportedDurationMs ?? Date.now() - startedAt,
       }),
     );
   }
@@ -320,6 +327,7 @@ async function main(): Promise<void> {
     logLine(`Gate outcome: ${gate}`);
 
     const event = reviewEventForGate(gate);
+    reportedDurationMs = Date.now() - startedAt;
     const body = renderReviewBody({
       summary: review.summary,
       findings,
@@ -328,6 +336,7 @@ async function main(): Promise<void> {
       commitSha: headSha,
       coverage: diffCoverage,
       manualReviewReasons: manualReviewReasons({ changedFiles, coverage: diffCoverage }),
+      durationMs: reportedDurationMs,
     });
 
     // Every run posts a new review and never edits an earlier one, so the
@@ -374,7 +383,8 @@ async function main(): Promise<void> {
     // A failure after the review was posted (for example while logging)
     // must not post a second review for the same run.
     if (!posted) {
-      await postFailureReview(env, owner, repo, reason, headSha);
+      reportedDurationMs ??= Date.now() - startedAt;
+      await postFailureReview(env, owner, repo, reason, headSha, reportedDurationMs);
     }
 
     // Once the review is posted it is the verdict of record. A throw after
@@ -406,9 +416,10 @@ async function postFailureReview(
   repo: string,
   reason: string,
   commitSha: string,
+  durationMs: number,
 ): Promise<void> {
   try {
-    const body = renderFailureBody(reason, commitSha, env.REVIEW_MODE);
+    const body = renderFailureBody(reason, commitSha, env.REVIEW_MODE, durationMs);
     // Nothing is dismissed here: a run that failed reached no verdict, so
     // an earlier request for changes stays in force.
     await submitReview(owner, repo, env.PR_NUMBER, env.GITHUB_TOKEN, {

@@ -186,6 +186,26 @@ export interface ReviewBodyInput {
   coverage: DiffCoverage;
   /** Why a human has to look. Only rendered when the gate is `manual-review`. */
   manualReviewReasons: readonly ManualReviewReason[];
+  /**
+   * How long the run took, in milliseconds, measured by the script. Not
+   * derived from model output, and not part of the gate.
+   *
+   * It runs from the start of the script to just before the review is
+   * posted, so it excludes posting and dismissing earlier reviews.
+   */
+  durationMs?: number;
+}
+
+/**
+ * The duration line, or no line for a value that is not a usable duration.
+ * One decimal place, the same precision `qa:calibration` reports.
+ */
+function durationLines(durationMs: number | undefined): string[] {
+  if (durationMs === undefined || !Number.isFinite(durationMs) || durationMs < 0) {
+    return [];
+  }
+
+  return [`Review took ${(durationMs / 1000).toFixed(1)}s.`];
 }
 
 function reviewedFiles(coverage: DiffCoverage): number {
@@ -309,6 +329,7 @@ export function renderReviewBody(input: ReviewBodyInput): string {
     `Reviewed commit: \`${escapeMarkdown(input.commitSha)}\``,
     SUPERSEDED_NOTE,
     ...coverageAndReasons(input),
+    ...durationLines(input.durationMs),
     ...advisoryLines(input.coverage),
     '',
   ];
@@ -374,6 +395,7 @@ export function renderFailureBody(
   reason: string,
   commitSha: string,
   mode: ReviewMode = 'comment-only',
+  durationMs?: number,
 ): string {
   const lines = [
     REVIEW_MARKER,
@@ -384,6 +406,7 @@ export function renderFailureBody(
     '',
     '**Gate outcome: `fail-closed`**',
     `Reviewed commit: \`${escapeMarkdown(commitSha)}\``,
+    ...durationLines(durationMs),
     SUPERSEDED_NOTE,
     '',
     `Reason: ${escapeMarkdown(truncate(reason, MAX_SUMMARY_CHARS))}`,
