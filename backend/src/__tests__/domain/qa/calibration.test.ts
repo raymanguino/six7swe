@@ -10,7 +10,7 @@ import {
 
 function run(overrides: Partial<QaRunStats> = {}): QaRunStats {
   return {
-    v: 2,
+    v: 3,
     pr: 1,
     sha: 'aaa',
     mode: 'comment-only',
@@ -24,6 +24,8 @@ function run(overrides: Partial<QaRunStats> = {}): QaRunStats {
     patchChars: 480,
     reported: 0,
     kept: { blocker: 0, major: 0, minor: 0, nit: 0 },
+    sanitized: { outsidePr: 0, notShown: 0, steeringMerged: 0, lineCorrected: 0 },
+    findingIds: [],
     tokens: { prompt: 1000, completion: 2000, reasoning: 1500 },
     durationMs: 30_000,
     ...overrides,
@@ -63,17 +65,26 @@ describe('the stats line', () => {
       omittedFiles: _omitted,
       shortenedPatches: _shortened,
       patchChars: _patch,
+      sanitized: _sanitized,
+      findingIds: _ids,
       ...v1
     } = run({ v: 1 });
     const log = `QA_STATS ${JSON.stringify(v1)}`;
 
     expect(parseStatsLines(log)).toEqual([
-      run({ v: 1, omittedFiles: null, shortenedPatches: null, patchChars: null }),
+      run({
+        v: 1,
+        omittedFiles: null,
+        shortenedPatches: null,
+        patchChars: null,
+        sanitized: null,
+        findingIds: null,
+      }),
     ]);
   });
 
   it('rejects a version 2 line without its coverage counts', () => {
-    const { omittedFiles: _omitted, ...missing } = run();
+    const { omittedFiles: _omitted, ...missing } = run({ v: 2 });
 
     expect(parseStatsLines(`QA_STATS ${JSON.stringify(missing)}`)).toEqual([]);
   });
@@ -123,7 +134,12 @@ describe('summarizeCalibration', () => {
     expect(summary.commits).toBe(1);
     expect(summary.outcomes).toEqual({ pass: 1, fail: 0, 'manual-review': 0, 'fail-closed': 0 });
     expect(summary.reported).toBe(2);
-    expect(summary.dropped).toBe(1);
+    expect(summary.sanitized).toEqual({
+      outsidePr: 0,
+      notShown: 0,
+      steeringMerged: 0,
+      lineCorrected: 0,
+    });
   });
 
   it('counts each commit of a pull request, so a finding fixed by the next push is kept', () => {
@@ -152,17 +168,18 @@ describe('summarizeCalibration', () => {
       run({
         sha: 'a',
         durationMs: 10_000,
-        tokens: { prompt: 1, completion: 1000, reasoning: null },
+        tokens: { prompt: 4000, completion: 1000, reasoning: null },
       }),
       run({
         sha: 'b',
         durationMs: 30_000,
-        tokens: { prompt: 1, completion: 3000, reasoning: 2000 },
+        tokens: { prompt: 8000, completion: 3000, reasoning: 2000 },
       }),
       run({ sha: 'c', durationMs: 20_000, tokens: null }),
     ]);
 
     expect(summary.durationMs).toEqual({ average: 20_000, max: 30_000 });
+    expect(summary.promptTokens).toEqual({ average: 6000, max: 8000 });
     expect(summary.completionTokens).toEqual({ average: 2000, max: 3000 });
     expect(summary.reasoningTokens).toEqual({ average: 2000, max: 2000 });
     expect(summary.withoutTokens).toBe(1);
@@ -174,7 +191,8 @@ describe('summarizeCalibration', () => {
     ]);
 
     expect(summary.reported).toBe(0);
-    expect(summary.dropped).toBe(0);
+    expect(summary.sanitized.outsidePr).toBe(0);
+    expect(summary.withoutSanitizeCounts).toBe(0);
     expect(summary.withoutTokens).toBe(0);
   });
 });
@@ -228,5 +246,49 @@ describe('renderCalibrationReport', () => {
       '| Reviewable size (patch characters) | 70,000 median, 140,000 p90, 140,000 max (budget 60,000) |',
     );
     expect(report).toContain('1 review(s) carry no coverage counts');
+  });
+});
+
+describe('the sanitizer counts in the stats line', () => {
+  const counts = { outsidePr: 1, notShown: 2, steeringMerged: 3, lineCorrected: 4 };
+
+  it('round-trips the counts and the finding ids', () => {
+    const stats = run({ sanitized: counts, findingIds: ['0123456789abcdef'] });
+    const { v: _v, ...rest } = stats;
+
+    expect(parseStatsLines(formatStatsLine(rest))).toEqual([stats]);
+  });
+
+  it('reads a version 2 line with the counts as null', () => {
+    const { sanitized: _s, findingIds: _f, ...v2 } = run({ v: 2 });
+
+    expect(parseStatsLines(`QA_STATS ${JSON.stringify(v2)}`)).toEqual([
+      run({ v: 2, sanitized: null, findingIds: null }),
+    ]);
+  });
+
+  it('sums each reason separately and reports each under its own label', () => {
+    const summary = summarizeCalibration([
+      run({ sha: 'a', sanitized: counts }),
+      run({ sha: 'b', sanitized: counts }),
+      run({ sha: 'c', sanitized: null }),
+    ]);
+
+    expect(summary.sanitized).toEqual({
+      outsidePr: 2,
+      notShown: 4,
+      steeringMerged: 6,
+      lineCorrected: 8,
+    });
+    expect(summary.withoutSanitizeCounts).toBe(1);
+
+    const report = renderCalibrationReport(summary, CONTEXT);
+    expect(report).toContain('| Dropped: file not in the pull request | 2 |');
+    expect(report).toContain(
+      '| Dropped: file in the pull request but not shown to the model | 4 |',
+    );
+    expect(report).toContain('| Merged: steering findings folded into one | 6 |');
+    expect(report).toContain('| Kept, line number removed (line not shown to the model) | 8 |');
+    expect(report).toContain('| Prompt tokens |');
   });
 });

@@ -11,6 +11,8 @@
  * code the workflow checks out from `base.sha`.
  */
 
+import { createHash } from 'node:crypto';
+
 import {
   allTouchedPaths,
   displayPath,
@@ -51,6 +53,12 @@ export interface ReviewFinding {
   message: string;
   /** Absent means `defect`. */
   kind?: FindingKind;
+  /**
+   * The line the model named, set by the sanitizer when it removed the
+   * line because the model was not shown it. The finding is about a real
+   * place in a file the model read, with a miscounted line.
+   */
+  correctedFromLine?: number;
 }
 
 /**
@@ -184,6 +192,9 @@ export function consolidateSteeringFindings(findings: readonly ReviewFinding[]):
       line: sameLocation ? first.line : null,
       message,
       kind: 'steering',
+      ...(steering.length === 1 && first.correctedFromLine !== undefined
+        ? { correctedFromLine: first.correctedFromLine }
+        : {}),
     },
   ];
 }
@@ -550,17 +561,104 @@ export function sanitizeFindings(
   findings: readonly ReviewFinding[],
   shown: readonly ShownFile[],
 ): ReviewFinding[] {
+  return sanitizeFindingsWithCounts(findings, shown).findings;
+}
+
+/**
+ * How many findings the sanitizer removed or changed, by reason.
+ *
+ * `reported = kept + outsidePr + notShown + steeringMerged` always holds.
+ * `lineCorrected` is not a loss: those findings are kept, without their
+ * line, so it is counted apart from the drops.
+ */
+export interface SanitizeCounts {
+  /** Dropped: named a file the pull request did not touch. */
+  outsidePr: number;
+  /** Dropped: named a file the pull request touched but the model was not shown. */
+  notShown: number;
+  /** Merged away: steering findings beyond the one that stands for them all. */
+  steeringMerged: number;
+  /** Kept, with the line removed: the model was not shown that line. */
+  lineCorrected: number;
+}
+
+export interface SanitizeResult {
+  findings: ReviewFinding[];
+  counts: SanitizeCounts;
+}
+
+/**
+ * `sanitizeFindings`, with a count of what each rule did.
+ *
+ * `changedFiles` tells a file the pull request never touched from one the
+ * budget kept from the model. Without it, every dropped file counts as
+ * outside the pull request.
+ */
+export function sanitizeFindingsWithCounts(
+  findings: readonly ReviewFinding[],
+  shown: readonly ShownFile[],
+  changedFiles: readonly ChangedFile[] = [],
+): SanitizeResult {
   const linesByPath = shownLinesByPath(shown);
+  const inPr = new Set<string>();
+  for (const path of allTouchedPaths(changedFiles)) {
+    inPr.add(path);
+    inPr.add(displayPath(path));
+  }
+
+  const counts: SanitizeCounts = { outsidePr: 0, notShown: 0, steeringMerged: 0, lineCorrected: 0 };
   const sanitized: ReviewFinding[] = [];
 
   for (const finding of findings) {
     const kept = sanitizeFinding(finding, linesByPath);
-    if (kept !== null) {
-      sanitized.push(kept);
+    if (kept === null) {
+      if (finding.file !== null && inPr.has(finding.file)) {
+        counts.notShown += 1;
+      } else {
+        counts.outsidePr += 1;
+      }
+      continue;
     }
+    if (kept.line === null && finding.line !== null && kept.file !== null) {
+      counts.lineCorrected += 1;
+    }
+    sanitized.push(kept);
   }
 
-  return consolidateSteeringFindings(sanitized);
+  const consolidated = consolidateSteeringFindings(sanitized);
+  counts.steeringMerged =
+    sanitized.filter(isSteering).length - consolidated.filter(isSteering).length;
+
+  return { findings: consolidated, counts };
+}
+
+/** The length of a finding identifier, in hex characters. */
+const FINDING_ID_CHARS = 16;
+
+/**
+ * A stable identifier for a sanitized finding.
+ *
+ * A hash of the pull request, the commit, the file, the line, the
+ * severity and the message, so the stats line, the review body and a
+ * verdict file all carry the same value. It is computed from the finding
+ * after sanitizing: a corrected line is already null, and a merged
+ * steering finding is the merged one. The fields are hashed as JSON, so
+ * no choice of message can run into the next field.
+ */
+export function findingId(
+  run: { pr: number; sha: string },
+  finding: Pick<ReviewFinding, 'severity' | 'file' | 'line' | 'message'>,
+): string {
+  const payload = JSON.stringify([
+    run.pr,
+    run.sha,
+    finding.file,
+    finding.line,
+    finding.severity,
+    finding.message,
+  ]);
+
+  return createHash('sha256').update(payload).digest('hex').slice(0, FINDING_ID_CHARS);
 }
 
 const NO_LINES: ReadonlySet<number> = new Set();
@@ -626,5 +724,7 @@ function sanitizeFinding(
     return isSteering(finding) ? { ...finding, file: null, line: null } : null;
   }
 
-  return finding.line === null || lines.has(finding.line) ? finding : { ...finding, line: null };
+  return finding.line === null || lines.has(finding.line)
+    ? finding
+    : { ...finding, line: null, correctedFromLine: finding.line };
 }

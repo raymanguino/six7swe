@@ -651,7 +651,7 @@ describe('the script logs one stats line for calibration', () => {
     const lines = statsLines(result);
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatchObject({
-      v: 2,
+      v: 3,
       pr: 7,
       sha: 'abc123',
       mode: 'comment-only',
@@ -663,6 +663,8 @@ describe('the script logs one stats line for calibration', () => {
       shortenedPatches: 0,
       reported: 2,
       kept: { blocker: 0, major: 1, minor: 0, nit: 0 },
+      sanitized: { outsidePr: 1, notShown: 0, steeringMerged: 0, lineCorrected: 0 },
+      findingIds: [expect.stringMatching(/^[0-9a-f]{16}$/)],
       tokens: { prompt: 1200, completion: 900, reasoning: 700 },
     });
   });

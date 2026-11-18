@@ -513,3 +513,18 @@ describe('codeSpan', () => {
     expect(codeSpan('a\nb')).toBe('`a b`');
   });
 });
+
+describe('a corrected line in the review body', () => {
+  it('says the line the model named is not in the diff', () => {
+    const text = body({
+      findings: [finding({ line: null, correctedFromLine: 999 })],
+      reportedCount: 1,
+    });
+
+    expect(text).toContain('line 999 is not in the diff');
+  });
+
+  it('shows a finding with no named line as before', () => {
+    expect(body({ findings: [finding()], reportedCount: 1 })).not.toContain('is not in the diff');
+  });
+});

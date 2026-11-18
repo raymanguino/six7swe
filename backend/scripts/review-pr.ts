@@ -40,13 +40,15 @@ import {
   renderFailureBody,
   renderReviewBody,
   reviewEventForGate,
-  sanitizeFindings,
+  findingId,
+  sanitizeFindingsWithCounts,
   severityLabel,
   sortFindingsBySeverity,
   type ChangedFile,
   type DiffCoverage,
   type FindingSeverity,
   type GateOutcome,
+  type SanitizeCounts,
 } from '../src/domain/qa';
 import { reviewPullRequest } from '../src/services/ai/prReview';
 import type { TokenUsage } from '../src/services/minimaxService';
@@ -228,6 +230,8 @@ async function main(): Promise<void> {
     outcome: GateOutcome,
     reported: number | null,
     kept: Record<FindingSeverity, number> | null,
+    sanitized: SanitizeCounts | null = null,
+    findingIds: string[] | null = null,
   ): void {
     logLine(
       formatStatsLine({
@@ -243,6 +247,8 @@ async function main(): Promise<void> {
         patchChars: coverage?.patchChars ?? null,
         reported,
         kept,
+        sanitized,
+        findingIds,
         tokens: usage
           ? {
               prompt: usage.promptTokens,
@@ -299,7 +305,12 @@ async function main(): Promise<void> {
     // Both are checked against what the model was shown, not against the
     // whole pull request: a finding about a file the budget dropped, or a
     // line cut from a shortened patch, is about code the model never read.
-    const findings = sortFindingsBySeverity(sanitizeFindings(review.findings, prepared.shown));
+    const sanitizedResult = sanitizeFindingsWithCounts(
+      review.findings,
+      prepared.shown,
+      changedFiles,
+    );
+    const findings = sortFindingsBySeverity(sanitizedResult.findings);
 
     const gate = decideGate({
       findings,
@@ -358,7 +369,13 @@ async function main(): Promise<void> {
       await dismissSuperseded(env, owner, repo, superseded, headSha);
     }
 
-    logStats(gate, review.findings.length, countBySeverity(findings));
+    logStats(
+      gate,
+      review.findings.length,
+      countBySeverity(findings),
+      sanitizedResult.counts,
+      findings.map((finding) => findingId({ pr: env.PR_NUMBER, sha: headSha }, finding)),
+    );
 
     if (gateBlocksMerge(gate, mode)) {
       process.exitCode = 1;

@@ -168,6 +168,11 @@ function location(finding: ReviewFinding): string {
     return 'general';
   }
 
+  if (finding.line === null && finding.correctedFromLine !== undefined) {
+    const note = `line ${finding.correctedFromLine} is not in the diff`;
+    return `${codeSpan(finding.file).replace(/\|/g, '\\|')} (${note})`;
+  }
+
   const text = finding.line === null ? finding.file : `${finding.file}:${finding.line}`;
 
   return codeSpan(text).replace(/\|/g, '\\|');
