@@ -50,13 +50,14 @@ pull request opened / pushed / edited / marked ready
 
 ## Status (2026-11-18)
 
-**The build is finished.** 19 of the 21 child issues of #51 are closed. They
-include every prerequisite #59 names: #93, and #141 to #146. The two open ones
-are not code.
+**The build is finished.** 20 of the 21 child issues of #51 are closed. They
+include every prerequisite #59 names: #93, and #141 to #146. #58 (the gate on
+`main`) closed on 2026-11-18; see [The gate on `main` (#58)](#the-gate-on-main-58).
+
+The one open child is #59, and it is not code:
 
 | Issue | What is left                                                                | Size                    |
 | ----- | --------------------------------------------------------------------------- | ----------------------- |
-| #58   | Two live checks of a ruleset that is already applied                        | Under an hour           |
 | #59   | Collect and judge enough instrumented runs to decide the flip, then flip it | Weeks of normal PR flow |
 
 ### Where calibration stands
@@ -94,26 +95,35 @@ are not, and most of them could not be measured until today:
 2. **Variance.** 30% of re-reviewed commits got a different set of findings,
    with no code change. A gate whose verdict changes on a re-run is not ready.
 
-## Finishing #58
+## The gate on `main` (#58)
 
-The ruleset change was applied on 2026-11-11 and still matches the plan:
+Done. The ruleset change was applied on 2026-11-11, and #58 was closed on
+2026-11-18. Ruleset `12656541` now has:
 
-- both required contexts, with strict mode off
+- `Lint, test and build` and `QA agent review` as required checks, with
+  strict mode off
 - `require_code_owner_review` off
-- the admin bypass is present
+- the admin bypass (`RepositoryRole` 5, `always`)
 
-Two acceptance boxes are open:
+**A failing required check blocks the merge.** Throwaway PR #201 had a
+deliberate `no-debugger` error:
 
-1. **"A PR with a failing `Lint, test and build` cannot be merged."** Open a
-   throwaway PR with a deliberate lint error. The merge box should list the
-   failed required check and offer only the admin bypass. Screenshot it, note
-   it on #58, and close the PR.
-   - #151, #154 and #178 had red CI, but they were closed, not merged, so
-     they don't prove this.
-2. **"The owner can bypass a red `QA agent review`."** This cannot happen in
-   comment-only mode, because the check is never red. #59 already has the
-   same box ("The owner can merge a red-checked pull request using the admin
-   bypass"). Move it there, say so on #58, and close #58.
+- `Lint, test and build` failed
+- GitHub reported both checks as required
+- the merge state was `BLOCKED`
+
+The PR also had no approval, so the approval rule contributed to the block.
+GitHub doesn't say which rule blocked it.
+
+**Bypassing a red `QA agent review`** cannot be tested in comment-only mode,
+because the check is never red. That acceptance box is now in #59, and it is
+checked after the flip.
+
+**If the checks are renamed,** a required context whose job name changes
+never reports, and it blocks every pull request. The context is the job's
+`name:`, not the workflow's. The UI also tied both contexts to the GitHub
+Actions integration (`integration_id: 15368`). If the #52 GitHub App ever
+reports a check, re-add that context without the integration.
 
 ## Finishing #59
 
@@ -172,7 +182,8 @@ Then check the remaining #59 acceptance boxes on real pull requests:
 
 - red on a real defect, green on a clean one
 - red on a protected path even with no findings
-- the bypass works
+- the owner can merge a red-checked pull request with the bypass (moved here
+  from #58)
 - a push re-runs the check against the new head SHA
 
 ### Rollback
