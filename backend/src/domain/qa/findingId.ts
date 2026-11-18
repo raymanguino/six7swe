@@ -6,8 +6,11 @@
  * is computed here, from the sanitized finding, so the stats line, the
  * review body and a verdict file all carry the same value.
  *
- * This module hashes, which is why it is separate from `verdict.ts`: that
- * module has no imports from the runtime.
+ * The domain builds the canonical text and shapes the identifier, but the
+ * hash itself is injected (`HashFn`): the domain uses no Node APIs, and the
+ * caller passes a SHA-256 hex digest such as `hashData` from `util/hash`.
+ * Two callers that hash differently get different ids, so the stats line
+ * and the review body must be given the same function.
  *
  * Scope: an identifier names a finding in one run, that is one pull
  * request at one commit. The same defect reported at the next commit gets
@@ -15,8 +18,6 @@
  * Recognising the same finding across commits is #146's job, not this
  * module's.
  */
-
-import { createHash } from 'node:crypto';
 
 import type { ReviewFinding } from './verdict';
 
@@ -28,6 +29,9 @@ const FINDING_ID_HASH_CHARS = 16;
  * repeats of a finding within one run (see `findingIds`).
  */
 export const FINDING_ID_PATTERN = /^[0-9a-f]{16}(?:-[2-9]|-[1-9]\d+)?$/;
+
+/** Hashes text to a lowercase hex digest, at least 16 characters long (SHA-256 hex). */
+export type HashFn = (data: string) => string;
 
 export type IdentifiableFinding = Pick<ReviewFinding, 'severity' | 'file' | 'line' | 'message'>;
 
@@ -47,7 +51,7 @@ interface RunKey {
  * Two findings that agree on all of these have the same hash. Use
  * `findingIds` for a whole run, which keeps them apart.
  */
-export function findingId(run: RunKey, finding: IdentifiableFinding): string {
+export function findingId(run: RunKey, finding: IdentifiableFinding, hash: HashFn): string {
   const payload = JSON.stringify([
     run.pr,
     run.sha,
@@ -57,7 +61,7 @@ export function findingId(run: RunKey, finding: IdentifiableFinding): string {
     finding.message,
   ]);
 
-  return createHash('sha256').update(payload).digest('hex').slice(0, FINDING_ID_HASH_CHARS);
+  return hash(payload).slice(0, FINDING_ID_HASH_CHARS);
 }
 
 /**
@@ -70,11 +74,15 @@ export function findingId(run: RunKey, finding: IdentifiableFinding): string {
  * the order the review lists them, which is the order the stats line
  * carries.
  */
-export function findingIds(run: RunKey, findings: readonly IdentifiableFinding[]): string[] {
+export function findingIds(
+  run: RunKey,
+  findings: readonly IdentifiableFinding[],
+  hash: HashFn,
+): string[] {
   const seen = new Map<string, number>();
 
   return findings.map((finding) => {
-    const id = findingId(run, finding);
+    const id = findingId(run, finding, hash);
     const occurrence = (seen.get(id) ?? 0) + 1;
     seen.set(id, occurrence);
 

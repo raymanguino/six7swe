@@ -51,6 +51,7 @@ import {
   type GateOutcome,
   type SanitizeCounts,
 } from '../src/domain/qa';
+import { hashData } from '../src/util/hash';
 import { reviewPullRequest } from '../src/services/ai/prReview';
 import type { TokenUsage } from '../src/services/minimaxService';
 import {
@@ -325,7 +326,7 @@ async function main(): Promise<void> {
     const findings = sortFindingsBySeverity(sanitizedResult.findings);
     // The same ids go in the review body and the stats line: both are
     // computed from this list, in this order.
-    const ids = findingIds({ pr: env.PR_NUMBER, sha: headSha }, findings);
+    const ids = findingIds({ pr: env.PR_NUMBER, sha: headSha }, findings, hashData);
 
     const gate = decideGate({
       findings,
@@ -352,7 +353,7 @@ async function main(): Promise<void> {
       reportedCount: review.findings.length,
       gate,
       commitSha: headSha,
-      pr: env.PR_NUMBER,
+      ids: { pr: env.PR_NUMBER, hash: hashData },
       coverage: diffCoverage,
       manualReviewReasons: manualReviewReasons({ changedFiles, coverage: diffCoverage }),
     });

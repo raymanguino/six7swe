@@ -19,7 +19,7 @@
  */
 
 import type { DiffCoverage } from './diff';
-import { findingIds } from './findingId';
+import { findingIds, type HashFn } from './findingId';
 import {
   isSteering,
   MAX_REPORTED_FINDINGS,
@@ -193,13 +193,13 @@ export interface ReviewBodyInput {
   /** Why a human has to look. Only rendered when the gate is `manual-review`. */
   manualReviewReasons: readonly ManualReviewReason[];
   /**
-   * The pull request number, which the finding identifiers are computed
-   * from together with `commitSha`. When it is given each shown finding
-   * carries its identifier (`findingIds`), the same value the stats line
-   * logs for the same list. Pass the same findings, in the same order, to
-   * both.
+   * What the finding identifiers are computed from, with `commitSha`: the
+   * pull request number and the hash function. When it is given each shown
+   * finding carries its identifier (`findingIds`), the same value the
+   * stats line logs for the same list. Pass the same findings, in the
+   * same order, and the same hash, to both.
    */
-  pr?: number;
+  ids?: { pr: number; hash: HashFn };
 }
 
 function reviewedFiles(coverage: DiffCoverage): number {
@@ -334,11 +334,15 @@ export function renderReviewBody(input: ReviewBodyInput): string {
   // Identifiers are assigned over the whole list, in the order given, and
   // looked up by finding: the shown list is a re-sorted selection of it.
   const idOf = new Map<ReviewFinding, string>();
-  if (input.pr !== undefined) {
-    const ids = findingIds({ pr: input.pr, sha: input.commitSha }, input.findings);
+  if (input.ids) {
+    const ids = findingIds(
+      { pr: input.ids.pr, sha: input.commitSha },
+      input.findings,
+      input.ids.hash,
+    );
     input.findings.forEach((finding, index) => idOf.set(finding, ids[index]));
   }
-  const withIds = input.pr !== undefined;
+  const withIds = input.ids !== undefined;
 
   const rows = shown.map((finding) => {
     const cells = [

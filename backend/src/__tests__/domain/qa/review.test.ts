@@ -13,6 +13,7 @@ import {
   severityLabel,
   type ReviewBodyInput,
 } from '../../../domain/qa/review';
+import { hashData } from '../../../util/hash';
 import { findingIds } from '../../../domain/qa/findingId';
 import type { DiffCoverage } from '../../../domain/qa/diff';
 import type { ReviewFinding } from '../../../domain/qa/verdict';
@@ -538,8 +539,8 @@ describe('finding ids in the review body', () => {
   ];
 
   it('shows each finding with the id the stats line carries for the same list', () => {
-    const text = body({ findings: list, reportedCount: 3, pr: 7 });
-    const ids = findingIds({ pr: 7, sha: 'abc123' }, list);
+    const text = body({ findings: list, reportedCount: 3, ids: { pr: 7, hash: hashData } });
+    const ids = findingIds({ pr: 7, sha: 'abc123' }, list, hashData);
 
     expect(text).toContain('| Severity | Location | Finding | ID |');
     for (const id of ids) expect(text).toContain(`\`${id}\``);
