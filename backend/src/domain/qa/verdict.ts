@@ -292,8 +292,11 @@ export interface GateInput {
   coverage: DiffCoverage;
 }
 
+/** Every reason a pull request can need a human, as `ManualReviewReason` values. */
+export const MANUAL_REVIEW_REASONS = ['protected-path', 'partial-coverage'] as const;
+
 /** Why a pull request needs a human, when the gate says `manual-review`. */
-export type ManualReviewReason = 'protected-path' | 'partial-coverage';
+export type ManualReviewReason = (typeof MANUAL_REVIEW_REASONS)[number];
 
 /**
  * Every reason a human has to look, whether or not it decided the gate.

@@ -51,6 +51,7 @@ import {
   type FindingSeverity,
   type GateInput,
   type GateOutcome,
+  type ManualReviewReason,
   type SanitizeCounts,
 } from '../src/domain/qa';
 import { hashData } from '../src/util/hash';
@@ -115,6 +116,17 @@ const envSchema = z.object({
    */
   REVIEW_MODE: z.enum(['comment-only', 'enforce']).default('comment-only'),
 });
+
+/**
+ * What a run decided: the real gate, the gate `enforce` mode would have
+ * returned, and why the review needs a human. `reasons` is null only when
+ * the review failed closed before the gate was decided.
+ */
+interface Decided {
+  gate: GateOutcome;
+  enforce: GateOutcome;
+  reasons: ManualReviewReason[] | null;
+}
 
 /** How many times the head SHA is re-checked when the pull request moves. */
 const HEAD_READ_ATTEMPTS = 3;
@@ -234,7 +246,9 @@ async function main(): Promise<void> {
   // whether the review on the pull request is a real verdict. `enforce` is
   // what the gate would have returned in `enforce` mode on the same input,
   // for calibration only: it never sets the exit code or the review event.
-  let decided: { gate: GateOutcome; enforce: GateOutcome } | null = null;
+  // `reasons` is why the review needs a human, the cause of an enforce
+  // outcome of `manual-review`.
+  let decided: Decided | null = null;
 
   // The duration the review body reported, so the body and the stats line
   // carry the same number. It runs from the start of the script to just
@@ -252,6 +266,7 @@ async function main(): Promise<void> {
   function logStats(run: {
     outcome: GateOutcome;
     enforceOutcome: GateOutcome;
+    manualReviewReasons: ManualReviewReason[] | null;
     reported: number | null;
     kept: Record<FindingSeverity, number> | null;
     sanitized: SanitizeCounts | null;
@@ -265,6 +280,7 @@ async function main(): Promise<void> {
         mode,
         outcome,
         enforceOutcome: run.enforceOutcome,
+        manualReviewReasons: run.manualReviewReasons,
         files: changedFiles.length,
         ...countAreas(changedFiles),
         diffChars,
@@ -352,7 +368,8 @@ async function main(): Promise<void> {
     // The counterfactual: the same input, judged as phase 2 would judge it.
     // Recorded in the stats line only; `gate` alone decides what happens.
     const enforceOutcome = decideEnforceOutcome(gateInput);
-    decided = { gate, enforce: enforceOutcome };
+    const reasons = manualReviewReasons({ changedFiles, coverage: diffCoverage });
+    decided = { gate, enforce: enforceOutcome, reasons };
 
     logLine(
       `Model returned ${review.findings.length} finding(s); ${findings.length} survived sanitizing.`,
@@ -372,7 +389,7 @@ async function main(): Promise<void> {
       commitSha: headSha,
       ids: { pr: env.PR_NUMBER, hash: hashData },
       coverage: diffCoverage,
-      manualReviewReasons: manualReviewReasons({ changedFiles, coverage: diffCoverage }),
+      manualReviewReasons: reasons,
       durationMs: reportedDurationMs,
     });
 
@@ -407,6 +424,7 @@ async function main(): Promise<void> {
     logStats({
       outcome: gate,
       enforceOutcome,
+      manualReviewReasons: reasons,
       reported: review.findings.length,
       kept: countBySeverity(findings),
       sanitized: sanitizedResult.counts,
@@ -436,13 +454,16 @@ async function main(): Promise<void> {
     // contradict the posted review and record the wrong outcome.
     // `enforce` fails closed on an incomplete review too, so the
     // counterfactual follows the same rule as the real outcome.
-    const recorded: { gate: GateOutcome; enforce: GateOutcome } =
-      posted && decided !== null ? decided : { gate: 'fail-closed', enforce: 'fail-closed' };
+    const recorded: Decided =
+      posted && decided !== null
+        ? decided
+        : { gate: 'fail-closed', enforce: 'fail-closed', reasons: null };
     const { gate: outcome, enforce: enforceOutcome } = recorded;
 
     logStats({
       outcome,
       enforceOutcome,
+      manualReviewReasons: recorded.reasons,
       reported: null,
       kept: null,
       sanitized: null,

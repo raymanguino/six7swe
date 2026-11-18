@@ -659,6 +659,7 @@ describe('the script logs one stats line for calibration', () => {
       // The default files include the lockfile, a protected path, so
       // enforce mode would have sent this one to a human.
       enforceOutcome: 'manual-review',
+      manualReviewReasons: ['protected-path'],
       files: 2,
       backendFiles: 1,
       frontendFiles: 0,
@@ -712,6 +713,7 @@ describe('the script logs one stats line for calibration', () => {
     expect(lines[0]).toMatchObject({
       outcome: 'fail-closed',
       enforceOutcome: 'fail-closed',
+      manualReviewReasons: null,
       reported: null,
       kept: null,
       tokens: { prompt: 1200, completion: 900, reasoning: 700 },
@@ -724,7 +726,11 @@ describe('the script logs one stats line for calibration', () => {
       files: [SOURCE_FILE],
     });
 
-    expect(statsLines(result)[0]).toMatchObject({ outcome: 'pass', enforceOutcome: 'fail' });
+    expect(statsLines(result)[0]).toMatchObject({
+      outcome: 'pass',
+      enforceOutcome: 'fail',
+      manualReviewReasons: [],
+    });
     expect(result.status).toBe(0);
     expect(reviewPost(result).event).toBe('COMMENT');
     expect(reviewPost(result).body).not.toContain('if enforced');
@@ -739,6 +745,7 @@ describe('the script logs one stats line for calibration', () => {
     expect(statsLines(result)[0]).toMatchObject({
       outcome: 'pass',
       enforceOutcome: 'manual-review',
+      manualReviewReasons: ['protected-path'],
     });
     expect(result.status).toBe(0);
   });

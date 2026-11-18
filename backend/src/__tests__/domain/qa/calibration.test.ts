@@ -22,6 +22,7 @@ function run(overrides: Partial<QaRunStats> = {}): QaRunStats {
     mode: 'comment-only',
     outcome: 'pass',
     enforceOutcome: 'pass',
+    manualReviewReasons: [],
     files: 2,
     backendFiles: 1,
     frontendFiles: 0,
@@ -75,6 +76,7 @@ describe('the stats line', () => {
       sanitized: _sanitized,
       findingIds: _ids,
       enforceOutcome: _enforce,
+      manualReviewReasons: _reasons,
       ...v1
     } = run({ v: 1 });
     const log = `QA_STATS ${JSON.stringify(v1)}`;
@@ -88,6 +90,7 @@ describe('the stats line', () => {
         sanitized: null,
         findingIds: null,
         enforceOutcome: null,
+        manualReviewReasons: null,
       }),
     ]);
   });
@@ -98,6 +101,7 @@ describe('the stats line', () => {
       sanitized: _s,
       findingIds: _f,
       enforceOutcome: _e,
+      manualReviewReasons: _r,
       ...missing
     } = run({ v: 2 });
 
@@ -280,10 +284,22 @@ describe('the sanitizer counts in the stats line', () => {
   });
 
   it('reads a version 2 line with the counts as null', () => {
-    const { sanitized: _s, findingIds: _f, enforceOutcome: _e, ...v2 } = run({ v: 2 });
+    const {
+      sanitized: _s,
+      findingIds: _f,
+      enforceOutcome: _e,
+      manualReviewReasons: _r,
+      ...v2
+    } = run({ v: 2 });
 
     expect(parseStatsLines(`QA_STATS ${JSON.stringify(v2)}`)).toEqual([
-      run({ v: 2, sanitized: null, findingIds: null, enforceOutcome: null }),
+      run({
+        v: 2,
+        sanitized: null,
+        findingIds: null,
+        enforceOutcome: null,
+        manualReviewReasons: null,
+      }),
     ]);
   });
 
@@ -361,10 +377,10 @@ describe('the outcome if enforced', () => {
   });
 
   it('reads a version 3 line with it as null', () => {
-    const { enforceOutcome: _e, ...v3 } = run({ v: 3 });
+    const { enforceOutcome: _e, manualReviewReasons: _r, ...v3 } = run({ v: 3 });
 
     expect(parseStatsLines(`QA_STATS ${JSON.stringify(v3)}`)).toEqual([
-      run({ v: 3, enforceOutcome: null }),
+      run({ v: 3, enforceOutcome: null, manualReviewReasons: null }),
     ]);
   });
 
@@ -550,12 +566,15 @@ describe('enforce outcomes across re-runs and line versions', () => {
   });
 
   it('reads a history that mixes version 3 and version 4 lines', () => {
-    const { enforceOutcome: _e, ...v3 } = run({ v: 3, sha: sha('a') });
+    const { enforceOutcome: _e, manualReviewReasons: _r, ...v3 } = run({ v: 3, sha: sha('a') });
     const v4 = run({ sha: sha('b'), enforceOutcome: 'fail', reported: 1, kept: major });
     const { v: _v, ...v4Stats } = v4;
 
     const runs = parseStatsLines([line(v3), formatStatsLine(v4Stats)].join('\n'));
-    expect(runs).toEqual([run({ v: 3, sha: sha('a'), enforceOutcome: null }), v4]);
+    expect(runs).toEqual([
+      run({ v: 3, sha: sha('a'), enforceOutcome: null, manualReviewReasons: null }),
+      v4,
+    ]);
 
     const summary = summarizeCalibration(runs);
     expect(summary.commits).toBe(2);
@@ -634,5 +653,89 @@ describe('enforce outcomes across re-runs and line versions', () => {
     );
     expect(report).toContain('- #1 `affffff`: fail (blocking finding), findings 1 major');
     expect(report).toContain('manual-review (protected path or partial coverage)');
+  });
+});
+
+describe('the manual-review reasons in the stats line', () => {
+  const line = (value: unknown): string => `QA_STATS ${JSON.stringify(value)}`;
+
+  it('round-trips the reasons', () => {
+    const stats = run({
+      enforceOutcome: 'manual-review',
+      manualReviewReasons: ['protected-path', 'partial-coverage'],
+    });
+    const { v: _v, ...rest } = stats;
+
+    expect(parseStatsLines(formatStatsLine(rest))).toEqual([stats]);
+  });
+
+  it('rejects an unknown reason, a repeated one, or a list that is not one', () => {
+    const log = [
+      line(run({ manualReviewReasons: ['flaky' as never] })),
+      line(run({ manualReviewReasons: ['protected-path', 'protected-path'] })),
+      line({ ...run(), manualReviewReasons: 'protected-path' }),
+    ].join('\n');
+
+    expect(parseStatsLines(log)).toEqual([]);
+  });
+
+  it('requires the reasons on a version 4 line unless the review failed closed', () => {
+    const { manualReviewReasons: _r, ...missing } = run();
+    const failed = run({
+      outcome: 'fail-closed',
+      enforceOutcome: 'fail-closed',
+      manualReviewReasons: null,
+      reported: null,
+      kept: null,
+    });
+
+    expect(parseStatsLines(line(missing))).toEqual([]);
+    expect(parseStatsLines(line(run({ manualReviewReasons: null })))).toEqual([]);
+    expect(parseStatsLines(line(failed))).toEqual([failed]);
+  });
+
+  it('rejects an older line that carries them', () => {
+    const { enforceOutcome: _e, ...v3 } = run({ v: 3 });
+
+    expect(parseStatsLines(line(v3))).toEqual([]);
+    expect(parseStatsLines(line({ ...v3, manualReviewReasons: null }))).toEqual([]);
+  });
+
+  it('names the recorded cause of each block, before any inference', () => {
+    const summary = summarizeCalibration([
+      // Recorded: a protected path, though files were also omitted.
+      run({
+        sha: sha('a'),
+        enforceOutcome: 'manual-review',
+        omittedFiles: 3,
+        manualReviewReasons: ['protected-path', 'partial-coverage'],
+      }),
+      // Recorded: partial coverage only.
+      run({
+        sha: sha('b'),
+        enforceOutcome: 'manual-review',
+        omittedFiles: 3,
+        manualReviewReasons: ['partial-coverage'],
+      }),
+      // Older line: inferred from the omitted files.
+      run({
+        sha: sha('c'),
+        v: 3,
+        enforceOutcome: 'manual-review',
+        omittedFiles: 3,
+        manualReviewReasons: null,
+      }),
+    ]);
+
+    expect(summary.wouldBlock.map((commit) => commit.cause)).toEqual([
+      'protected-path',
+      'partial-coverage',
+      'protected-path-or-partial-coverage',
+    ]);
+
+    const report = renderCalibrationReport(summary, CONTEXT);
+    expect(report).toContain('- #1 `affffff`: manual-review (protected path)');
+    expect(report).toContain('- #1 `bffffff`: manual-review (partial coverage)');
+    expect(report).toContain('- #1 `cffffff`: manual-review (protected path or partial coverage)');
   });
 });

@@ -17,11 +17,13 @@
 import { allTouchedPaths, type ChangedFile } from './diff';
 import { FINDING_ID_PATTERN } from './findingId';
 import {
+  MANUAL_REVIEW_REASONS,
   SANITIZE_REASONS,
   SEVERITY_ORDER,
   zeroSanitizeCounts,
   type FindingSeverity,
   type GateOutcome,
+  type ManualReviewReason,
   type ReviewMode,
   type SanitizeCounts,
 } from './verdict';
@@ -53,7 +55,8 @@ export function neutralizeStatsPrefix(text: string): string {
  * Version 3 added the sanitizer's counts by reason and the finding ids; a
  * version 1 or 2 line has them as null.
  * Version 4 added `enforceOutcome`, the outcome `enforce` mode would have
- * returned; an older line has it as null.
+ * returned, and `manualReviewReasons`, why that review would need a human;
+ * an older line has them as null.
  */
 export const QA_STATS_VERSION = 4;
 
@@ -78,6 +81,14 @@ export interface QaRunStats {
    * event. Null on a line older than version 4.
    */
   enforceOutcome: GateOutcome | null;
+  /**
+   * Every reason the review needs a human (`manualReviewReasons`), whether
+   * or not one decided the gate: the cause of an `enforce` outcome of
+   * `manual-review`. Empty when there is none. Null on a line older than
+   * version 4, and on a version 4 line only when the review failed closed
+   * before the gate was decided.
+   */
+  manualReviewReasons: ManualReviewReason[] | null;
   files: number;
   backendFiles: number;
   frontendFiles: number;
@@ -185,7 +196,7 @@ const COVERAGE_FIELDS = ['omittedFiles', 'shortenedPatches', 'patchChars'] as co
 const FIELDS_ADDED_IN: readonly { since: QaRunStats['v']; fields: readonly string[] }[] = [
   { since: 2, fields: COVERAGE_FIELDS },
   { since: 3, fields: ['sanitized', 'findingIds'] },
-  { since: 4, fields: ['enforceOutcome'] },
+  { since: 4, fields: ['enforceOutcome', 'manualReviewReasons'] },
 ];
 
 const STATS_VERSIONS: readonly QaRunStats['v'][] = [1, 2, 3, QA_STATS_VERSION];
@@ -199,6 +210,35 @@ function isStatsVersion(value: unknown): value is QaRunStats['v'] {
  * always 40 hex characters; anything else is not a line the script wrote.
  */
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
+
+function isManualReviewReason(value: unknown): value is ManualReviewReason {
+  return MANUAL_REVIEW_REASONS.some((reason) => reason === value);
+}
+
+/** A list of known reasons, each at most once. */
+function isReasonList(value: unknown): value is ManualReviewReason[] {
+  return (
+    Array.isArray(value) &&
+    value.every(isManualReviewReason) &&
+    new Set(value).size === value.length
+  );
+}
+
+/**
+ * The version 4 fields: the enforce outcome is always present, and the
+ * reasons are present unless the review failed closed before the gate was
+ * decided. An older line has both as null (filled in by the upgrade).
+ */
+function hasValidEnforceFields(value: Record<string, unknown>): boolean {
+  if (value.v !== QA_STATS_VERSION) {
+    return value.enforceOutcome === null && value.manualReviewReasons === null;
+  }
+  return (
+    isGateOutcome(value.enforceOutcome) &&
+    (isReasonList(value.manualReviewReasons) ||
+      (value.manualReviewReasons === null && value.enforceOutcome === 'fail-closed'))
+  );
+}
 
 function isSanitizeCounts(value: unknown): value is SanitizeCounts {
   return isRecord(value) && SANITIZE_REASONS.every((reason) => isCount(value[reason]));
@@ -243,8 +283,7 @@ function isRunStats(value: Record<string, unknown>): value is Record<string, unk
     SHA_PATTERN.test(value.sha) &&
     (value.mode === 'comment-only' || value.mode === 'enforce') &&
     isGateOutcome(value.outcome) &&
-    // A version 4 line always records it; null means the line is older.
-    (value.v >= 4 ? isGateOutcome(value.enforceOutcome) : value.enforceOutcome === null) &&
+    hasValidEnforceFields(value) &&
     isCount(value.files) &&
     isCount(value.backendFiles) &&
     isCount(value.frontendFiles) &&
@@ -308,13 +347,21 @@ export type EnforceVerdict = Exclude<GateOutcome, 'fail-closed'>;
 /**
  * Why a commit would have been blocked.
  *
- * The stats line does not say which rule sent a review to a human, but
- * `decideGate` checks protected paths before findings and findings before
- * coverage. So `manual-review` with no omitted file can only be a
- * protected path; with omitted files it may be either.
+ * `fail` is a blocking finding. For `manual-review` the line records the
+ * reasons (`manualReviewReasons`), and the cause is the one `decideGate`
+ * checks first: a protected path, then partial coverage.
+ *
+ * `protected-path-or-partial-coverage` and `not-recorded` are only for a
+ * line without the reasons. There the cause is inferred from the order of
+ * the rules: with no omitted file it can only be a protected path; with
+ * omitted files it may be either.
  */
 export type BlockCause =
-  'blocking-finding' | 'protected-path' | 'protected-path-or-partial-coverage' | 'not-recorded';
+  | 'blocking-finding'
+  | 'protected-path'
+  | 'partial-coverage'
+  | 'protected-path-or-partial-coverage'
+  | 'not-recorded';
 
 /** A commit that would have turned the check red in `enforce` mode. */
 export interface WouldBlock extends CommitRef {
@@ -454,6 +501,13 @@ function isEnforceVerdict(outcome: GateOutcome | null): outcome is EnforceVerdic
 
 function blockCause(run: QaRunStats, outcome: Exclude<EnforceVerdict, 'pass'>): BlockCause {
   if (outcome === 'fail') return 'blocking-finding';
+  if (run.manualReviewReasons !== null) {
+    // decideGate checks the protected path first.
+    if (run.manualReviewReasons.includes('protected-path')) return 'protected-path';
+    if (run.manualReviewReasons.includes('partial-coverage')) return 'partial-coverage';
+  }
+  // Inferred: a line without the reasons, or reasons that do not explain
+  // the outcome (which the script never writes).
   if (run.omittedFiles === null) return 'not-recorded';
   return run.omittedFiles === 0 ? 'protected-path' : 'protected-path-or-partial-coverage';
 }
@@ -670,6 +724,7 @@ function formatKept(kept: Record<FindingSeverity, number>): string {
 const CAUSE_LABELS: Record<BlockCause, string> = {
   'blocking-finding': 'blocking finding',
   'protected-path': 'protected path',
+  'partial-coverage': 'partial coverage',
   'protected-path-or-partial-coverage': 'protected path or partial coverage',
   'not-recorded': 'reason not recorded',
 };
