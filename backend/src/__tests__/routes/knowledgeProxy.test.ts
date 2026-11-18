@@ -499,6 +499,41 @@ describe('knowledge owner proxy: profile routes (#86)', () => {
     expect(service.calls).toHaveLength(0);
   });
 
+  // #186: the draft the owner opened goes through, and a stale save's 409 comes back intact.
+  it('forwards the expected draft version and relays a stale save', async () => {
+    const current = {
+      stage: 'draft',
+      data: { ...profile, title: 'Redrafted' },
+      sourceDocumentId: DOC_ID,
+      version: DRAFT_VERSION + 1,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+    };
+    const conflict = { error: 'The draft has changed since you opened it.', draft: current };
+    const service = fakeService(() => jsonResponse(409, conflict));
+    const server = await buildServer({ user: owner, fetch: service.fetch });
+    app = server;
+
+    const save = (expectedVersion: unknown) =>
+      server.inject({
+        method: 'PUT',
+        url: '/knowledge/profile/draft',
+        payload: { data: profile, expectedVersion },
+      });
+    const stale = await save(DRAFT_VERSION);
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json()).toEqual(conflict);
+    expect((await save(null)).statusCode).toBe(409);
+    expect(service.calls.map((c) => JSON.parse(String(c.init.body)))).toEqual([
+      { data: profile, expectedVersion: DRAFT_VERSION },
+      { data: profile, expectedVersion: null },
+    ]);
+
+    expect((await save('latest')).statusCode).toBe(400);
+    expect((await save(0)).statusCode).toBe(400);
+    expect(service.calls).toHaveLength(2);
+  });
+
   it('busts the portfolio cache after a publish succeeds, and only then', async () => {
     let status = 409;
     const service = fakeService(() => jsonResponse(status, { error: 'stale' }));

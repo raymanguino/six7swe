@@ -27,6 +27,8 @@ describeProfileRepositoryContract('memory', () => ({
       }
     }
   },
+  // The memory double has no foreign keys: any id will do.
+  newSourceDocument: async () => randomUUID(),
 }));
 
 describeEvalRepositoryContract('memory', () => ({

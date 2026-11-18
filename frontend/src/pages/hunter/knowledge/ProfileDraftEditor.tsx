@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   LINK_KEYS,
   type ProfileData,
@@ -94,6 +94,8 @@ const LINK_LABELS: Record<keyof ProfileLinks, string> = {
 };
 
 interface Props {
+  /** The form's id, so a button outside it can submit it. */
+  formId?: string;
   initial: ProfileData;
   saving: boolean;
   /** Resolves true when the draft was saved, which closes the editor. */
@@ -105,7 +107,7 @@ interface Props {
  * Edits a draft profile. The service validates every save against the
  * contract (http(s) links only, length limits) and the page shows its answer.
  */
-export default function ProfileDraftEditor({ initial, saving, onSave, onCancel }: Props) {
+export default function ProfileDraftEditor({ formId, initial, saving, onSave, onCancel }: Props) {
   const [form, setForm] = useState<ProfileForm>(() => toForm(initial));
 
   const set = <K extends keyof ProfileForm>(key: K, value: ProfileForm[K]) =>
@@ -122,13 +124,22 @@ export default function ProfileDraftEditor({ initial, saving, onSave, onCancel }
       form.projects.map((p, j) => (j === i ? { ...p, ...patch } : p)),
     );
 
+  // `saving` arrives a render late, so a quick second submit would get past
+  // it and send a second save expecting the same draft (a false conflict).
+  const submitting = useRef(false);
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (await onSave(toData(form))) onCancel();
+    if (submitting.current) return;
+    submitting.current = true;
+    try {
+      if (await onSave(toData(form))) onCancel();
+    } finally {
+      submitting.current = false;
+    }
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-5">
+    <form id={formId} onSubmit={handleSubmit} className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
           <label htmlFor="profile-name" className={labelClass}>
@@ -352,8 +363,9 @@ export default function ProfileDraftEditor({ initial, saving, onSave, onCancel }
         </button>
         <button
           type="button"
+          disabled={saving}
           onClick={onCancel}
-          className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+          className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
         >
           Cancel
         </button>

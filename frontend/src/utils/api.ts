@@ -2,27 +2,32 @@ const API_URL = import.meta.env.VITE_API_URL || '';
 
 export class ApiError extends Error {
   readonly status: number;
+  /** The parsed JSON error body, if there was one (e.g. the current state a 409 carries). */
+  readonly body: unknown;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, body?: unknown) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.body = body;
   }
 }
 
-const readErrorMessage = async (response: Response): Promise<string> => {
+/** The failed response as an `ApiError`: its `error` message (or the status line) and body. */
+const toApiError = async (response: Response): Promise<ApiError> => {
+  let body: unknown;
   try {
-    const body: unknown = await response.json();
-    if (typeof body === 'object' && body !== null && 'error' in body) {
-      const { error } = body as { error: unknown };
-      if (typeof error === 'string' && error) {
-        return error;
-      }
-    }
+    body = await response.json();
   } catch {
     // Non-JSON error body; fall back to the status line.
   }
-  return `Request failed with status ${response.status}`;
+  if (typeof body === 'object' && body !== null && 'error' in body) {
+    const { error } = body as { error: unknown };
+    if (typeof error === 'string' && error) {
+      return new ApiError(error, response.status, body);
+    }
+  }
+  return new ApiError(`Request failed with status ${response.status}`, response.status, body);
 };
 
 type AccessTokenProvider = () => Promise<string | null>;
@@ -71,7 +76,7 @@ export const apiRequest = async (endpoint: string, options: RequestInit = {}) =>
   });
 
   if (!response.ok) {
-    throw new ApiError(await readErrorMessage(response), response.status);
+    throw await toApiError(response);
   }
 
   if (response.status === 204) {

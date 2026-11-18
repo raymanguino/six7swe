@@ -8,6 +8,7 @@ import {
   ProfileResponseSchema,
   ProfileStateResponseSchema,
   PublishedProfileResponseSchema,
+  SaveDraftConflictResponseSchema,
   type ProfileData,
 } from '../contract.js';
 import { createHashingEmbedder } from '../services/embedding/hashing.js';
@@ -36,6 +37,7 @@ import {
 } from './support/fixtures.js';
 import { createMemoryEvalRepository } from './support/memoryEvalRepository.js';
 import { createMemoryProfileRepository } from './support/memoryProfileRepository.js';
+import { seedDraft } from './support/seedDraft.js';
 import { createMemoryRepository } from './support/memoryRepository.js';
 
 const KEY = 'k'.repeat(40);
@@ -272,6 +274,76 @@ describe('review and publish', () => {
       payload: { draftVersion: saved.version },
     });
     expect(again.statusCode).toBe(404);
+  });
+
+  // #186: a tab opened before a redraft must not silently replace the new draft.
+  it('refuses a save from a stale tab with 409 and keeps the newer draft', async () => {
+    const { app: a, upload, settle, state } = await start(fakeDrafter({ title: 'Redrafted' }));
+    const resume = await upload('resume.md', utf8(RESUME_MD), 'resume');
+    const opened = (await state()).draft;
+    if (!opened) throw new Error('expected a draft');
+    const openedVersion = opened.version;
+    if (openedVersion === undefined) throw new Error('expected the draft to carry a version');
+
+    // A redraft finishes while the stale tab is still editing.
+    await a.inject({ method: 'POST', url: '/profile/draft', headers: ownerAuth });
+    await settle();
+    const newer = (await state()).draft;
+    if (!newer) throw new Error('expected a draft');
+    const newerVersion = newer.version;
+    if (newerVersion === undefined) throw new Error('expected the draft to carry a version');
+    expect(newerVersion).not.toBe(openedVersion);
+
+    const save = (expectedVersion: number | null) =>
+      a.inject({
+        method: 'PUT',
+        url: '/profile/draft',
+        headers: ownerAuth,
+        payload: { data: { ...opened.data, title: 'Stale edit' }, expectedVersion },
+      });
+    const stale = await save(openedVersion);
+    expect(stale.statusCode).toBe(409);
+    expect(SaveDraftConflictResponseSchema.parse(stale.json()).draft).toMatchObject({
+      version: newerVersion,
+      data: { title: 'Redrafted' },
+    });
+    // No draft was expected, but there is one: refused as well.
+    expect((await save(null)).statusCode).toBe(409);
+    expect((await state()).draft).toMatchObject({
+      version: newerVersion,
+      data: { title: 'Redrafted' },
+    });
+
+    // Saving against the current draft (the owner chose to overwrite) is accepted.
+    const overwrite = await save(newerVersion);
+    expect(overwrite.statusCode).toBe(200);
+    expect(ProfileResponseSchema.parse(overwrite.json()).profile).toMatchObject({
+      sourceDocumentId: resume.id,
+      data: { title: 'Stale edit' },
+    });
+  });
+
+  it('refuses a save expecting a draft that was published or discarded', async () => {
+    const { app: a, state } = await start(null);
+    const first = await a.inject({
+      method: 'PUT',
+      url: '/profile/draft',
+      headers: ownerAuth,
+      payload: { data: SAMPLE_PROFILE, expectedVersion: null },
+    });
+    expect(first.statusCode).toBe(200);
+    const { version } = ProfileResponseSchema.parse(first.json()).profile;
+    await a.inject({ method: 'DELETE', url: '/profile/draft', headers: ownerAuth });
+
+    const res = await a.inject({
+      method: 'PUT',
+      url: '/profile/draft',
+      headers: ownerAuth,
+      payload: { data: SAMPLE_PROFILE, expectedVersion: version },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(SaveDraftConflictResponseSchema.parse(res.json()).draft).toBeNull();
+    expect((await state()).draft).toBeNull();
   });
 
   it('validates edits against the contract', async () => {
@@ -529,11 +601,11 @@ describe('drafting races', () => {
   it('keeps the owner’s edits saved while the model was drafting', async () => {
     const { drafter, gates } = gatedDrafter();
     const { profiles, drafting } = await setupDrafting(drafter);
-    await profiles.saveDraft('owner', SAMPLE_PROFILE, null);
+    await seedDraft(profiles, 'owner', SAMPLE_PROFILE, null);
 
     drafting.request('owner');
     await until(() => gates.length === 1);
-    await profiles.saveDraft('owner', { ...SAMPLE_PROFILE, title: 'Owner edit' }, null);
+    await profiles.saveOwnerDraft('owner', { ...SAMPLE_PROFILE, title: 'Owner edit' });
 
     gates[0]?.({ ...SAMPLE_PROFILE, title: 'Model draft' });
     await drafting.idle();

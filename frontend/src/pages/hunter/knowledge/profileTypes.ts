@@ -153,6 +153,22 @@ export function parseProfileResponse(data: unknown): Profile {
   return data.profile;
 }
 
+/** `PUT /knowledge/profile/draft` 409: the current draft (null: there is none). */
+export function parseSaveDraftConflict(data: unknown): Profile | null {
+  if (!isRecord(data) || !(data.draft === null || isProfile(data.draft))) {
+    return invalid('draft conflict');
+  }
+  return data.draft;
+}
+
+/**
+ * What a save sends as `expectedVersion` for the draft it was made on: the
+ * draft's `version`, or null when there is no draft. Never null for "unknown":
+ * `isProfile` rejects a profile without a version, so every draft has one.
+ */
+export const expectedVersionOf = (draft: Profile | null): number | null =>
+  draft === null ? null : draft.version;
+
 /** One comparable line of a profile, for the draft-vs-published diff. */
 export interface DiffRow {
   label: string;

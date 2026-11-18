@@ -1,7 +1,11 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type { DraftingStatus, ProfileData } from '../../contract.js';
 import type { DocumentRecord, KnowledgeRepository } from '../../db/api/repository.js';
-import type { ProfileRecord, ProfileRepository } from '../../db/api/profileRepository.js';
+import type {
+  OwnerSaveOutcome,
+  ProfileRecord,
+  ProfileRepository,
+} from '../../db/api/profileRepository.js';
 import { SerialQueue } from '../ingestion/queue.js';
 import type { FileStore } from '../storage/index.js';
 import { DraftError, type ProfileDrafter } from './drafter.js';
@@ -153,15 +157,20 @@ export function createProfileDrafting(deps: ProfileDraftingDeps): ProfileDraftin
 /**
  * Saves the owner's edits as the draft. The draft keeps the resume it came
  * from; a draft started from the published profile keeps that one's.
+ *
+ * `expectedVersion` is the draft the owner opened (null: there was none).
+ * When the draft has changed since (a redraft finished, or another tab saved,
+ * published or discarded it), nothing is written and the outcome is `stale`,
+ * so a stale tab cannot silently replace a newer draft. Undefined: an
+ * unconditional save, for clients that predate the check.
  */
 export async function saveOwnerDraft(
   deps: { profiles: ProfileRepository },
   ownerId: string,
   data: ProfileData,
-): Promise<ProfileRecord> {
-  const { draft, published } = await deps.profiles.getProfiles(ownerId);
-  const source = (draft ?? published)?.sourceDocumentId ?? null;
-  return deps.profiles.saveDraft(ownerId, data, source);
+  expectedVersion?: number | null,
+): Promise<OwnerSaveOutcome> {
+  return deps.profiles.saveOwnerDraft(ownerId, data, expectedVersion);
 }
 
 export interface PublishedView {

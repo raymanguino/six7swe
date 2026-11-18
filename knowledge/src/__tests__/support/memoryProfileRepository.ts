@@ -49,14 +49,25 @@ export function createMemoryProfileRepository(): ProfileRepository & {
       return rows.get(key(ownerId, 'published')) ?? null;
     },
 
-    async saveDraft(ownerId, data, sourceDocumentId) {
-      return upsert(ownerId, 'draft', { data, sourceDocumentId });
-    },
-
+    // Both writes validate before the version check, as the Drizzle ones do.
     async saveDraftIfUnchanged(ownerId, data, sourceDocumentId, expectedVersion) {
+      ProfileDataSchema.parse(data);
       const current = rows.get(key(ownerId, 'draft'));
       if (current && current.version !== expectedVersion) return null;
       return upsert(ownerId, 'draft', { data, sourceDocumentId });
+    },
+
+    async saveOwnerDraft(ownerId, data, expectedVersion) {
+      ProfileDataSchema.parse(data);
+      const current = rows.get(key(ownerId, 'draft')) ?? null;
+      if (expectedVersion !== undefined && (current?.version ?? null) !== expectedVersion) {
+        return { status: 'stale', draft: current };
+      }
+      const source = (current ?? rows.get(key(ownerId, 'published')))?.sourceDocumentId ?? null;
+      return {
+        status: 'saved',
+        profile: upsert(ownerId, 'draft', { data, sourceDocumentId: source }),
+      };
     },
 
     async deleteDraft(ownerId) {
