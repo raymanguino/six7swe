@@ -12,7 +12,7 @@ const INPUT: ReviewBodyInput = {
   reportedCount: 0,
   gate: 'pass',
   commitSha: 'abc123',
-  coverage: { totalFiles: 1, omittedFiles: 0, shortenedPatches: 0, patchChars: 10 },
+  coverage: { totalFiles: 1, omittedFiles: 0, shortenedPatches: 0, hiddenLines: 0, patchChars: 10 },
   manualReviewReasons: [],
 };
 
