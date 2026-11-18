@@ -43,7 +43,12 @@ export class DraftError extends Error {
 
 /** Resumes are a few pages; anything longer is cut so a stray upload cannot run up the bill. */
 export const MAX_RESUME_CHARS = 40_000;
-const TIMEOUT_MS = 90_000;
+/**
+ * MiniMax-M3 at medium reasoning ran past 90s on a real resume; Flash took
+ * 20s on the same one. Drafting runs in the background and the review screen
+ * keeps polling, so a long wait costs nothing but time.
+ */
+const TIMEOUT_MS = 240_000;
 
 export const DRAFT_SYSTEM_PROMPT = `You turn a software engineer's resume into a structured profile for their portfolio website.
 
