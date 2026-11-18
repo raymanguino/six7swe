@@ -31,6 +31,12 @@ pull request opened / pushed / edited / marked ready
   `QA agent review`. The agent never approves. The admin bypass on the ruleset
   is the escape hatch for a false positive or an outage. Why a check and not
   an approval is recorded on #51.
+  - **Don't rename either job without updating the ruleset.** A required
+    check is matched by the job's `name:`, not the workflow's. A renamed job
+    never reports, so every pull request waits on a check that never comes.
+  - Both checks are tied to the GitHub Actions integration
+    (`integration_id: 15368`). If a check is ever reported by something else,
+    such as the GitHub App from #52, re-add it without the integration.
 - **Gate outcomes** (`decideGate` in `verdict.ts`):
   - `pass`
   - `fail`: a `blocker` or `major` finding
@@ -51,8 +57,9 @@ pull request opened / pushed / edited / marked ready
 ## Status (2026-11-18)
 
 **The build is finished.** 20 of the 21 child issues of #51 are closed. They
-include every prerequisite #59 names: #93, and #141 to #146. #58 (the gate on
-`main`) closed on 2026-11-18; see [The gate on `main` (#58)](#the-gate-on-main-58).
+include every prerequisite #59 names: #93, and #141 to #146. #58, the gate on
+`main`, closed on 2026-11-18. How it was verified is in
+[its closing comment](https://github.com/raymanguino/six7swe/issues/58#issuecomment-6984244891).
 
 The one open child is #59, and it is not code:
 
@@ -94,36 +101,6 @@ are not, and most of them could not be measured until today:
    sample, change the prompt or the context. Don't flip.
 2. **Variance.** 30% of re-reviewed commits got a different set of findings,
    with no code change. A gate whose verdict changes on a re-run is not ready.
-
-## The gate on `main` (#58)
-
-Done. The ruleset change was applied on 2026-11-11, and #58 was closed on
-2026-11-18. Ruleset `12656541` now has:
-
-- `Lint, test and build` and `QA agent review` as required checks, with
-  strict mode off
-- `require_code_owner_review` off
-- the admin bypass (`RepositoryRole` 5, `always`)
-
-**A failing required check blocks the merge.** Throwaway PR #201 had a
-deliberate `no-debugger` error:
-
-- `Lint, test and build` failed
-- GitHub reported both checks as required
-- the merge state was `BLOCKED`
-
-The PR also had no approval, so the approval rule contributed to the block.
-GitHub doesn't say which rule blocked it.
-
-**Bypassing a red `QA agent review`** cannot be tested in comment-only mode,
-because the check is never red. That acceptance box is now in #59, and it is
-checked after the flip.
-
-**If the checks are renamed,** a required context whose job name changes
-never reports, and it blocks every pull request. The context is the job's
-`name:`, not the workflow's. The UI also tied both contexts to the GitHub
-Actions integration (`integration_id: 15368`). If the #52 GitHub App ever
-reports a check, re-add that context without the integration.
 
 ## Finishing #59
 
