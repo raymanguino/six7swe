@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { REVIEW_MARKER } from '../../domain/qa';
+import { parseStatsLines, REVIEW_MARKER } from '../../domain/qa';
 
 /**
  * Exercises the script end to end with the network stubbed.
@@ -157,10 +157,16 @@ const LOCKFILE = {
   patch: 'lockfile noise',
 };
 
+/** The head sha the workflow is triggered for: a full sha, as GitHub sends it. */
+const HEAD_SHA = 'abc1230000000000000000000000000000000000';
+
+/** The head after a push that landed while the review was running. */
+const MOVED_SHA = 'def4560000000000000000000000000000000000';
+
 function runScript(env: Record<string, string>, options: RunOptions = {}): RunResult {
   const stubFile = path.join(__dirname, '__stub.cjs');
   const modelResponse = options.modelResponse ?? MODEL_RESPONSE;
-  const headSha = options.headSha ?? 'abc123';
+  const headSha = options.headSha ?? HEAD_SHA;
   const files = options.files ?? [SOURCE_FILE, LOCKFILE];
   const reviews = options.reviews ?? [];
   const dismissStatus = options.dismissStatus ?? 200;
@@ -221,7 +227,7 @@ const BASE_ENV = {
   GITHUB_TOKEN: 'test-token',
   GITHUB_REPOSITORY: 'raymanguino/six7swe',
   PR_NUMBER: '7',
-  PR_HEAD_SHA: 'abc123',
+  PR_HEAD_SHA: HEAD_SHA,
   PR_TITLE: 'a pull request',
   PR_DESCRIPTION: 'a description',
 };
@@ -252,23 +258,23 @@ describe('review-pr script', () => {
   it('binds the review to the pull request head SHA', () => {
     const result = runScript(BASE_ENV);
 
-    expect(reviewPost(result).commit_id).toBe('abc123');
+    expect(reviewPost(result).commit_id).toBe(HEAD_SHA);
   });
 
   it('binds the review to the commit the diff was read at, not the one the workflow was triggered for', () => {
     // The pull request was pushed to while the workflow was running, so
     // the diff and the live head say "def456" and the trigger says
     // "abc123". The review has to describe the code it actually read.
-    const result = runScript(BASE_ENV, { headSha: 'def456' });
+    const result = runScript(BASE_ENV, { headSha: MOVED_SHA });
 
-    expect(reviewPost(result).commit_id).toBe('def456');
-    expect(reviewPost(result).body).toContain('def456');
+    expect(reviewPost(result).commit_id).toBe(MOVED_SHA);
+    expect(reviewPost(result).body).toContain(MOVED_SHA.slice(0, 7));
   });
 
   it('says so when the pull request moved', () => {
-    const result = runScript(BASE_ENV, { headSha: 'def456' });
+    const result = runScript(BASE_ENV, { headSha: MOVED_SHA });
 
-    expect(result.stdout).toContain('The pull request head is now def456');
+    expect(result.stdout).toContain(`The pull request head is now ${MOVED_SHA}`);
   });
 
   it('never sends the lockfile patch to the model', () => {
@@ -653,7 +659,7 @@ describe('the script logs one stats line for calibration', () => {
     expect(lines[0]).toMatchObject({
       v: 4,
       pr: 7,
-      sha: 'abc123',
+      sha: HEAD_SHA,
       mode: 'comment-only',
       outcome: 'pass',
       // The default files include the lockfile, a protected path, so
@@ -757,6 +763,34 @@ describe('the script logs one stats line for calibration', () => {
     );
 
     expect(statsLines(result)[0]).toMatchObject({ outcome: 'fail', enforceOutcome: 'fail' });
+  });
+
+  it('writes a line qa:calibration reads back, field for field', () => {
+    const result = runScript(BASE_ENV, { modelResponse: BLOCKING_RESPONSE, files: [SOURCE_FILE] });
+
+    const [logged] = statsLines(result);
+    expect(parseStatsLines(result.stdout)).toEqual([logged]);
+    expect(parseStatsLines(result.stdout)[0]).toMatchObject({
+      v: 4,
+      sha: HEAD_SHA,
+      enforceOutcome: 'fail',
+      manualReviewReasons: [],
+    });
+  });
+
+  it('writes a line qa:calibration reads back when the review failed', () => {
+    const result = runScript(BASE_ENV, { modelResponse: 'not json at all' });
+
+    expect(parseStatsLines(result.stdout)).toEqual(statsLines(result));
+    expect(parseStatsLines(result.stdout)).toHaveLength(1);
+  });
+
+  it('refuses a head sha that is not a full sha, rather than log a line calibration drops', () => {
+    const result = runScript({ ...BASE_ENV, PR_HEAD_SHA: 'abc123' });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('PR_HEAD_SHA must be a full commit SHA');
+    expect(statsLines(result)).toEqual([]);
   });
 
   it('never puts a finding message in the stats line', () => {

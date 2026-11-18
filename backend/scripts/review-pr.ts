@@ -19,7 +19,7 @@
  *   GITHUB_TOKEN        required, the token the review is posted with
  *   GITHUB_REPOSITORY   required, in "owner/repo" form
  *   PR_NUMBER           required, the pull request number
- *   PR_HEAD_SHA         required, the pull request head SHA at event time
+ *   PR_HEAD_SHA         required, the pull request head SHA at event time (40 hex characters)
  *   PR_TITLE            optional, defaults to empty
  *   PR_DESCRIPTION      optional, defaults to empty
  *   REVIEW_MODE         optional, "comment-only" (default) or "enforce"
@@ -101,7 +101,15 @@ const envSchema = z.object({
     .number({ error: 'PR_NUMBER is required' })
     .int('PR_NUMBER must be an integer')
     .positive('PR_NUMBER must be a positive integer'),
-  PR_HEAD_SHA: required('PR_HEAD_SHA'),
+  /**
+   * A full commit sha. `qa:calibration` drops a stats line whose sha is
+   * not one, so a malformed value fails here, loudly, rather than costing
+   * the run's data silently.
+   */
+  PR_HEAD_SHA: required('PR_HEAD_SHA').regex(
+    /^[0-9a-f]{40}$/i,
+    'PR_HEAD_SHA must be a full commit SHA (40 hex characters)',
+  ),
   PR_TITLE: z.string().default(''),
   PR_DESCRIPTION: z.string().default(''),
   /**

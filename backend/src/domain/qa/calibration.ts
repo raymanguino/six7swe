@@ -710,6 +710,9 @@ function ofCount(part: number, whole: number): string {
  * Markdown that is pasted into an issue.
  */
 function commitLabel(commit: CommitRef): string {
+  // Defence in depth, on purpose: parseStatsLines already rejects a sha that
+  // is not 40 hex characters, but the summary can be built from stats that
+  // never went through it, and a sha is never echoed into Markdown unchecked.
   const sha = SHA_PATTERN.test(commit.sha) ? `\`${commit.sha.slice(0, 7)}\`` : '(unreadable sha)';
   return `#${commit.pr} ${sha}`;
 }
