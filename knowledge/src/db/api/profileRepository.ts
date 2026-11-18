@@ -30,6 +30,12 @@ export type PublishOutcome =
   /** The draft changed after the owner reviewed it. */
   | { status: 'stale'; draft: ProfileRecord };
 
+/** Why an owner's save did not happen. */
+export type OwnerSaveOutcome =
+  | { status: 'saved'; profile: ProfileRecord }
+  /** The draft is not the one the owner opened; `draft` is the current one (null: none). */
+  | { status: 'stale'; draft: ProfileRecord | null };
+
 export interface ProfileRepository {
   getProfiles(ownerId: string): Promise<ProfilePair>;
 
@@ -57,6 +63,22 @@ export interface ProfileRepository {
     sourceDocumentId: string | null,
     expectedVersion: number | null,
   ): Promise<ProfileRecord | null>;
+
+  /**
+   * Saves the owner's edits as the draft. The draft keeps the resume it was
+   * drafted from; a new draft takes the published profile's (null when there
+   * is none). The source is read by the write itself, never beforehand, so a
+   * concurrent redraft cannot credit the draft to the wrong resume.
+   *
+   * With `expectedVersion` (null: there must be no draft), writes only if the
+   * draft's `version` is still that, and otherwise returns `stale` with the
+   * current draft, writing nothing. Undefined: the save is unconditional.
+   */
+  saveOwnerDraft(
+    ownerId: string,
+    data: ProfileData,
+    expectedVersion?: number | null,
+  ): Promise<OwnerSaveOutcome>;
 
   /** Deletes the draft. False when there was none. */
   deleteDraft(ownerId: string): Promise<boolean>;

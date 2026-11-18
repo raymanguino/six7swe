@@ -59,6 +59,18 @@ export function createMemoryProfileRepository(): ProfileRepository & {
       return upsert(ownerId, 'draft', { data, sourceDocumentId });
     },
 
+    async saveOwnerDraft(ownerId, data, expectedVersion) {
+      const current = rows.get(key(ownerId, 'draft')) ?? null;
+      if (expectedVersion !== undefined && (current?.version ?? null) !== expectedVersion) {
+        return { status: 'stale', draft: current };
+      }
+      const source = (current ?? rows.get(key(ownerId, 'published')))?.sourceDocumentId ?? null;
+      return {
+        status: 'saved',
+        profile: upsert(ownerId, 'draft', { data, sourceDocumentId: source }),
+      };
+    },
+
     async deleteDraft(ownerId) {
       return rows.delete(key(ownerId, 'draft'));
     },

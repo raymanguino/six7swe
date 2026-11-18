@@ -254,9 +254,29 @@ export const ProfileStateResponseSchema = z.object({
 });
 export type ProfileStateResponse = z.infer<typeof ProfileStateResponseSchema>;
 
-/** `PUT /profile/draft` (owner): replaces the draft with the owner's edits. */
-export const SaveDraftRequestSchema = z.strictObject({ data: ProfileDataSchema });
+/**
+ * `PUT /profile/draft` (owner): replaces the draft with the owner's edits.
+ *
+ * `expectedVersion` is the `version` of the draft the owner opened, or null
+ * when there was no draft (the owner started from the published profile or
+ * from scratch). When the draft is no longer that one (a redraft finished, or
+ * another tab saved, published or discarded it), the service answers 409
+ * with the current draft (`SaveDraftConflictResponseSchema`) instead of
+ * overwriting it. Left out, the save is unconditional: optional so a backend
+ * or page deployed before the service keeps working.
+ */
+export const SaveDraftRequestSchema = z.strictObject({
+  data: ProfileDataSchema,
+  expectedVersion: z.number().int().positive().nullable().optional(),
+});
 export type SaveDraftRequest = z.infer<typeof SaveDraftRequestSchema>;
+
+/** `PUT /profile/draft` 409: the draft changed; `draft` is the current one (null: none). */
+export const SaveDraftConflictResponseSchema = z.object({
+  error: z.string(),
+  draft: ProfileDtoSchema.nullable(),
+});
+export type SaveDraftConflictResponse = z.infer<typeof SaveDraftConflictResponseSchema>;
 
 /**
  * `POST /profile/publish` (owner). `draftVersion` is the `version` of the

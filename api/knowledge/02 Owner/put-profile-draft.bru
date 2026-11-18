@@ -81,5 +81,6 @@ tests {
 
 docs {
   Body limit 512 KB. Stores the draft's version in draftVersion for Publish.
+  Optional "expectedVersion": the version of the draft the edits were made on (null: there was no draft). When the draft is no longer that one, nothing is saved and the answer is 409 with the current draft ({ error, draft }). Left out here, so the save is unconditional and the request can be run repeatedly.
   Owner key: only the backend's owner proxy holds it. The service key gets a 401 here.
 }

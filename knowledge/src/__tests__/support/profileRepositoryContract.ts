@@ -11,6 +11,8 @@ export interface ProfileContractTarget {
    * is kept), to force two writes into one millisecond.
    */
   setDraftUpdatedAt: (ownerId: string, at: Date) => Promise<void>;
+  /** A document of the owner's that a profile may name as its source. */
+  newSourceDocument: (ownerId: string) => Promise<string>;
 }
 
 /**
@@ -163,6 +165,83 @@ export function describeProfileRepositoryContract(
       await profiles.deleteDraft(owner);
       const after = await profiles.saveDraftIfUnchanged(owner, drafted, null, current.version);
       expect(after?.data.title).toBe('Model draft');
+    });
+
+    // #186: a stale tab must not silently replace a newer draft.
+    it('saves the owner’s edits only over the draft the owner opened', async () => {
+      const { profiles, newOwner } = target();
+      const owner = newOwner();
+      const edit = (title: string) => ({ ...SAMPLE_PROFILE, title });
+
+      // No draft expected and none there: written.
+      const first = await profiles.saveOwnerDraft(owner, edit('First'), null);
+      if (first.status !== 'saved') throw new Error('expected a save');
+
+      // Another write (a redraft) lands; the tab that opened `first` is stale.
+      const newer = await profiles.saveDraft(owner, edit('Redrafted'), null);
+      expect(await profiles.saveOwnerDraft(owner, edit('Stale'), first.profile.version)).toEqual({
+        status: 'stale',
+        draft: newer,
+      });
+      expect(await profiles.saveOwnerDraft(owner, edit('Stale'), null)).toMatchObject({
+        status: 'stale',
+        draft: { version: newer.version },
+      });
+      expect((await profiles.getProfiles(owner)).draft).toEqual(newer);
+
+      // Expecting the current draft: written, with a new version.
+      const current = await profiles.saveOwnerDraft(owner, edit('Edited'), newer.version);
+      if (current.status !== 'saved') throw new Error('expected a save');
+      expect(current.profile.data.title).toBe('Edited');
+      expect(current.profile.version).not.toBe(newer.version);
+
+      // Without an expected version the save is unconditional.
+      const blind = await profiles.saveOwnerDraft(owner, edit('Blind'));
+      expect(blind).toMatchObject({ status: 'saved', profile: { data: { title: 'Blind' } } });
+
+      // Expecting a draft that has since been discarded: stale, nothing written.
+      await profiles.deleteDraft(owner);
+      expect(await profiles.saveOwnerDraft(owner, edit('Stale'), current.profile.version)).toEqual({
+        status: 'stale',
+        draft: null,
+      });
+      expect((await profiles.getProfiles(owner)).draft).toBeNull();
+    });
+
+    it('keeps the draft’s source when the owner saves, or takes the published one', async () => {
+      const { profiles, newOwner, newSourceDocument } = target();
+      const owner = newOwner();
+      const publishedSource = await newSourceDocument(owner);
+      const draftSource = await newSourceDocument(owner);
+
+      // No draft and nothing published: no source.
+      const scratch = await profiles.saveOwnerDraft(owner, SAMPLE_PROFILE, null);
+      expect(scratch).toMatchObject({ status: 'saved', profile: { sourceDocumentId: null } });
+      await profiles.deleteDraft(owner);
+
+      const toPublish = await profiles.saveDraft(owner, SAMPLE_PROFILE, publishedSource);
+      await profiles.publishDraft(owner, toPublish.version);
+
+      // A new draft started from the published profile takes its source.
+      for (const expected of [null, undefined]) {
+        const saved = await profiles.saveOwnerDraft(owner, SAMPLE_PROFILE, expected);
+        expect(saved).toMatchObject({
+          status: 'saved',
+          profile: { sourceDocumentId: publishedSource },
+        });
+        await profiles.deleteDraft(owner);
+      }
+
+      // A drafted draft keeps the resume it came from through the owner's edits.
+      const drafted = await profiles.saveDraft(owner, SAMPLE_PROFILE, draftSource);
+      const edited = { ...SAMPLE_PROFILE, title: 'Edited' };
+      for (const expected of [drafted.version, undefined]) {
+        const saved = await profiles.saveOwnerDraft(owner, edited, expected);
+        expect(saved).toMatchObject({
+          status: 'saved',
+          profile: { sourceDocumentId: draftSource },
+        });
+      }
     });
 
     it('scopes profiles to the owner', async () => {

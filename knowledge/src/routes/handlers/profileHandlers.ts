@@ -6,6 +6,7 @@ import {
   type ProfileResponse,
   type ProfileStateResponse,
   type PublishedProfileResponse,
+  type SaveDraftConflictResponse,
 } from '../../contract.js';
 import { requireOwner } from '../../plugins/serviceAuth.js';
 import {
@@ -29,11 +30,24 @@ export function profileHandlers(ctx: KnowledgeContext) {
       };
     },
 
-    /** Owner: replaces the draft with the owner's edits. */
-    async saveDraft(req: FastifyRequest): Promise<ProfileResponse> {
+    /**
+     * Owner: replaces the draft with the owner's edits; 409 with the current
+     * draft if it is no longer the one the owner opened (`expectedVersion`).
+     */
+    async saveDraft(req: FastifyRequest, reply: FastifyReply) {
       const ownerId = requireOwner(req);
-      const { data } = SaveDraftRequestSchema.parse(req.body);
-      return { profile: toProfileDto(await saveOwnerDraft(ctx, ownerId, data)) };
+      const { data, expectedVersion } = SaveDraftRequestSchema.parse(req.body);
+      const outcome = await saveOwnerDraft(ctx, ownerId, data, expectedVersion);
+      if (outcome.status === 'stale') {
+        const body: SaveDraftConflictResponse = {
+          error:
+            'The draft has changed since you opened it. Reload it, or save again to overwrite it.',
+          draft: outcome.draft && toProfileDto(outcome.draft),
+        };
+        return reply.code(409).send(body);
+      }
+      const body: ProfileResponse = { profile: toProfileDto(outcome.profile) };
+      return reply.send(body);
     },
 
     /** Owner: drafts again from the primary resume, in the background (202). */

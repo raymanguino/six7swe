@@ -2,7 +2,12 @@ import { and, eq, sql } from 'drizzle-orm';
 import { ProfileDataSchema, type ProfileData, type ProfileStage } from '../../contract.js';
 import type { KnowledgeDb, KnowledgeExecutor } from '../index.js';
 import { nextProfileVersion, profiles } from '../schema.js';
-import type { ProfilePair, ProfileRecord, ProfileRepository } from './profileRepository.js';
+import type {
+  OwnerSaveOutcome,
+  ProfilePair,
+  ProfileRecord,
+  ProfileRepository,
+} from './profileRepository.js';
 
 type ProfileRow = typeof profiles.$inferSelect;
 
@@ -127,6 +132,55 @@ export function createDrizzleProfileRepository(db: KnowledgeDb): ProfileReposito
           .onConflictDoNothing()
           .returning();
         return row ? toRecord(row) : null;
+      });
+    },
+
+    async saveOwnerDraft(ownerId, data, expectedVersion): Promise<OwnerSaveOutcome> {
+      const columns = columnsOf(data);
+      const isDraft = and(eq(profiles.ownerId, ownerId), eq(profiles.stage, 'draft'));
+      const checked = expectedVersion !== undefined;
+      return db.transaction(async (tx) => {
+        // Locked, so a redraft cannot land between this check and the write.
+        const [current] = await tx.select().from(profiles).where(isDraft).for('update');
+        if (current) {
+          if (checked && current.version !== expectedVersion) {
+            return { status: 'stale', draft: toRecord(current) } as const;
+          }
+          // The source is left as it is: the draft keeps the resume it came from.
+          const [row] = await tx
+            .update(profiles)
+            .set({ ...columns, ...touched() })
+            .where(isDraft)
+            .returning();
+          if (!row) throw new Error('profile draft update returned no row');
+          return { status: 'saved', profile: toRecord(row) } as const;
+        }
+        if (checked && expectedVersion !== null) return { status: 'stale', draft: null } as const;
+
+        // No draft: a new one takes the published profile's source, read by
+        // the insert itself.
+        const publishedSource = tx
+          .select({ id: profiles.sourceDocumentId })
+          .from(profiles)
+          .where(and(eq(profiles.ownerId, ownerId), eq(profiles.stage, 'published')));
+        const insert = tx.insert(profiles).values({
+          ownerId,
+          stage: 'draft',
+          ...columns,
+          sourceDocumentId: sql<string | null>`(${publishedSource})`,
+        });
+        // A draft inserted concurrently (nothing to lock above): an unchecked
+        // save replaces its data and keeps its source; a checked one is stale.
+        const [row] = checked
+          ? await insert.onConflictDoNothing().returning()
+          : await insert
+              .onConflictDoUpdate({
+                target: [profiles.ownerId, profiles.stage],
+                set: { ...columns, ...touched() },
+              })
+              .returning();
+        if (row) return { status: 'saved', profile: toRecord(row) } as const;
+        return { status: 'stale', draft: await getStage(tx, ownerId, 'draft') } as const;
       });
     },
 

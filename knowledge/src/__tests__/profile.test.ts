@@ -8,6 +8,7 @@ import {
   ProfileResponseSchema,
   ProfileStateResponseSchema,
   PublishedProfileResponseSchema,
+  SaveDraftConflictResponseSchema,
   type ProfileData,
 } from '../contract.js';
 import { createHashingEmbedder } from '../services/embedding/hashing.js';
@@ -272,6 +273,72 @@ describe('review and publish', () => {
       payload: { draftVersion: saved.version },
     });
     expect(again.statusCode).toBe(404);
+  });
+
+  // #186: a tab opened before a redraft must not silently replace the new draft.
+  it('refuses a save from a stale tab with 409 and keeps the newer draft', async () => {
+    const { app: a, upload, settle, state } = await start(fakeDrafter({ title: 'Redrafted' }));
+    const resume = await upload('resume.md', utf8(RESUME_MD), 'resume');
+    const opened = (await state()).draft;
+    if (!opened) throw new Error('expected a draft');
+
+    // A redraft finishes while the stale tab is still editing.
+    await a.inject({ method: 'POST', url: '/profile/draft', headers: ownerAuth });
+    await settle();
+    const newer = (await state()).draft;
+    if (!newer) throw new Error('expected a draft');
+    expect(newer.version).not.toBe(opened.version);
+
+    const save = (expectedVersion: number | null) =>
+      a.inject({
+        method: 'PUT',
+        url: '/profile/draft',
+        headers: ownerAuth,
+        payload: { data: { ...opened.data, title: 'Stale edit' }, expectedVersion },
+      });
+    const stale = await save(opened.version);
+    expect(stale.statusCode).toBe(409);
+    expect(SaveDraftConflictResponseSchema.parse(stale.json()).draft).toMatchObject({
+      version: newer.version,
+      data: { title: 'Redrafted' },
+    });
+    // No draft was expected, but there is one: refused as well.
+    expect((await save(null)).statusCode).toBe(409);
+    expect((await state()).draft).toMatchObject({
+      version: newer.version,
+      data: { title: 'Redrafted' },
+    });
+
+    // Saving against the current draft (the owner chose to overwrite) is accepted.
+    const overwrite = await save(newer.version);
+    expect(overwrite.statusCode).toBe(200);
+    expect(ProfileResponseSchema.parse(overwrite.json()).profile).toMatchObject({
+      sourceDocumentId: resume.id,
+      data: { title: 'Stale edit' },
+    });
+  });
+
+  it('refuses a save expecting a draft that was published or discarded', async () => {
+    const { app: a, state } = await start(null);
+    const first = await a.inject({
+      method: 'PUT',
+      url: '/profile/draft',
+      headers: ownerAuth,
+      payload: { data: SAMPLE_PROFILE, expectedVersion: null },
+    });
+    expect(first.statusCode).toBe(200);
+    const { version } = ProfileResponseSchema.parse(first.json()).profile;
+    await a.inject({ method: 'DELETE', url: '/profile/draft', headers: ownerAuth });
+
+    const res = await a.inject({
+      method: 'PUT',
+      url: '/profile/draft',
+      headers: ownerAuth,
+      payload: { data: SAMPLE_PROFILE, expectedVersion: version },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(SaveDraftConflictResponseSchema.parse(res.json()).draft).toBeNull();
+    expect((await state()).draft).toBeNull();
   });
 
   it('validates edits against the contract', async () => {

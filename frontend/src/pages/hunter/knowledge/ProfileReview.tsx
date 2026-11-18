@@ -10,6 +10,12 @@ const secondaryButton =
 
 const formatTime = (iso: string) => new Date(iso).toLocaleString();
 
+/** What the editor was opened on: the data, and the draft's `version` (null: there was no draft). */
+interface Editing {
+  data: ProfileData;
+  version: number | null;
+}
+
 /**
  * The landing-page profile (#86): when a resume becomes primary, a model
  * drafts the profile from it. The owner reviews the draft against what is
@@ -17,9 +23,38 @@ const formatTime = (iso: string) => new Date(iso).toLocaleString();
  * published profile once the backend's cache refreshes (publishing busts it).
  */
 export default function ProfileReview({ profile }: { profile: KnowledgeProfile }) {
-  const [editing, setEditing] = useState<ProfileData | null>(null);
+  const [editing, setEditing] = useState<Editing | null>(null);
+  /** The edits a save refused because the draft changed since it was opened. */
+  const [conflict, setConflict] = useState<ProfileData | null>(null);
   const [showUnchanged, setShowUnchanged] = useState(false);
   const { state, loading, error, busy } = profile;
+
+  const startEditing = (data: ProfileData, version: number | null) => {
+    setConflict(null);
+    setEditing({ data, version });
+  };
+  const stopEditing = () => {
+    setConflict(null);
+    setEditing(null);
+  };
+
+  /** Saves over the draft the owner opened; on a conflict, asks what to do. */
+  const save = async (data: ProfileData, expectedVersion: number | null): Promise<boolean> => {
+    const result = await profile.saveDraft(data, expectedVersion);
+    setConflict(result === 'conflict' ? data : null);
+    return result === 'saved';
+  };
+
+  /** Saves the refused edits over the draft as it is now. */
+  const overwrite = async () => {
+    if (!conflict) return;
+    if (await save(conflict, profile.state?.draft?.version ?? null)) stopEditing();
+  };
+
+  /** Drops the refused edits and shows the current draft. */
+  const reloadDraft = () => {
+    if (window.confirm('Discard your edits and show the current draft?')) stopEditing();
+  };
 
   if (loading && !state) {
     return <p className="text-sm text-gray-500">Loading profile...</p>;
@@ -76,12 +111,39 @@ export default function ProfileReview({ profile }: { profile: KnowledgeProfile }
         </p>
       )}
 
+      {editing && conflict && (
+        <div
+          role="alert"
+          className="space-y-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-900/40 dark:text-amber-100"
+        >
+          <p>
+            {draft
+              ? `The draft changed since you opened it (updated ${formatTime(draft.updatedAt)}), so your edits were not saved.`
+              : 'The draft was published or discarded since you opened it, so your edits were not saved.'}{' '}
+            Reload to see the current draft and lose your edits, or overwrite it with them.
+          </p>
+          <div className="flex flex-wrap gap-3">
+            <button type="button" disabled={busy} onClick={reloadDraft} className={secondaryButton}>
+              Reload draft
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void overwrite()}
+              className={primaryButton}
+            >
+              Overwrite with my edits
+            </button>
+          </div>
+        </div>
+      )}
+
       {editing ? (
         <ProfileDraftEditor
-          initial={editing}
+          initial={editing.data}
           saving={busy}
-          onSave={profile.saveDraft}
-          onCancel={() => setEditing(null)}
+          onSave={(data) => save(data, editing.version)}
+          onCancel={stopEditing}
         />
       ) : draft ? (
         <div className="space-y-4">
@@ -161,7 +223,7 @@ export default function ProfileReview({ profile }: { profile: KnowledgeProfile }
             <button
               type="button"
               disabled={busy}
-              onClick={() => setEditing(draft.data)}
+              onClick={() => startEditing(draft.data, draft.version)}
               className={secondaryButton}
             >
               Edit draft
@@ -190,7 +252,7 @@ export default function ProfileReview({ profile }: { profile: KnowledgeProfile }
           <button
             type="button"
             disabled={busy}
-            onClick={() => setEditing(published?.data ?? EMPTY_PROFILE)}
+            onClick={() => startEditing(published?.data ?? EMPTY_PROFILE, null)}
             className={secondaryButton}
           >
             {published ? 'Edit published profile' : 'Write a profile'}

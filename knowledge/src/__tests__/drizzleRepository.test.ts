@@ -56,6 +56,17 @@ if (process.env.CI && !url) {
 const RUN_PREFIX = `test-${randomUUID()}-`;
 const freshOwner = () => `${RUN_PREFIX}${randomUUID()}`;
 
+/** A resume a profile may name as its source; unique bytes, so it is always created. */
+const newSource = (ownerId: string, name: string): NewDocument => ({
+  ownerId,
+  filename: name,
+  mimeType: 'text/markdown',
+  sizeBytes: 1,
+  sha256: randomUUID().replace(/-/g, '').padEnd(64, '0'),
+  storagePath: `${ownerId}/${randomUUID()}-${name}`,
+  kind: 'resume',
+});
+
 /** The same URL with connection parameters set at startup (postgres.js passes unknown ones on). */
 function withParams(base: string, params: Record<string, string>): string {
   const u = new URL(base);
@@ -108,6 +119,10 @@ describeProfileRepositoryContract(
         .set({ updatedAt: at, version: sql`${profiles.version}` })
         .where(and(eq(profiles.ownerId, ownerId), eq(profiles.stage, 'draft')));
     },
+    async newSourceDocument(ownerId) {
+      const { document } = await db().repo.createDocument(newSource(ownerId, 'resume.md'));
+      return document.id;
+    },
   }),
   { skip: !url },
 );
@@ -136,6 +151,35 @@ describe.skipIf(!url)('Drizzle profile repository: concurrent publish and save',
       } else {
         expect(outcome.status).toBe('stale');
         expect(after.published).toBeNull();
+      }
+    }
+  });
+});
+
+describe.skipIf(!url)('Drizzle profile repository: concurrent redraft and owner save', () => {
+  // #186: both check the version they started from under the same row lock,
+  // so exactly one of them writes, and the draft carries that writer's source.
+  it('writes exactly one of them, with its own source', async () => {
+    const repo = createDrizzleProfileRepository(db().handle.db);
+    for (let i = 0; i < 20; i++) {
+      const owner = freshOwner();
+      const { document: oldResume } = await db().repo.createDocument(newSource(owner, 'old.md'));
+      const { document: newResume } = await db().repo.createDocument(newSource(owner, 'new.md'));
+      const opened = await repo.saveDraft(owner, SAMPLE_PROFILE, oldResume.id);
+      const redraftData = { ...SAMPLE_PROFILE, title: `Redraft ${i}` };
+      const ownerData = { ...SAMPLE_PROFILE, title: `Owner ${i}` };
+      const [redrafted, saved] = await Promise.all([
+        repo.saveDraftIfUnchanged(owner, redraftData, newResume.id, opened.version),
+        repo.saveOwnerDraft(owner, ownerData, opened.version),
+      ]);
+      const draft = (await repo.getProfiles(owner)).draft;
+
+      if (redrafted) {
+        expect(saved).toMatchObject({ status: 'stale', draft: { version: redrafted.version } });
+        expect(draft).toMatchObject({ data: redraftData, sourceDocumentId: newResume.id });
+      } else {
+        expect(saved.status).toBe('saved');
+        expect(draft).toMatchObject({ data: ownerData, sourceDocumentId: oldResume.id });
       }
     }
   });

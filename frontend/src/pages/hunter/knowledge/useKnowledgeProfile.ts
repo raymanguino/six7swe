@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { apiRequest } from '../../../utils/api';
+import { ApiError, apiRequest } from '../../../utils/api';
 import { errorMessage } from '../../../utils/errorMessage';
 import {
   parseProfileResponse,
@@ -14,6 +14,9 @@ const POLL_INTERVAL_MS = 3000;
 const POLL_LIMIT_MS = 5 * 60 * 1000;
 const DRAFTING_TIMEOUT_MESSAGE = 'Drafting is taking longer than expected. Reload to check.';
 
+/** How a draft save ended; `failed` sets `error`, `conflict` does not. */
+export type SaveDraftResult = 'saved' | 'conflict' | 'failed';
+
 export interface KnowledgeProfile {
   state: ProfileState | null;
   loading: boolean;
@@ -22,8 +25,13 @@ export interface KnowledgeProfile {
   /** True while an action is in flight. */
   busy: boolean;
   reload: () => Promise<void>;
-  /** Saves the owner's edits as the draft. Resolves false when the save failed. */
-  saveDraft: (data: ProfileData) => Promise<boolean>;
+  /**
+   * Saves the owner's edits over the draft they opened: `expectedVersion` is
+   * that draft's `version`, or null when there was no draft. Resolves
+   * `conflict` (writing nothing) when the draft has changed since; the state
+   * is re-read either way, so it then holds the current draft.
+   */
+  saveDraft: (data: ProfileData, expectedVersion: number | null) => Promise<SaveDraftResult>;
   /** Asks the service to draft again from the primary resume. */
   redraft: () => Promise<void>;
   discardDraft: () => Promise<void>;
@@ -120,15 +128,28 @@ export function useKnowledgeProfile(enabled: boolean, refreshKey: string | null)
   );
 
   const saveDraft = useCallback(
-    (data: ProfileData) =>
-      act(async () => {
-        parseProfileResponse(
-          await apiRequest('/knowledge/profile/draft', {
-            method: 'PUT',
-            body: JSON.stringify({ data }),
-          }),
-        );
-      }, 'Could not save the draft'),
+    async (data: ProfileData, expectedVersion: number | null): Promise<SaveDraftResult> => {
+      let conflict = false;
+      const saved = await act(async () => {
+        try {
+          parseProfileResponse(
+            await apiRequest('/knowledge/profile/draft', {
+              method: 'PUT',
+              body: JSON.stringify({ data, expectedVersion }),
+            }),
+          );
+        } catch (err) {
+          // The draft changed since it was opened: the caller asks the owner what to do.
+          if (err instanceof ApiError && err.status === 409) {
+            conflict = true;
+            return;
+          }
+          throw err;
+        }
+      }, 'Could not save the draft');
+      if (conflict) return 'conflict';
+      return saved ? 'saved' : 'failed';
+    },
     [act],
   );
 
