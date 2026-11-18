@@ -282,13 +282,17 @@ describe('review and publish', () => {
     const resume = await upload('resume.md', utf8(RESUME_MD), 'resume');
     const opened = (await state()).draft;
     if (!opened) throw new Error('expected a draft');
+    const openedVersion = opened.version;
+    if (openedVersion === undefined) throw new Error('expected the draft to carry a version');
 
     // A redraft finishes while the stale tab is still editing.
     await a.inject({ method: 'POST', url: '/profile/draft', headers: ownerAuth });
     await settle();
     const newer = (await state()).draft;
     if (!newer) throw new Error('expected a draft');
-    expect(newer.version).not.toBe(opened.version);
+    const newerVersion = newer.version;
+    if (newerVersion === undefined) throw new Error('expected the draft to carry a version');
+    expect(newerVersion).not.toBe(openedVersion);
 
     const save = (expectedVersion: number | null) =>
       a.inject({
@@ -297,21 +301,21 @@ describe('review and publish', () => {
         headers: ownerAuth,
         payload: { data: { ...opened.data, title: 'Stale edit' }, expectedVersion },
       });
-    const stale = await save(opened.version);
+    const stale = await save(openedVersion);
     expect(stale.statusCode).toBe(409);
     expect(SaveDraftConflictResponseSchema.parse(stale.json()).draft).toMatchObject({
-      version: newer.version,
+      version: newerVersion,
       data: { title: 'Redrafted' },
     });
     // No draft was expected, but there is one: refused as well.
     expect((await save(null)).statusCode).toBe(409);
     expect((await state()).draft).toMatchObject({
-      version: newer.version,
+      version: newerVersion,
       data: { title: 'Redrafted' },
     });
 
     // Saving against the current draft (the owner chose to overwrite) is accepted.
-    const overwrite = await save(newer.version);
+    const overwrite = await save(newerVersion);
     expect(overwrite.statusCode).toBe(200);
     expect(ProfileResponseSchema.parse(overwrite.json()).profile).toMatchObject({
       sourceDocumentId: resume.id,
