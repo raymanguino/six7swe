@@ -37,6 +37,7 @@ import {
 } from './support/fixtures.js';
 import { createMemoryEvalRepository } from './support/memoryEvalRepository.js';
 import { createMemoryProfileRepository } from './support/memoryProfileRepository.js';
+import { seedDraft } from './support/seedDraft.js';
 import { createMemoryRepository } from './support/memoryRepository.js';
 
 const KEY = 'k'.repeat(40);
@@ -596,11 +597,11 @@ describe('drafting races', () => {
   it('keeps the owner’s edits saved while the model was drafting', async () => {
     const { drafter, gates } = gatedDrafter();
     const { profiles, drafting } = await setupDrafting(drafter);
-    await profiles.saveDraft('owner', SAMPLE_PROFILE, null);
+    await seedDraft(profiles, 'owner', SAMPLE_PROFILE, null);
 
     drafting.request('owner');
     await until(() => gates.length === 1);
-    await profiles.saveDraft('owner', { ...SAMPLE_PROFILE, title: 'Owner edit' }, null);
+    await profiles.saveOwnerDraft('owner', { ...SAMPLE_PROFILE, title: 'Owner edit' });
 
     gates[0]?.({ ...SAMPLE_PROFILE, title: 'Model draft' });
     await drafting.idle();

@@ -94,6 +94,8 @@ const LINK_LABELS: Record<keyof ProfileLinks, string> = {
 };
 
 interface Props {
+  /** The form's id, so a button outside it can submit it. */
+  formId?: string;
   initial: ProfileData;
   saving: boolean;
   /** Resolves true when the draft was saved, which closes the editor. */
@@ -105,7 +107,7 @@ interface Props {
  * Edits a draft profile. The service validates every save against the
  * contract (http(s) links only, length limits) and the page shows its answer.
  */
-export default function ProfileDraftEditor({ initial, saving, onSave, onCancel }: Props) {
+export default function ProfileDraftEditor({ formId, initial, saving, onSave, onCancel }: Props) {
   const [form, setForm] = useState<ProfileForm>(() => toForm(initial));
 
   const set = <K extends keyof ProfileForm>(key: K, value: ProfileForm[K]) =>
@@ -128,7 +130,7 @@ export default function ProfileDraftEditor({ initial, saving, onSave, onCancel }
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-5">
+    <form id={formId} onSubmit={handleSubmit} className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
           <label htmlFor="profile-name" className={labelClass}>

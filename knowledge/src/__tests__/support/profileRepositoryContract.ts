@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ProfileRepository } from '../../db/api/profileRepository.js';
 import { SAMPLE_PROFILE } from './fixtures.js';
+import { seedDraft } from './seedDraft.js';
 
 export interface ProfileContractTarget {
   profiles: ProfileRepository;
@@ -36,11 +37,11 @@ export function describeProfileRepositoryContract(
     it('saves, replaces and deletes the draft', async () => {
       const { profiles, newOwner } = target();
       const owner = newOwner();
-      const first = await profiles.saveDraft(owner, SAMPLE_PROFILE, null);
+      const first = await seedDraft(profiles, owner, SAMPLE_PROFILE, null);
       expect(first).toMatchObject({ ownerId: owner, stage: 'draft', data: SAMPLE_PROFILE });
 
       const edited = { ...SAMPLE_PROFILE, title: 'Principal Engineer' };
-      const second = await profiles.saveDraft(owner, edited, null);
+      const second = await seedDraft(profiles, owner, edited, null);
       expect(second.data.title).toBe('Principal Engineer');
       expect(second.createdAt.getTime()).toBe(first.createdAt.getTime());
       expect(second.updatedAt.getTime()).toBeGreaterThanOrEqual(first.updatedAt.getTime());
@@ -57,7 +58,8 @@ export function describeProfileRepositoryContract(
         ...SAMPLE_PROFILE,
         links: { ...SAMPLE_PROFILE.links, website: 'javascript:alert(1)' },
       };
-      await expect(profiles.saveDraft(newOwner(), bad, null)).rejects.toThrow();
+      await expect(profiles.saveOwnerDraft(newOwner(), bad)).rejects.toThrow();
+      await expect(profiles.saveDraftIfUnchanged(newOwner(), bad, null, null)).rejects.toThrow();
     });
 
     it('publishes the reviewed draft and removes it', async () => {
@@ -65,7 +67,7 @@ export function describeProfileRepositoryContract(
       const owner = newOwner();
       expect(await profiles.publishDraft(owner, 1)).toEqual({ status: 'no-draft' });
 
-      const draft = await profiles.saveDraft(owner, SAMPLE_PROFILE, null);
+      const draft = await seedDraft(profiles, owner, SAMPLE_PROFILE, null);
       const outcome = await profiles.publishDraft(owner, draft.version);
       expect(outcome).toMatchObject({
         status: 'published',
@@ -77,7 +79,12 @@ export function describeProfileRepositoryContract(
       });
 
       // Publishing again replaces the published profile.
-      const next = await profiles.saveDraft(owner, { ...SAMPLE_PROFILE, name: 'J. Example' }, null);
+      const next = await seedDraft(
+        profiles,
+        owner,
+        { ...SAMPLE_PROFILE, name: 'J. Example' },
+        null,
+      );
       await profiles.publishDraft(owner, next.version);
       expect((await profiles.getPublished(owner))?.data.name).toBe('J. Example');
     });
@@ -85,8 +92,8 @@ export function describeProfileRepositoryContract(
     it('refuses to publish a draft that changed after review', async () => {
       const { profiles, newOwner } = target();
       const owner = newOwner();
-      const reviewed = await profiles.saveDraft(owner, SAMPLE_PROFILE, null);
-      await profiles.saveDraft(owner, { ...SAMPLE_PROFILE, title: 'Changed' }, null);
+      const reviewed = await seedDraft(profiles, owner, SAMPLE_PROFILE, null);
+      await seedDraft(profiles, owner, { ...SAMPLE_PROFILE, title: 'Changed' }, null);
 
       const outcome = await profiles.publishDraft(owner, reviewed.version);
       expect(outcome).toMatchObject({ status: 'stale', draft: { data: { title: 'Changed' } } });
@@ -98,8 +105,9 @@ export function describeProfileRepositoryContract(
     it('refuses a changed draft whose updatedAt equals the reviewed one', async () => {
       const { profiles, newOwner, setDraftUpdatedAt } = target();
       const owner = newOwner();
-      const reviewed = await profiles.saveDraft(owner, SAMPLE_PROFILE, null);
-      const changed = await profiles.saveDraft(
+      const reviewed = await seedDraft(profiles, owner, SAMPLE_PROFILE, null);
+      const changed = await seedDraft(
+        profiles,
         owner,
         { ...SAMPLE_PROFILE, title: 'Changed' },
         null,
@@ -124,12 +132,12 @@ export function describeProfileRepositoryContract(
     it('never reuses the version of a published or discarded draft', async () => {
       const { profiles, newOwner } = target();
       const owner = newOwner();
-      const published = await profiles.saveDraft(owner, SAMPLE_PROFILE, null);
+      const published = await seedDraft(profiles, owner, SAMPLE_PROFILE, null);
       await profiles.publishDraft(owner, published.version);
-      const discarded = await profiles.saveDraft(owner, SAMPLE_PROFILE, null);
+      const discarded = await seedDraft(profiles, owner, SAMPLE_PROFILE, null);
       await profiles.deleteDraft(owner);
 
-      const next = await profiles.saveDraft(owner, { ...SAMPLE_PROFILE, title: 'Next' }, null);
+      const next = await seedDraft(profiles, owner, { ...SAMPLE_PROFILE, title: 'Next' }, null);
       expect(next.version).not.toBe(published.version);
       expect(next.version).not.toBe(discarded.version);
       expect(await profiles.publishDraft(owner, published.version)).toMatchObject({
@@ -149,7 +157,7 @@ export function describeProfileRepositoryContract(
       if (!first) throw new Error('expected a draft');
 
       // The owner edits it while a new one is drafted: the edits are kept.
-      await profiles.saveDraft(owner, { ...SAMPLE_PROFILE, title: 'Owner edit' }, null);
+      await seedDraft(profiles, owner, { ...SAMPLE_PROFILE, title: 'Owner edit' }, null);
       const drafted = { ...SAMPLE_PROFILE, title: 'Model draft' };
       expect(await profiles.saveDraftIfUnchanged(owner, drafted, null, first.version)).toBeNull();
       expect(await profiles.saveDraftIfUnchanged(owner, drafted, null, null)).toBeNull();
@@ -178,7 +186,7 @@ export function describeProfileRepositoryContract(
       if (first.status !== 'saved') throw new Error('expected a save');
 
       // Another write (a redraft) lands; the tab that opened `first` is stale.
-      const newer = await profiles.saveDraft(owner, edit('Redrafted'), null);
+      const newer = await seedDraft(profiles, owner, edit('Redrafted'), null);
       expect(await profiles.saveOwnerDraft(owner, edit('Stale'), first.profile.version)).toEqual({
         status: 'stale',
         draft: newer,
@@ -219,7 +227,7 @@ export function describeProfileRepositoryContract(
       expect(scratch).toMatchObject({ status: 'saved', profile: { sourceDocumentId: null } });
       await profiles.deleteDraft(owner);
 
-      const toPublish = await profiles.saveDraft(owner, SAMPLE_PROFILE, publishedSource);
+      const toPublish = await seedDraft(profiles, owner, SAMPLE_PROFILE, publishedSource);
       await profiles.publishDraft(owner, toPublish.version);
 
       // A new draft started from the published profile takes its source.
@@ -233,7 +241,7 @@ export function describeProfileRepositoryContract(
       }
 
       // A drafted draft keeps the resume it came from through the owner's edits.
-      const drafted = await profiles.saveDraft(owner, SAMPLE_PROFILE, draftSource);
+      const drafted = await seedDraft(profiles, owner, SAMPLE_PROFILE, draftSource);
       const edited = { ...SAMPLE_PROFILE, title: 'Edited' };
       for (const expected of [drafted.version, undefined]) {
         const saved = await profiles.saveOwnerDraft(owner, edited, expected);
@@ -247,7 +255,7 @@ export function describeProfileRepositoryContract(
     it('scopes profiles to the owner', async () => {
       const { profiles, newOwner } = target();
       const owner = newOwner();
-      const draft = await profiles.saveDraft(owner, SAMPLE_PROFILE, null);
+      const draft = await seedDraft(profiles, owner, SAMPLE_PROFILE, null);
       const other = newOwner();
       expect(await profiles.getProfiles(other)).toEqual({ draft: null, published: null });
       expect(await profiles.publishDraft(other, draft.version)).toEqual({ status: 'no-draft' });

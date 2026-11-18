@@ -42,20 +42,12 @@ export interface ProfileRepository {
   getPublished(ownerId: string): Promise<ProfileRecord | null>;
 
   /**
-   * Creates or replaces the owner's draft. `sourceDocumentId` is the resume
-   * it was drafted from, or null for a profile the owner wrote.
-   */
-  saveDraft(
-    ownerId: string,
-    data: ProfileData,
-    sourceDocumentId: string | null,
-  ): Promise<ProfileRecord>;
-
-  /**
-   * `saveDraft` for the drafter, which must not overwrite the owner's edits
-   * made while it ran: writes only if the draft's `version` is still
-   * `expectedVersion` (null: there was no draft), or the draft has since
-   * been discarded. Returns null, writing nothing, when the draft changed.
+   * Writes the drafter's draft, drafted from `sourceDocumentId`. It must not
+   * overwrite the owner's edits made while it ran: writes only if the draft's
+   * `version` is still `expectedVersion` (null: there was no draft), or the
+   * draft has since been discarded or published (the redraft then recreates
+   * it on purpose: the owner asked for it, or a new resume became primary).
+   * Returns null, writing nothing, when the draft changed.
    */
   saveDraftIfUnchanged(
     ownerId: string,

@@ -2,8 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, apiRequest } from '../../../utils/api';
 import { errorMessage } from '../../../utils/errorMessage';
 import {
+  expectedVersionOf,
   parseProfileResponse,
   parseProfileState,
+  parseSaveDraftConflict,
+  type Profile,
   type ProfileData,
   type ProfileState,
 } from './profileTypes';
@@ -14,8 +17,18 @@ const POLL_INTERVAL_MS = 3000;
 const POLL_LIMIT_MS = 5 * 60 * 1000;
 const DRAFTING_TIMEOUT_MESSAGE = 'Drafting is taking longer than expected. Reload to check.';
 
-/** How a draft save ended; `failed` sets `error`, `conflict` does not. */
-export type SaveDraftResult = 'saved' | 'conflict' | 'failed';
+/**
+ * How a draft save ended. `conflict` carries the draft the service holds now
+ * (null: there is none), which a save over it must expect. `failed` sets
+ * `error`; `conflict` does not.
+ */
+export type SaveDraftResult =
+  | { status: 'saved'; profile: Profile }
+  | { status: 'conflict'; current: Profile | null }
+  | { status: 'failed' };
+
+/** An action's outcome: its value, or a failure already reported through `error`. */
+type ActResult<T> = { ok: true; value: T } | { ok: false };
 
 export interface KnowledgeProfile {
   state: ProfileState | null;
@@ -26,10 +39,10 @@ export interface KnowledgeProfile {
   busy: boolean;
   reload: () => Promise<void>;
   /**
-   * Saves the owner's edits over the draft they opened: `expectedVersion` is
-   * that draft's `version`, or null when there was no draft. Resolves
-   * `conflict` (writing nothing) when the draft has changed since; the state
-   * is re-read either way, so it then holds the current draft.
+   * Saves the owner's edits over the draft they were made on:
+   * `expectedVersion` is that draft's `version`, or null when there was no
+   * draft (see `expectedVersionOf`). Resolves `conflict`, writing nothing,
+   * when the draft has changed since. The state is re-read either way.
    */
   saveDraft: (data: ProfileData, expectedVersion: number | null) => Promise<SaveDraftResult>;
   /** Asks the service to draft again from the primary resume. */
@@ -108,13 +121,15 @@ export function useKnowledgeProfile(enabled: boolean, refreshKey: string | null)
 
   /** Runs an action, reports its failure, then re-reads the state. */
   const act = useCallback(
-    async (run: () => Promise<void>, fallback: string): Promise<boolean> => {
+    async <T>(run: () => Promise<T>, fallback: string): Promise<ActResult<T>> => {
       setBusy(true);
+      let result: ActResult<T>;
       let failure: string | null = null;
       try {
-        await run();
+        result = { ok: true, value: await run() };
       } catch (err) {
         failure = errorMessage(err, fallback);
+        result = { ok: false };
       }
       await reload();
       if (mounted.current) {
@@ -122,33 +137,31 @@ export function useKnowledgeProfile(enabled: boolean, refreshKey: string | null)
         // A successful reload clears the error; the action's own failure stays.
         if (failure) setError(failure);
       }
-      return failure === null;
+      return result;
     },
     [reload],
   );
 
   const saveDraft = useCallback(
     async (data: ProfileData, expectedVersion: number | null): Promise<SaveDraftResult> => {
-      let conflict = false;
-      const saved = await act(async () => {
+      const result = await act(async (): Promise<SaveDraftResult> => {
         try {
-          parseProfileResponse(
+          const profile = parseProfileResponse(
             await apiRequest('/knowledge/profile/draft', {
               method: 'PUT',
               body: JSON.stringify({ data, expectedVersion }),
             }),
           );
+          return { status: 'saved', profile };
         } catch (err) {
-          // The draft changed since it was opened: the caller asks the owner what to do.
+          // The draft changed since: the caller shows the owner the current one.
           if (err instanceof ApiError && err.status === 409) {
-            conflict = true;
-            return;
+            return { status: 'conflict', current: parseSaveDraftConflict(err.body) };
           }
           throw err;
         }
       }, 'Could not save the draft');
-      if (conflict) return 'conflict';
-      return saved ? 'saved' : 'failed';
+      return result.ok ? result.value : { status: 'failed' };
     },
     [act],
   );
@@ -165,7 +178,8 @@ export function useKnowledgeProfile(enabled: boolean, refreshKey: string | null)
     }, 'Could not discard the draft');
   }, [act]);
 
-  const draftVersion = state?.draft?.version ?? null;
+  // Null only when there is no draft to publish.
+  const draftVersion = expectedVersionOf(state?.draft ?? null);
   const publish = useCallback(async () => {
     if (draftVersion === null) return;
     await act(async () => {

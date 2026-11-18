@@ -267,6 +267,8 @@ export type ProfileStateResponse = z.infer<typeof ProfileStateResponseSchema>;
  */
 export const SaveDraftRequestSchema = z.strictObject({
   data: ProfileDataSchema,
+  // TODO(#187): make required alongside `ProfileDtoSchema.version`. Until
+  // that rollout is done, omitted means an unconditional save.
   expectedVersion: z.number().int().positive().nullable().optional(),
 });
 export type SaveDraftRequest = z.infer<typeof SaveDraftRequestSchema>;

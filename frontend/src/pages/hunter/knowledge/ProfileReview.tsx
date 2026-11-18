@@ -1,6 +1,12 @@
 import { useState } from 'react';
 import ProfileDraftEditor from './ProfileDraftEditor';
-import { diffProfiles, EMPTY_PROFILE, type ProfileData } from './profileTypes';
+import {
+  diffProfiles,
+  EMPTY_PROFILE,
+  expectedVersionOf,
+  type Profile,
+  type ProfileData,
+} from './profileTypes';
 import type { KnowledgeProfile } from './useKnowledgeProfile';
 
 const primaryButton =
@@ -10,9 +16,17 @@ const secondaryButton =
 
 const formatTime = (iso: string) => new Date(iso).toLocaleString();
 
-/** What the editor was opened on: the data, and the draft's `version` (null: there was no draft). */
+/** Lets the conflict banner's Overwrite button submit the editor's live content. */
+const EDITOR_FORM_ID = 'profile-draft-editor';
+
 interface Editing {
+  /** What the editor was opened with. */
   data: ProfileData;
+  /**
+   * What a save expects the draft to be (`expectedVersionOf`): the draft the
+   * editor was opened on, or after a conflict, the current draft the owner
+   * was shown.
+   */
   version: number | null;
 }
 
@@ -24,31 +38,34 @@ interface Editing {
  */
 export default function ProfileReview({ profile }: { profile: KnowledgeProfile }) {
   const [editing, setEditing] = useState<Editing | null>(null);
-  /** The edits a save refused because the draft changed since it was opened. */
-  const [conflict, setConflict] = useState<ProfileData | null>(null);
+  /** Set when a save was refused: the draft the service holds now (null: none). */
+  const [conflict, setConflict] = useState<{ current: Profile | null } | null>(null);
   const [showUnchanged, setShowUnchanged] = useState(false);
   const { state, loading, error, busy } = profile;
 
-  const startEditing = (data: ProfileData, version: number | null) => {
+  const startEditing = (data: ProfileData, draft: Profile | null) => {
     setConflict(null);
-    setEditing({ data, version });
+    setEditing({ data, version: expectedVersionOf(draft) });
   };
   const stopEditing = () => {
     setConflict(null);
     setEditing(null);
   };
 
-  /** Saves over the draft the owner opened; on a conflict, asks what to do. */
-  const save = async (data: ProfileData, expectedVersion: number | null): Promise<boolean> => {
-    const result = await profile.saveDraft(data, expectedVersion);
-    setConflict(result === 'conflict' ? data : null);
-    return result === 'saved';
-  };
-
-  /** Saves the refused edits over the draft as it is now. */
-  const overwrite = async () => {
-    if (!conflict) return;
-    if (await save(conflict, profile.state?.draft?.version ?? null)) stopEditing();
+  /**
+   * Saves the editor's content over the draft it expects. On a conflict the
+   * editor stays open and now expects the draft the banner shows, so saving
+   * again overwrites that draft, and only that one: a change after it gets
+   * another conflict.
+   */
+  const save = async (data: ProfileData): Promise<boolean> => {
+    if (!editing) return false;
+    const result = await profile.saveDraft(data, editing.version);
+    if (result.status === 'conflict') {
+      setConflict({ current: result.current });
+      setEditing({ ...editing, version: expectedVersionOf(result.current) });
+    }
+    return result.status === 'saved';
   };
 
   /** Drops the refused edits and shows the current draft. */
@@ -117,21 +134,18 @@ export default function ProfileReview({ profile }: { profile: KnowledgeProfile }
           className="space-y-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-900/40 dark:text-amber-100"
         >
           <p>
-            {draft
-              ? `The draft changed since you opened it (updated ${formatTime(draft.updatedAt)}), so your edits were not saved.`
+            {conflict.current
+              ? `The draft changed since you opened it (updated ${formatTime(conflict.current.updatedAt)}), so your edits were not saved.`
               : 'The draft was published or discarded since you opened it, so your edits were not saved.'}{' '}
-            Reload to see the current draft and lose your edits, or overwrite it with them.
+            Reload to see the current draft and lose your edits, or overwrite it with them (saving
+            again does the same).
           </p>
           <div className="flex flex-wrap gap-3">
             <button type="button" disabled={busy} onClick={reloadDraft} className={secondaryButton}>
               Reload draft
             </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void overwrite()}
-              className={primaryButton}
-            >
+            {/* Submits the editor, so what is on screen is what is saved. */}
+            <button type="submit" form={EDITOR_FORM_ID} disabled={busy} className={primaryButton}>
               Overwrite with my edits
             </button>
           </div>
@@ -140,9 +154,10 @@ export default function ProfileReview({ profile }: { profile: KnowledgeProfile }
 
       {editing ? (
         <ProfileDraftEditor
+          formId={EDITOR_FORM_ID}
           initial={editing.data}
           saving={busy}
-          onSave={(data) => save(data, editing.version)}
+          onSave={save}
           onCancel={stopEditing}
         />
       ) : draft ? (
@@ -223,7 +238,7 @@ export default function ProfileReview({ profile }: { profile: KnowledgeProfile }
             <button
               type="button"
               disabled={busy}
-              onClick={() => startEditing(draft.data, draft.version)}
+              onClick={() => startEditing(draft.data, draft)}
               className={secondaryButton}
             >
               Edit draft

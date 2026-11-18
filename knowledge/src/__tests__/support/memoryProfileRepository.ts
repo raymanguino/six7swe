@@ -49,10 +49,6 @@ export function createMemoryProfileRepository(): ProfileRepository & {
       return rows.get(key(ownerId, 'published')) ?? null;
     },
 
-    async saveDraft(ownerId, data, sourceDocumentId) {
-      return upsert(ownerId, 'draft', { data, sourceDocumentId });
-    },
-
     async saveDraftIfUnchanged(ownerId, data, sourceDocumentId, expectedVersion) {
       const current = rows.get(key(ownerId, 'draft'));
       if (current && current.version !== expectedVersion) return null;

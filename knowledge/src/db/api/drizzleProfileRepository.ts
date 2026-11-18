@@ -88,20 +88,6 @@ export function createDrizzleProfileRepository(db: KnowledgeDb): ProfileReposito
       return getStage(db, ownerId, 'published');
     },
 
-    async saveDraft(ownerId, data, sourceDocumentId) {
-      const values = { ...columnsOf(data), sourceDocumentId };
-      const [row] = await db
-        .insert(profiles)
-        .values({ ownerId, stage: 'draft', ...values })
-        .onConflictDoUpdate({
-          target: [profiles.ownerId, profiles.stage],
-          set: { ...values, ...touched() },
-        })
-        .returning();
-      if (!row) throw new Error('profile draft upsert returned no row');
-      return toRecord(row);
-    },
-
     async saveDraftIfUnchanged(ownerId, data, sourceDocumentId, expectedVersion) {
       const values = { ...columnsOf(data), sourceDocumentId };
       return db.transaction(async (tx) => {
@@ -118,13 +104,16 @@ export function createDrizzleProfileRepository(db: KnowledgeDb): ProfileReposito
             .set({ ...values, ...touched() })
             .where(and(eq(profiles.ownerId, ownerId), eq(profiles.stage, 'draft')))
             .returning();
-          if (!row) return null;
+          // The row is locked, so it cannot have gone: a missing row is a bug,
+          // not the owner's edit.
+          if (!row) throw new Error('profile draft update returned no row');
           if (row.version === current.version) {
             throw new Error('profile draft update did not change its version');
           }
           return toRecord(row);
         }
-        // No draft (never was, or discarded). An owner's draft inserted
+        // No draft (never was, or discarded or published while drafting: the
+        // redraft deliberately recreates it). An owner's draft inserted
         // concurrently wins: the insert then does nothing.
         const [row] = await tx
           .insert(profiles)
@@ -135,16 +124,16 @@ export function createDrizzleProfileRepository(db: KnowledgeDb): ProfileReposito
       });
     },
 
-    async saveOwnerDraft(ownerId, data, expectedVersion): Promise<OwnerSaveOutcome> {
+    async saveOwnerDraft(ownerId, data, expectedVersion) {
       const columns = columnsOf(data);
       const isDraft = and(eq(profiles.ownerId, ownerId), eq(profiles.stage, 'draft'));
       const checked = expectedVersion !== undefined;
-      return db.transaction(async (tx) => {
+      return db.transaction(async (tx): Promise<OwnerSaveOutcome> => {
         // Locked, so a redraft cannot land between this check and the write.
         const [current] = await tx.select().from(profiles).where(isDraft).for('update');
         if (current) {
           if (checked && current.version !== expectedVersion) {
-            return { status: 'stale', draft: toRecord(current) } as const;
+            return { status: 'stale', draft: toRecord(current) };
           }
           // The source is left as it is: the draft keeps the resume it came from.
           const [row] = await tx
@@ -153,9 +142,9 @@ export function createDrizzleProfileRepository(db: KnowledgeDb): ProfileReposito
             .where(isDraft)
             .returning();
           if (!row) throw new Error('profile draft update returned no row');
-          return { status: 'saved', profile: toRecord(row) } as const;
+          return { status: 'saved', profile: toRecord(row) };
         }
-        if (checked && expectedVersion !== null) return { status: 'stale', draft: null } as const;
+        if (checked && expectedVersion !== null) return { status: 'stale', draft: null };
 
         // No draft: a new one takes the published profile's source, read by
         // the insert itself.
@@ -179,8 +168,8 @@ export function createDrizzleProfileRepository(db: KnowledgeDb): ProfileReposito
                 set: { ...columns, ...touched() },
               })
               .returning();
-        if (row) return { status: 'saved', profile: toRecord(row) } as const;
-        return { status: 'stale', draft: await getStage(tx, ownerId, 'draft') } as const;
+        if (row) return { status: 'saved', profile: toRecord(row) };
+        return { status: 'stale', draft: await getStage(tx, ownerId, 'draft') };
       });
     },
 
