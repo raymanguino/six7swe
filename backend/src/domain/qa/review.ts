@@ -19,6 +19,7 @@
  */
 
 import type { DiffCoverage } from './diff';
+import { findingIds, type HashFn } from './findingId';
 import {
   isSteering,
   MAX_REPORTED_FINDINGS,
@@ -168,6 +169,11 @@ function location(finding: ReviewFinding): string {
     return 'general';
   }
 
+  if (finding.line === null && finding.correctedFromLine !== undefined) {
+    const note = `line ${finding.correctedFromLine} is not in the diff`;
+    return `${codeSpan(finding.file).replace(/\|/g, '\\|')} (${note})`;
+  }
+
   const text = finding.line === null ? finding.file : `${finding.file}:${finding.line}`;
 
   return codeSpan(text).replace(/\|/g, '\\|');
@@ -186,6 +192,14 @@ export interface ReviewBodyInput {
   coverage: DiffCoverage;
   /** Why a human has to look. Only rendered when the gate is `manual-review`. */
   manualReviewReasons: readonly ManualReviewReason[];
+  /**
+   * What the finding identifiers are computed from, with `commitSha`: the
+   * pull request number and the hash function. When it is given each shown
+   * finding carries its identifier (`findingIds`), the same value the
+   * stats line logs for the same list. Pass the same findings, in the
+   * same order, and the same hash, to both.
+   */
+  ids?: { pr: number; hash: HashFn };
   /**
    * How long the run took, in milliseconds, measured by the script. Not
    * derived from model output, and not part of the gate.
@@ -337,12 +351,29 @@ export function renderReviewBody(input: ReviewBodyInput): string {
   const summary = escapeMarkdown(truncate(input.summary, MAX_SUMMARY_CHARS));
 
   const shown = findingsToShow(input.findings);
-  const rows = shown.map(
-    (finding) =>
-      `| ${severityLabel(finding)} | ${location(finding)} | ${escapeTableCell(
-        truncate(finding.message, MAX_MESSAGE_CHARS),
-      )} |`,
-  );
+
+  // Identifiers are assigned over the whole list, in the order given, and
+  // looked up by finding: the shown list is a re-sorted selection of it.
+  const idOf = new Map<ReviewFinding, string>();
+  if (input.ids) {
+    const ids = findingIds(
+      { pr: input.ids.pr, sha: input.commitSha },
+      input.findings,
+      input.ids.hash,
+    );
+    input.findings.forEach((finding, index) => idOf.set(finding, ids[index]));
+  }
+  const withIds = input.ids !== undefined;
+
+  const rows = shown.map((finding) => {
+    const cells = [
+      severityLabel(finding),
+      location(finding),
+      escapeTableCell(truncate(finding.message, MAX_MESSAGE_CHARS)),
+    ];
+    if (withIds) cells.push(codeSpan(idOf.get(finding) ?? ''));
+    return `| ${cells.join(' | ')} |`;
+  });
 
   const footer: string[] = [];
 
@@ -374,7 +405,11 @@ export function renderReviewBody(input: ReviewBodyInput): string {
   }
 
   if (rows.length > 0) {
-    sections.push('| Severity | Location | Finding |', '|---|---|---|', ...rows);
+    sections.push(
+      withIds ? '| Severity | Location | Finding | ID |' : '| Severity | Location | Finding |',
+      withIds ? '|---|---|---|---|' : '|---|---|---|',
+      ...rows,
+    );
   }
 
   if (footer.length > 0) {

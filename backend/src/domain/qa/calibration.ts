@@ -5,24 +5,55 @@
  * calibration script reads those lines back from GitHub and tallies them
  * here, in pure code, into the table the phase 2 issue asks for.
  *
- * The stats line carries counts only. A finding message is model output
- * written from attacker-controlled diff content, so it never goes into a
- * line that another program parses.
+ * The stats line carries counts and finding identifiers, never text. A
+ * finding message is model output written from attacker-controlled diff
+ * content, so it never goes into a line that another program parses. For
+ * the same reason a line only counts as a stats line when it starts with
+ * the prefix (after the runner's timestamp), and every other line the
+ * script logs has the prefix neutralised (`neutralizeStatsPrefix`), so
+ * model text cannot forge a run.
  */
 
 import { allTouchedPaths, type ChangedFile } from './diff';
-import { SEVERITY_ORDER, type FindingSeverity, type GateOutcome, type ReviewMode } from './verdict';
+import { FINDING_ID_PATTERN } from './findingId';
+import {
+  SANITIZE_REASONS,
+  SEVERITY_ORDER,
+  zeroSanitizeCounts,
+  type FindingSeverity,
+  type GateOutcome,
+  type ReviewMode,
+  type SanitizeCounts,
+} from './verdict';
 
 /** Marks the stats line in the workflow log. */
 export const QA_STATS_PREFIX = 'QA_STATS ';
+
+/**
+ * Where the prefix may sit in a log line: at the start, after the
+ * timestamp the runner adds (and a byte order mark the log may start with).
+ */
+const STATS_LINE = /^\uFEFF?(?:\d{4}-\d{2}-\d{2}T[\d:.]+Z )?QA_STATS /;
+
+/**
+ * Stops text from being read as a stats line.
+ *
+ * For every line the script logs that is not the stats line itself, since
+ * some of them carry model text.
+ */
+export function neutralizeStatsPrefix(text: string): string {
+  return text.replace(/QA_STATS/g, 'QA-STATS');
+}
 
 /**
  * The version of the stats line. Bump it when a field changes meaning.
  *
  * Version 2 added the coverage counts. Version 1 lines are still read,
  * with the coverage fields as null, so the runs logged before still count.
+ * Version 3 added the sanitizer's counts by reason and the finding ids; a
+ * version 1 or 2 line has them as null.
  */
-export const QA_STATS_VERSION = 2;
+export const QA_STATS_VERSION = 3;
 
 /** The tokens one review used. `reasoning` is null when MiniMax does not report it. */
 export interface RunTokens {
@@ -33,7 +64,7 @@ export interface RunTokens {
 
 /** What one run of the agent did. */
 export interface QaRunStats {
-  v: 1 | typeof QA_STATS_VERSION;
+  v: 1 | 2 | typeof QA_STATS_VERSION;
   pr: number;
   sha: string;
   mode: ReviewMode;
@@ -55,6 +86,17 @@ export interface QaRunStats {
   reported: number | null;
   /** How many findings survived sanitizing, by severity. Null when the review failed. */
   kept: Record<FindingSeverity, number> | null;
+  /**
+   * What the sanitizer did to the reported findings, by reason. Null when
+   * the review failed or on a line older than version 3.
+   */
+  sanitized: SanitizeCounts | null;
+  /**
+   * The ids of the kept findings (`findingIds`), in the order the review
+   * lists them, each unique within the run. They name a finding in this
+   * run only; the commit is part of the hash. Null as for `sanitized`.
+   */
+  findingIds: string[] | null;
   /** Null when the model call never returned a usage report. */
   tokens: RunTokens | null;
   durationMs: number;
@@ -93,6 +135,10 @@ export function formatStatsLine(stats: Omit<QaRunStats, 'v'>): string {
 
 const GATE_OUTCOMES: readonly GateOutcome[] = ['pass', 'fail', 'manual-review', 'fail-closed'];
 
+function isGateOutcome(value: unknown): value is GateOutcome {
+  return GATE_OUTCOMES.some((outcome) => outcome === value);
+}
+
 function isCount(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0;
 }
@@ -119,32 +165,51 @@ function isCountOrNull(value: unknown): value is number | null {
 }
 
 const COVERAGE_FIELDS = ['omittedFiles', 'shortenedPatches', 'patchChars'] as const;
+const SANITIZE_FIELDS = ['sanitized', 'findingIds'] as const;
+
+function isSanitizeCounts(value: unknown): value is SanitizeCounts {
+  return isRecord(value) && SANITIZE_REASONS.every((reason) => isCount(value[reason]));
+}
+
+function isIdList(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.every((id) => typeof id === 'string' && FINDING_ID_PATTERN.test(id))
+  );
+}
 
 /**
  * Reads a parsed line into stats, or null when it has the wrong shape.
  *
- * A version 1 line has no coverage fields; they are filled in as null
+ * An older line lacks the fields added since; they are filled in as null
  * rather than the line being dropped.
  */
 function toRunStats(value: unknown): QaRunStats | null {
   if (!isRecord(value)) return null;
 
+  let upgraded: Record<string, unknown> = value;
+
   if (value.v === 1) {
     if (COVERAGE_FIELDS.some((field) => field in value)) return null;
-    const upgraded = { ...value, omittedFiles: null, shortenedPatches: null, patchChars: null };
-    return isRunStats(upgraded) ? upgraded : null;
+    upgraded = { ...upgraded, omittedFiles: null, shortenedPatches: null, patchChars: null };
+  }
+  if (value.v === 1 || value.v === 2) {
+    if (SANITIZE_FIELDS.some((field) => field in value)) return null;
+    upgraded = { ...upgraded, sanitized: null, findingIds: null };
+  } else if (value.v !== QA_STATS_VERSION) {
+    return null;
   }
 
-  return value.v === QA_STATS_VERSION && isRunStats(value) ? value : null;
+  return isRunStats(upgraded) ? upgraded : null;
 }
 
 function isRunStats(value: Record<string, unknown>): value is Record<string, unknown> & QaRunStats {
   return (
-    (value.v === 1 || value.v === QA_STATS_VERSION) &&
+    (value.v === 1 || value.v === 2 || value.v === QA_STATS_VERSION) &&
     isCount(value.pr) &&
     typeof value.sha === 'string' &&
     (value.mode === 'comment-only' || value.mode === 'enforce') &&
-    GATE_OUTCOMES.includes(value.outcome as GateOutcome) &&
+    isGateOutcome(value.outcome) &&
     isCount(value.files) &&
     isCount(value.backendFiles) &&
     isCount(value.frontendFiles) &&
@@ -152,6 +217,8 @@ function isRunStats(value: Record<string, unknown>): value is Record<string, unk
     COVERAGE_FIELDS.every((field) => isCountOrNull(value[field])) &&
     (value.reported === null || isCount(value.reported)) &&
     (value.kept === null || isSeverityCounts(value.kept)) &&
+    (value.sanitized === null || isSanitizeCounts(value.sanitized)) &&
+    (value.findingIds === null || isIdList(value.findingIds)) &&
     (value.tokens === null || isTokens(value.tokens)) &&
     isCount(value.durationMs)
   );
@@ -167,10 +234,10 @@ function isRunStats(value: Record<string, unknown>): value is Record<string, unk
 export function parseStatsLines(log: string): QaRunStats[] {
   const stats: QaRunStats[] = [];
   for (const line of log.split(/\r?\n/)) {
-    const at = line.indexOf(QA_STATS_PREFIX);
-    if (at < 0) continue;
+    const match = STATS_LINE.exec(line);
+    if (!match) continue;
     try {
-      const parsed: unknown = JSON.parse(line.slice(at + QA_STATS_PREFIX.length));
+      const parsed: unknown = JSON.parse(line.slice(match[0].length));
       const run = toRunStats(parsed);
       if (run) stats.push(run);
     } catch {
@@ -205,9 +272,15 @@ export interface CalibrationSummary {
   reported: number;
   /** Findings that survived sanitizing, by severity. */
   kept: Record<FindingSeverity, number>;
-  /** Findings dropped by the sanitizer: pointed at a file or line not in the diff. */
-  dropped: number;
+  /**
+   * What the sanitizer did, by reason, across the reviews that logged it
+   * (version 3 lines that completed).
+   */
+  sanitized: SanitizeCounts | null;
+  /** Completed reviews whose line has no sanitizer counts (logged before version 3). */
+  withoutSanitizeCounts: number;
   durationMs: Spread | null;
+  promptTokens: Spread | null;
   completionTokens: Spread | null;
   reasoningTokens: Spread | null;
   /** Completed reviews that reported no token usage. */
@@ -253,8 +326,11 @@ export function summarizeCalibration(runs: readonly QaRunStats[]): CalibrationSu
   };
   const kept: Record<FindingSeverity, number> = { blocker: 0, major: 0, minor: 0, nit: 0 };
   let reported = 0;
-  let keptTotal = 0;
+  const sanitized = zeroSanitizeCounts();
+  let withSanitizeCounts = 0;
+  let withoutSanitizeCounts = 0;
   let withoutTokens = 0;
+  const promptTokens: number[] = [];
   const completionTokens: number[] = [];
   const reasoningTokens: number[] = [];
   const omittedFiles: number[] = [];
@@ -270,11 +346,17 @@ export function summarizeCalibration(runs: readonly QaRunStats[]): CalibrationSu
       reported += run.reported;
       for (const severity of SEVERITY_ORDER) {
         kept[severity] += run.kept[severity];
-        keptTotal += run.kept[severity];
+      }
+      if (run.sanitized) {
+        withSanitizeCounts += 1;
+        for (const reason of SANITIZE_REASONS) sanitized[reason] += run.sanitized[reason];
+      } else {
+        withoutSanitizeCounts += 1;
       }
     }
 
     if (run.tokens) {
+      promptTokens.push(run.tokens.prompt);
       completionTokens.push(run.tokens.completion);
       if (run.tokens.reasoning !== null) reasoningTokens.push(run.tokens.reasoning);
     } else if (run.outcome !== 'fail-closed') {
@@ -293,8 +375,10 @@ export function summarizeCalibration(runs: readonly QaRunStats[]): CalibrationSu
     outcomes,
     reported,
     kept,
-    dropped: reported - keptTotal,
+    sanitized: withSanitizeCounts > 0 ? sanitized : null,
+    withoutSanitizeCounts,
     durationMs: spread(commits.map((run) => run.durationMs)),
+    promptTokens: spread(promptTokens),
     completionTokens: spread(completionTokens),
     reasoningTokens: spread(reasoningTokens),
     withoutTokens,
@@ -333,6 +417,14 @@ const seconds = (ms: number): string => `${(ms / 1000).toFixed(1)}s`;
 const tokens = (n: number): string => `${n.toLocaleString('en-US')} tokens`;
 const chars = (n: number): string => n.toLocaleString('en-US');
 const files = (n: number): string => `${n} file(s)`;
+
+/** One sanitizer count, or "no data" when no review logged them. */
+function reasonCount(
+  summary: CalibrationSummary,
+  reason: (typeof SANITIZE_REASONS)[number],
+): string {
+  return summary.sanitized ? String(summary.sanitized[reason]) : 'no data';
+}
 
 function formatDistribution(value: Distribution | null, budget: number): string {
   return value
@@ -374,9 +466,13 @@ export function renderCalibrationReport(
     `| Commits reviewed | ${summary.commits} |`,
     `| Findings returned by the model | ${summary.reported} |`,
     `| Findings posted | ${keptTotal} (${SEVERITY_ORDER.map((s) => `${summary.kept[s]} ${s}`).join(', ')}) |`,
-    `| Findings dropped for pointing outside the diff | ${summary.dropped} |`,
+    `| Dropped: file not in the pull request | ${reasonCount(summary, 'outsidePr')} |`,
+    `| Dropped: file in the pull request but not shown to the model | ${reasonCount(summary, 'notShown')} |`,
+    `| Merged: steering findings folded into one | ${reasonCount(summary, 'steeringMerged')} |`,
+    `| Kept, line number removed (line not shown to the model) | ${reasonCount(summary, 'lineCorrected')} |`,
     `| Gate outcomes | ${GATE_OUTCOMES.map((o) => `${summary.outcomes[o]} ${o}`).join(', ')} |`,
     `| Runtime | ${formatSpread(summary.durationMs, seconds)} |`,
+    `| Prompt tokens | ${formatSpread(summary.promptTokens, tokens)} |`,
     `| Completion tokens | ${formatSpread(summary.completionTokens, tokens)} |`,
     `| ... of which reasoning | ${formatSpread(summary.reasoningTokens, tokens)} |`,
     `| Reviews with omitted files | ${summary.withOmittedFiles} of ${summary.withCoverage} |`,
@@ -394,6 +490,11 @@ export function renderCalibrationReport(
   if (context.runsWithExpiredLogs > 0) {
     lines.push(
       `${context.runsWithExpiredLogs} run(s) are no longer countable: GitHub has deleted their logs.`,
+    );
+  }
+  if (summary.withoutSanitizeCounts > 0) {
+    lines.push(
+      `${summary.withoutSanitizeCounts} completed review(s) logged no sanitizer counts (they predate version 3 of the stats line), so the rows above undercount.`,
     );
   }
   if (summary.withoutTokens > 0) {

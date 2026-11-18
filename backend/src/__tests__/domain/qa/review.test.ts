@@ -13,6 +13,8 @@ import {
   severityLabel,
   type ReviewBodyInput,
 } from '../../../domain/qa/review';
+import { hashData } from '../../../util/hash';
+import { findingIds } from '../../../domain/qa/findingId';
 import type { DiffCoverage } from '../../../domain/qa/diff';
 import type { ReviewFinding } from '../../../domain/qa/verdict';
 
@@ -511,5 +513,41 @@ describe('codeSpan', () => {
 
   it('flattens the text onto one line', () => {
     expect(codeSpan('a\nb')).toBe('`a b`');
+  });
+});
+
+describe('a corrected line in the review body', () => {
+  it('says the line the model named is not in the diff', () => {
+    const text = body({
+      findings: [finding({ line: null, correctedFromLine: 999 })],
+      reportedCount: 1,
+    });
+
+    expect(text).toContain('line 999 is not in the diff');
+  });
+
+  it('shows a finding with no named line as before', () => {
+    expect(body({ findings: [finding()], reportedCount: 1 })).not.toContain('is not in the diff');
+  });
+});
+
+describe('finding ids in the review body', () => {
+  const list = [
+    finding({ severity: 'major', message: 'Same.' }),
+    finding({ severity: 'major', message: 'Same.' }),
+    finding({ severity: 'nit', message: 'Other.' }),
+  ];
+
+  it('shows each finding with the id the stats line carries for the same list', () => {
+    const text = body({ findings: list, reportedCount: 3, ids: { pr: 7, hash: hashData } });
+    const ids = findingIds({ pr: 7, sha: 'abc123' }, list, hashData);
+
+    expect(text).toContain('| Severity | Location | Finding | ID |');
+    for (const id of ids) expect(text).toContain(`\`${id}\``);
+    expect(new Set(ids).size).toBe(3);
+  });
+
+  it('has no id column when the pull request is not given', () => {
+    expect(body({ findings: list, reportedCount: 3 })).not.toContain('| ID |');
   });
 });

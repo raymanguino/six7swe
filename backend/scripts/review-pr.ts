@@ -40,14 +40,18 @@ import {
   renderFailureBody,
   renderReviewBody,
   reviewEventForGate,
-  sanitizeFindings,
+  findingIds,
+  neutralizeStatsPrefix,
+  sanitizeFindingsWithCounts,
   severityLabel,
   sortFindingsBySeverity,
   type ChangedFile,
   type DiffCoverage,
   type FindingSeverity,
   type GateOutcome,
+  type SanitizeCounts,
 } from '../src/domain/qa';
+import { hashData } from '../src/util/hash';
 import { reviewPullRequest } from '../src/services/ai/prReview';
 import type { TokenUsage } from '../src/services/minimaxService';
 import {
@@ -122,8 +126,18 @@ const HEAD_READ_ATTEMPTS = 3;
  * or "::add-mask::" and have it carried out. The colons are encoded, and
  * the text is flattened to one line so it cannot start a new line at all.
  */
-function logLine(text: string): void {
+function writeLogLine(text: string): void {
   process.stdout.write(`${flattenText(text).replace(/::/g, '%3A%3A')}\n`);
+}
+
+/**
+ * Writes a line to the workflow log that is not the stats line.
+ *
+ * The stats prefix is neutralised: several of these lines carry model
+ * text, and the calibration script must not read a forged run out of it.
+ */
+function logLine(text: string): void {
+  writeLogLine(neutralizeStatsPrefix(text));
 }
 
 function parseEnv(): z.infer<typeof envSchema> {
@@ -228,15 +242,18 @@ async function main(): Promise<void> {
   /**
    * Writes the one stats line this run reports, for `qa:calibration`.
    *
-   * Counts only: a finding message is model output and never goes into
-   * a line another program parses.
+   * Counts and finding ids only: a finding message is model output and
+   * never goes into a line another program parses.
    */
-  function logStats(
-    outcome: GateOutcome,
-    reported: number | null,
-    kept: Record<FindingSeverity, number> | null,
-  ): void {
-    logLine(
+  function logStats(run: {
+    outcome: GateOutcome;
+    reported: number | null;
+    kept: Record<FindingSeverity, number> | null;
+    sanitized: SanitizeCounts | null;
+    findingIds: string[] | null;
+  }): void {
+    const { outcome, reported, kept, sanitized } = run;
+    writeLogLine(
       formatStatsLine({
         pr: env.PR_NUMBER,
         sha: headSha,
@@ -250,6 +267,8 @@ async function main(): Promise<void> {
         patchChars: coverage?.patchChars ?? null,
         reported,
         kept,
+        sanitized,
+        findingIds: run.findingIds,
         tokens: usage
           ? {
               prompt: usage.promptTokens,
@@ -306,7 +325,15 @@ async function main(): Promise<void> {
     // Both are checked against what the model was shown, not against the
     // whole pull request: a finding about a file the budget dropped, or a
     // line cut from a shortened patch, is about code the model never read.
-    const findings = sortFindingsBySeverity(sanitizeFindings(review.findings, prepared.shown));
+    const sanitizedResult = sanitizeFindingsWithCounts(
+      review.findings,
+      prepared.shown,
+      changedFiles,
+    );
+    const findings = sortFindingsBySeverity(sanitizedResult.findings);
+    // The same ids go in the review body and the stats line: both are
+    // computed from this list, in this order.
+    const ids = findingIds({ pr: env.PR_NUMBER, sha: headSha }, findings, hashData);
 
     const gate = decideGate({
       findings,
@@ -334,6 +361,7 @@ async function main(): Promise<void> {
       reportedCount: review.findings.length,
       gate,
       commitSha: headSha,
+      ids: { pr: env.PR_NUMBER, hash: hashData },
       coverage: diffCoverage,
       manualReviewReasons: manualReviewReasons({ changedFiles, coverage: diffCoverage }),
       durationMs: reportedDurationMs,
@@ -367,7 +395,13 @@ async function main(): Promise<void> {
       await dismissSuperseded(env, owner, repo, superseded, headSha);
     }
 
-    logStats(gate, review.findings.length, countBySeverity(findings));
+    logStats({
+      outcome: gate,
+      reported: review.findings.length,
+      kept: countBySeverity(findings),
+      sanitized: sanitizedResult.counts,
+      findingIds: ids,
+    });
 
     if (gateBlocksMerge(gate, mode)) {
       process.exitCode = 1;
@@ -392,7 +426,7 @@ async function main(): Promise<void> {
     // contradict the posted review and record the wrong outcome.
     const outcome: GateOutcome = posted && decidedGate !== null ? decidedGate : 'fail-closed';
 
-    logStats(outcome, null, null);
+    logStats({ outcome, reported: null, kept: null, sanitized: null, findingIds: null });
 
     // Whether the outcome turns the check red depends on the mode: in
     // comment-only mode the agent is an observer and nothing it does blocks

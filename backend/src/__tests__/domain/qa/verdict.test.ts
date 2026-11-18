@@ -5,6 +5,7 @@ import {
   decideReviewEvent,
   reviewEventForGate,
   sanitizeFindings,
+  sanitizeFindingsWithCounts,
   sortFindingsBySeverity,
   manualReviewReasons,
   touchesProtectedPath,
@@ -387,7 +388,7 @@ describe('sanitizeFindings', () => {
     const wrongLine = finding({ file: 'backend/src/index.ts', line: 999 });
 
     expect(sanitizeFindings([wrongLine], shownInFull([patchedFile()]))).toEqual([
-      { ...wrongLine, line: null },
+      { ...wrongLine, line: null, correctedFromLine: 999 },
     ]);
   });
 
@@ -395,7 +396,7 @@ describe('sanitizeFindings', () => {
     const noPatch = finding({ file: 'backend/src/index.ts', line: 4 });
 
     expect(sanitizeFindings([noPatch], shownInFull(changedFiles))).toEqual([
-      { ...noPatch, line: null },
+      { ...noPatch, line: null, correctedFromLine: 4 },
     ]);
   });
 
@@ -448,7 +449,9 @@ describe('sanitizeFindings against the budgeted diff', () => {
   it('clears the line of a finding on a line that was truncated away', () => {
     const pastTheCut = finding({ file: 'backend/src/long.ts', line: 18 });
 
-    expect(sanitizeFindings([pastTheCut], prepared.shown)).toEqual([{ ...pastTheCut, line: null }]);
+    expect(sanitizeFindings([pastTheCut], prepared.shown)).toEqual([
+      { ...pastTheCut, line: null, correctedFromLine: 18 },
+    ]);
     expect(sanitizeFindings([pastTheCut], shownInFull(changedFiles))).toEqual([pastTheCut]);
   });
 
@@ -585,7 +588,9 @@ describe('sanitizeFindings: path spellings and renames', () => {
 
     // Line 1 is a line of b.ts, the new revision; it says nothing about a.ts.
     const onOldPath = finding({ file: 'backend/src/a.ts', line: 1 });
-    expect(sanitizeFindings([onOldPath], prepared.shown)).toEqual([{ ...onOldPath, line: null }]);
+    expect(sanitizeFindings([onOldPath], prepared.shown)).toEqual([
+      { ...onOldPath, line: null, correctedFromLine: 1 },
+    ]);
   });
 });
 
@@ -969,5 +974,176 @@ describe('manualReviewReasons', () => {
     expect(
       manualReviewReasons({ changedFiles: [plain], coverage: { ...FULL, shortenedPatches: 3 } }),
     ).toEqual([]);
+  });
+});
+
+describe('sanitizeFindingsWithCounts', () => {
+  const files = [patchedFile(), patchedFile({ filename: 'backend/src/omitted.ts' })];
+  const shown = shownInFull([files[0]]);
+
+  function steering(message: string): ReviewFinding {
+    return finding({ file: null, kind: 'steering', severity: 'blocker', message });
+  }
+
+  it('counts each reason under its own name', () => {
+    const reported = [
+      finding({ file: 'nowhere.ts' }),
+      finding({ file: 'backend/src/omitted.ts' }),
+      finding({ file: 'backend/src/index.ts', line: 999 }),
+      finding({ file: 'backend/src/index.ts', line: 11 }),
+      steering('one'),
+      steering('two'),
+      steering('three'),
+    ];
+    const result = sanitizeFindingsWithCounts(reported, shown, files);
+
+    expect(result.counts).toEqual({
+      outsidePr: 1,
+      notShown: 1,
+      steeringMerged: 2,
+      lineCorrected: 1,
+    });
+    // reported = kept + every loss; a corrected line is kept, so not a loss.
+    const { outsidePr, notShown, steeringMerged } = result.counts;
+    expect(reported.length).toBe(result.findings.length + outsidePr + notShown + steeringMerged);
+  });
+
+  it('does not count a steering finding or a corrected line as outside the diff', () => {
+    const result = sanitizeFindingsWithCounts(
+      [steering('a'), steering('b'), finding({ file: 'backend/src/index.ts', line: 999 })],
+      shown,
+      files,
+    );
+
+    expect(result.counts).toEqual({
+      outsidePr: 0,
+      notShown: 0,
+      steeringMerged: 1,
+      lineCorrected: 1,
+    });
+  });
+
+  it('counts a corrected line once, from what is kept, not from what was merged', () => {
+    const onLine = (message: string): ReviewFinding =>
+      finding({
+        file: 'backend/src/index.ts',
+        line: 999,
+        kind: 'steering',
+        severity: 'blocker',
+        message,
+      });
+
+    const result = sanitizeFindingsWithCounts(
+      [onLine('a'), onLine('b'), onLine('c')],
+      shown,
+      files,
+    );
+
+    expect(result.findings).toHaveLength(1);
+    expect(result.counts).toEqual({
+      outsidePr: 0,
+      notShown: 0,
+      steeringMerged: 2,
+      lineCorrected: 0,
+    });
+
+    // A single corrected steering finding is kept as it is, and counted.
+    expect(sanitizeFindingsWithCounts([onLine('a')], shown, files).counts.lineCorrected).toBe(1);
+  });
+
+  it('keeps a steering finding on an unshown file or outside the pull request, uncounted', () => {
+    const reported = [
+      steering('x'),
+      finding({ file: 'backend/src/omitted.ts', kind: 'steering', message: 'unshown' }),
+      finding({ file: 'nowhere.ts', kind: 'steering', message: 'outside' }),
+    ];
+    const result = sanitizeFindingsWithCounts(reported, shown, files);
+
+    expect(result.counts).toEqual({
+      outsidePr: 0,
+      notShown: 0,
+      steeringMerged: 2,
+      lineCorrected: 0,
+    });
+    expect(reported.length).toBe(result.findings.length + 2);
+  });
+
+  it('keeps a defect with no file, and counts nothing', () => {
+    const result = sanitizeFindingsWithCounts([finding({ file: null })], shown, files);
+
+    expect(result.findings).toHaveLength(1);
+    expect(result.counts).toEqual({
+      outsidePr: 0,
+      notShown: 0,
+      steeringMerged: 0,
+      lineCorrected: 0,
+    });
+  });
+
+  it('counts a rename old path as a corrected line, and a dropped renamed file as not shown', () => {
+    const moved: ChangedFile = {
+      filename: 'backend/src/new.ts',
+      previousFilename: 'backend/src/old.ts',
+      status: 'renamed',
+      additions: 1,
+      deletions: 1,
+      patch: '@@ -1,1 +1,1 @@\n-a\n+b',
+    };
+    const gone = patchedFile({ filename: 'backend/src/gone.ts' });
+
+    const result = sanitizeFindingsWithCounts(
+      [
+        finding({ file: 'backend/src/old.ts', line: 1 }),
+        finding({ file: 'backend/src/gone.ts', line: 1 }),
+      ],
+      shownInFull([moved]),
+      [moved, gone],
+    );
+
+    expect(result.counts).toEqual({
+      outsidePr: 0,
+      notShown: 1,
+      steeringMerged: 0,
+      lineCorrected: 1,
+    });
+  });
+
+  it('accepts the displayed spelling of a path with a control character', () => {
+    const odd = patchedFile({ filename: 'backend/src/odd\u001bname.ts' });
+    const result = sanitizeFindingsWithCounts(
+      [finding({ file: displayPath(odd.filename), line: 11 })],
+      shownInFull([odd]),
+      [odd],
+    );
+
+    expect(result.findings).toHaveLength(1);
+    expect(result.counts).toEqual({
+      outsidePr: 0,
+      notShown: 0,
+      steeringMerged: 0,
+      lineCorrected: 0,
+    });
+  });
+
+  it('is idempotent: sanitizing its own output changes nothing and drops nothing more', () => {
+    const first = sanitizeFindingsWithCounts(
+      [
+        finding({ file: 'nowhere.ts' }),
+        finding({ file: 'backend/src/index.ts', line: 999 }),
+        steering('a'),
+        steering('b'),
+      ],
+      shown,
+      files,
+    );
+    const second = sanitizeFindingsWithCounts(first.findings, shown, files);
+
+    expect(second.findings).toEqual(first.findings);
+    expect(second.counts).toEqual({
+      outsidePr: 0,
+      notShown: 0,
+      steeringMerged: 0,
+      lineCorrected: first.counts.lineCorrected,
+    });
   });
 });
