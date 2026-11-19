@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { apiRequest } from '../utils/api';
+import { apiRequest, apiUrl } from '../utils/api';
+import { useResumeAvailable } from '../hooks/useResumeAvailable';
 import { INPUT_LIMITS } from '../constants';
 import { CONTACT } from '../content/contact';
 import {
@@ -172,6 +173,7 @@ export default function Landing({ onSectionChange }: LandingProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitStatus, setSubmitStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [expandedAccordion, setExpandedAccordion] = useState<string | null>(null);
+  const resumeAvailable = useResumeAvailable();
   const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
   const [fitcheckJobDescription, setFitcheckJobDescription] = useState('');
   const [fitcheckLoading, setFitcheckLoading] = useState(false);
@@ -647,10 +649,11 @@ export default function Landing({ onSectionChange }: LandingProps) {
                 </div>
               </div>
             )}
+            {resumeAvailable && (
             <div className="card">
               <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Resume</h3>
               <a
-                href={`${import.meta.env.VITE_API_URL || '/api'}/resume`}
+                href={apiUrl('/resume')}
                 download="resume.pdf"
                 className="text-primary-600 dark:text-primary-400 hover:underline inline-flex items-center gap-2"
               >
@@ -660,6 +663,7 @@ export default function Landing({ onSectionChange }: LandingProps) {
                 Download
               </a>
             </div>
+            )}
           </div>
           <div className="card">
             <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Send Message</h3>

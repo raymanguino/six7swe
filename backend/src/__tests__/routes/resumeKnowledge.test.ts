@@ -89,6 +89,27 @@ describe('GET /resume', () => {
     expect(res.statusCode).toBe(hit ? 304 : 200);
   });
 
+  it('answers HEAD with the PDF headers and no body (the landing page probe)', async () => {
+    mockedGetResumeDownload.mockResolvedValue({ found: true, body: PDF, etag: '"resume-v3"' });
+
+    const res = await app.inject({ method: 'HEAD', url: '/resume' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toBe('application/pdf');
+    expect(res.headers.etag).toBe('"resume-v3"');
+    expect(res.rawPayload.length).toBe(0);
+  });
+
+  it('answers HEAD 404 when there is no primary resume', async () => {
+    mockedGetResumeDownload.mockResolvedValue({ found: false });
+
+    const res = await app.inject({ method: 'HEAD', url: '/resume' });
+
+    expect(res.statusCode).toBe(404);
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(res.rawPayload.length).toBe(0);
+  });
+
   it('answers 404, uncacheable, when there is no primary resume', async () => {
     mockedGetResumeDownload.mockResolvedValue({ found: false });
 

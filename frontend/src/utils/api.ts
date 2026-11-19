@@ -44,8 +44,12 @@ export const setAccessTokenProvider = (provider: AccessTokenProvider | null): vo
   accessTokenProvider = provider;
 };
 
+/** The URL of an API path: `VITE_API_URL` when set, else the `/api` proxy prefix. */
+export const apiUrl = (endpoint: string): string =>
+  API_URL ? `${API_URL}${endpoint}` : `/api${endpoint}`;
+
 export const apiRequest = async (endpoint: string, options: RequestInit = {}) => {
-  const url = API_URL ? `${API_URL}${endpoint}` : `/api${endpoint}`;
+  const url = apiUrl(endpoint);
 
   const headers: Record<string, string> = {
     ...(options.headers as Record<string, string> | undefined),
