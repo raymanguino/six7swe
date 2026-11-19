@@ -1,80 +1,36 @@
 import Fastify, { FastifyInstance } from 'fastify';
-import { getPortfolioHandler } from '../../routes/handlers/portfolioHandlers';
 import { resumeHandler } from '../../routes/handlers/resumeHandlers';
 import {
-  getDefaultProfileClient,
-  type KnowledgeProfileClient,
-} from '../../services/knowledge/profileClient';
-import { getPortfolioData } from '../../services/portfolioService';
-import { findLocalResume, isResumeAvailable } from '../../services/resumeService';
-import type { PortfolioData } from '../../types/portfolio';
+  createResumeDownloader,
+  getResumeDownload,
+  type ResumeDownload,
+} from '../../services/resumeDownload';
+import type { KnowledgeProfileClient } from '../../services/knowledge/profileClient';
 
-jest.mock('../../services/portfolioService', () => ({ getPortfolioData: jest.fn() }));
-jest.mock('../../services/knowledge/profileClient', () => ({ getDefaultProfileClient: jest.fn() }));
-jest.mock('../../services/resumeService', () => ({
-  ...jest.requireActual('../../services/resumeService'),
-  findLocalResume: jest.fn(),
-  isResumeAvailable: jest.fn(),
+jest.mock('../../services/resumeDownload', () => ({
+  ...jest.requireActual('../../services/resumeDownload'),
+  getResumeDownload: jest.fn(),
 }));
 
-const mockedGetPortfolioData = jest.mocked(getPortfolioData);
-const mockedGetClient = jest.mocked(getDefaultProfileClient);
-const mockedFindLocalResume = jest.mocked(findLocalResume);
-const mockedIsResumeAvailable = jest.mocked(isResumeAvailable);
-
+const mockedGetResumeDownload = jest.mocked(getResumeDownload);
 const PDF = Buffer.from('%PDF-1.4 resume');
 
-const portfolio: PortfolioData = {
-  profile: {
-    id: 1,
-    name: 'Jordan Example',
-    title: 'Engineer',
-    email: 'jordan@example.com',
-    phone: null,
-    location: null,
-    linkedinUrl: null,
-    githubUrl: null,
-    summary: null,
-    skills: [],
-    experience: [],
-    projects: [],
-    fullResumeText: '',
-    resumeFilename: 'jordan.pdf',
-  },
-  contentSections: [],
-  knowledgeResume: { filename: 'jordan.pdf', isPdf: true },
-};
-
-function clientReturning(getResumePdf: KnowledgeProfileClient['getResumePdf']) {
-  const client: KnowledgeProfileClient = { getPublished: jest.fn(), getResumePdf };
-  mockedGetClient.mockReturnValue(client);
-}
-
-/**
- * With `PORTFOLIO_DATA_SOURCE=knowledge`, `/resume` serves the knowledge
- * service's primary resume (#86), which fixes #104: production no longer
- * needs a PDF on the backend's disk.
- */
-describe('resume from the knowledge service', () => {
+describe('GET /resume', () => {
   let app: FastifyInstance;
 
   beforeEach(async () => {
-    process.env.PORTFOLIO_DATA_SOURCE = 'knowledge';
-    mockedGetPortfolioData.mockResolvedValue(portfolio);
     app = Fastify({ logger: false });
-    app.get('/portfolio', getPortfolioHandler);
     app.get('/resume', resumeHandler);
     await app.ready();
   });
 
   afterEach(async () => {
-    delete process.env.PORTFOLIO_DATA_SOURCE;
     await app.close();
     jest.resetAllMocks();
   });
 
-  it('serves the primary resume PDF under its uploaded name', async () => {
-    clientReturning(() => Promise.resolve(PDF));
+  it('serves the primary resume PDF as an attachment', async () => {
+    mockedGetResumeDownload.mockResolvedValue({ found: true, filename: 'resume.pdf', body: PDF });
 
     const res = await app.inject({ method: 'GET', url: '/resume' });
 
@@ -82,47 +38,109 @@ describe('resume from the knowledge service', () => {
     expect(res.headers['content-type']).toBe('application/pdf');
     expect(res.headers['x-content-type-options']).toBe('nosniff');
     expect(res.headers['content-disposition']).toBe(
-      `attachment; filename="jordan.pdf"; filename*=UTF-8''jordan.pdf`,
+      `attachment; filename="resume.pdf"; filename*=UTF-8''resume.pdf`,
     );
     expect(res.rawPayload).toEqual(PDF);
-    expect(mockedFindLocalResume).not.toHaveBeenCalled();
   });
 
-  it('serves a resume whose name is not Latin-1', async () => {
-    clientReturning(() => Promise.resolve(PDF));
-    mockedGetPortfolioData.mockResolvedValue({
-      ...portfolio,
-      knowledgeResume: { filename: '履歴書 (2026).pdf', isPdf: true },
-    });
+  it('answers 404 when there is no primary resume', async () => {
+    mockedGetResumeDownload.mockResolvedValue({ found: false });
 
     const res = await app.inject({ method: 'GET', url: '/resume' });
 
-    expect(res.statusCode).toBe(200);
-    expect(res.headers['content-disposition']).toBe(
-      `attachment; filename="___ (2026).pdf"; filename*=UTF-8''${encodeURIComponent('履歴書')}%20%282026%29.pdf`,
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toEqual({ error: 'Resume not found' });
+  });
+
+  it('answers 500 when the knowledge service fails', async () => {
+    mockedGetResumeDownload.mockRejectedValue(new Error('boom'));
+
+    const res = await app.inject({ method: 'GET', url: '/resume' });
+
+    expect(res.statusCode).toBe(500);
+  });
+});
+
+describe('createResumeDownloader', () => {
+  const log = { warn: jest.fn() };
+  let version: number | Error;
+  let resume: Buffer | null;
+  let getResumePdf: jest.Mock<Promise<Buffer | null>, []>;
+  let getVersion: jest.Mock<Promise<number>, []>;
+
+  function build(configured = true) {
+    const client: KnowledgeProfileClient = { getPublished: jest.fn(), getResumePdf };
+    return createResumeDownloader({
+      getProfileClient: () => (configured ? client : null),
+      getVersionClient: () => (configured ? { getVersion } : null),
+    });
+  }
+
+  beforeEach(() => {
+    log.warn.mockReset();
+    version = 1;
+    resume = PDF;
+    getResumePdf = jest.fn(() => Promise.resolve(resume));
+    getVersion = jest.fn(() =>
+      version instanceof Error ? Promise.reject(version) : Promise.resolve(version),
     );
   });
 
-  it('falls back to a local file, then 404, when the service has none or is down', async () => {
-    clientReturning(() => Promise.reject(new Error('unreachable')));
-    mockedFindLocalResume.mockReturnValue(null);
-    expect((await app.inject({ method: 'GET', url: '/resume' })).statusCode).toBe(404);
+  it('downloads the PDF once per corpus version', async () => {
+    const downloader = build();
+    await downloader.get(log);
+    const second = await downloader.get(log);
 
-    clientReturning(() => Promise.resolve(null));
-    expect((await app.inject({ method: 'GET', url: '/resume' })).statusCode).toBe(404);
-    expect(mockedFindLocalResume).toHaveBeenCalledTimes(2);
+    expect(second).toEqual({ found: true, filename: 'resume.pdf', body: PDF });
+    expect(getResumePdf).toHaveBeenCalledTimes(1);
   });
 
-  it('advertises the download when the service has a PDF resume', async () => {
-    mockedIsResumeAvailable.mockReturnValue(false);
-    const res = await app.inject({ method: 'GET', url: '/portfolio' });
-    expect(res.json()).toMatchObject({ resumeAvailable: true, resumeFilename: 'jordan.pdf' });
+  it('serves the new primary resume as soon as the version changes', async () => {
+    const downloader = build();
+    await downloader.get(log);
 
-    mockedGetPortfolioData.mockResolvedValue({
-      ...portfolio,
-      knowledgeResume: { filename: 'resume.md', isPdf: false },
-    });
-    const none = await app.inject({ method: 'GET', url: '/portfolio' });
-    expect(none.json()).toMatchObject({ resumeAvailable: false });
+    version = 2;
+    resume = Buffer.from('%PDF-1.4 new primary');
+    const next = await downloader.get(log);
+
+    expect(getResumePdf).toHaveBeenCalledTimes(2);
+    expect(next).toEqual({ found: true, filename: 'resume.pdf', body: resume });
+  });
+
+  it('is not found without a primary resume, and notices a later upload', async () => {
+    resume = null;
+    const downloader = build();
+    expect(await downloader.get(log)).toEqual({ found: false });
+    expect(await downloader.get(log)).toEqual({ found: false });
+    expect(getResumePdf).toHaveBeenCalledTimes(1);
+
+    version = 2;
+    resume = PDF;
+    expect((await downloader.get(log)).found).toBe(true);
+  });
+
+  it('drops a cached resume when the primary is removed', async () => {
+    const downloader = build();
+    await downloader.get(log);
+    version = 2;
+    resume = null;
+    expect(await downloader.get(log)).toEqual({ found: false });
+  });
+
+  it('serves the cached PDF when /version is unreachable', async () => {
+    const downloader = build();
+    await downloader.get(log);
+
+    version = new Error('down');
+    const res: ResumeDownload = await downloader.get(log);
+
+    expect(res).toEqual({ found: true, filename: 'resume.pdf', body: PDF });
+    expect(getResumePdf).toHaveBeenCalledTimes(1);
+    expect(log.warn).toHaveBeenCalled();
+  });
+
+  it('is not found when the knowledge service is not configured', async () => {
+    expect(await build(false).get(log)).toEqual({ found: false });
+    expect(getResumePdf).not.toHaveBeenCalled();
   });
 });

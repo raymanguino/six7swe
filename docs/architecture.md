@@ -128,7 +128,7 @@ user, so a caller cannot reach another user's profile by guessing an id.
 
 | Route | Rendering |
 |---|---|
-| `/` | Portfolio landing page (highlights, projects, skills, job matcher, fit check, contact) |
+| `/` | Portfolio landing page, rendered from static content in `frontend/src/content/` (highlights, projects, skills, job matcher, fit check, contact) |
 | `/work`, `/contacts` | Redirects into anchors on `/` |
 | `/hunter/login` | Sign in |
 | `/hunter/profiles` | Search profile list and creation |
@@ -158,7 +158,7 @@ auth context has registered one.
 
 | Module | Routes |
 |---|---|
-| `routes/portfolio.ts` | `GET /portfolio`, `GET /resume`, `POST /chat`, `POST /fitcheck`, `POST /contact` |
+| `routes/portfolio.ts` | `GET /resume` (the knowledge service primary resume, cached by corpus version), `POST /chat`, `POST /fitcheck`, `POST /contact` |
 | `routes/jobHunt.ts` | `/job-hunt/jobs`, `/job-hunt/profiles` (CRUD), `/job-hunt/profiles/:id/jobs`, `/job-hunt/profiles/:id/jobs/refresh[/:refreshId]`, `/job-hunt/users` |
 | `routes/knowledge.ts` | `GET /knowledge/access`; owner only: `/knowledge/documents` (list, upload, get, text, primary, delete), `POST /knowledge/search` |
 
@@ -210,7 +210,7 @@ the never-wired `PORTFOLIO_DATA_SOURCE=mcp` path. Full details are in
   `KNOWLEDGE_URL` and `KNOWLEDGE_SERVICE_KEY`. If the service fails, chat
   answers from the profile summary alone, and for the next 15 s uncached
   questions skip the service instead of waiting on it again (cached questions
-  are still served). The portfolio page, the resume and fitcheck still read
+  are still served). The landing page is static (`frontend/src/content/`) and the resume comes from the service; fitcheck still reads
   the portfolio tables. `pnpm --filter @six7swe/backend chat:eval` compares the
   two contexts on the seed eval questions (`backend/src/domain/chatEval/`). Its
   judge's reference is the stuffed context plus the extracted text of every
