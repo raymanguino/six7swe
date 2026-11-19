@@ -49,11 +49,28 @@ const SK_KEY = /\bsk-[A-Za-z0-9_-]{16,255}/g;
  * A credential assigned a value: "password: hunter22", `"api_key": "abcd..."`,
  * `API_KEY=...`, `token: ...`. The separator stays on one line (so a
  * "Password:" heading does not flag the next line), quotes around the key
- * and value are allowed, and the value is 4 or more non-space characters.
+ * and value are allowed, and the value is 4 or more non-space characters
+ * (`looksLikeSecretValue` asks more of the bare keys `token` and `secret`).
  * Group 1 is everything before the value; group 2 is the value.
  */
 const CREDENTIAL_ASSIGNMENT =
   /(\b(?:password|passwd|pwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token|token)["']?[ \t]{0,10}[:=][ \t]{0,10}["']?)([^\s"']{4,200})/gi;
+
+/** The keys that are everyday words in technical notes ("token: 8192", "secret: none"). */
+const BARE_KEY = /^(?:token|secret)["']?[ \t]*[:=]/i;
+const MIN_BARE_SECRET_CHARS = 16;
+
+/**
+ * Whether a credential assignment's value is worth flagging. After a bare
+ * `token` or `secret` key the value must look like a secret: at least 16
+ * characters, with both letters and digits ("3f9a8c2e7b1d4a6f9e0c", not
+ * "8192", "128k" or "Bearer"). Any value counts after the other keys.
+ */
+function looksLikeSecretValue(match: RegExpMatchArray): boolean {
+  const [, key = '', value = ''] = match;
+  if (!BARE_KEY.test(key)) return true;
+  return value.length >= MIN_BARE_SECRET_CHARS && /\p{L}/u.test(value) && /\d/.test(value);
+}
 
 /**
  * Text that addresses the scan instead of a reader: the document is the
@@ -89,8 +106,11 @@ interface PatternCheck {
   pattern: RegExp;
   category: RiskCategory;
   reason: string;
-  /** Rejects a match the pattern alone cannot tell apart (a year range is not a phone number). */
-  accept?: (match: string) => boolean;
+  /**
+   * Rejects a match the pattern alone cannot tell apart (a year range is not
+   * a phone number). Given the trimmed match and the match with its groups.
+   */
+  accept?: (raw: string, match: RegExpMatchArray) => boolean;
   /** The stored excerpt, when it must not be the match itself (a credential). */
   excerpt?: (match: RegExpMatchArray) => string;
   /** Matched against the normalised view; such findings have no offset. */
@@ -114,7 +134,7 @@ const CHECKS: PatternCheck[] = [
     pattern: PHONE_LIKE,
     category: 'contact_details',
     reason: 'Looks like a phone number. Anyone who can search the knowledge base could read it.',
-    accept: isPhoneNumber,
+    accept: (raw) => isPhoneNumber(raw),
   },
   { pattern: STREET_ADDRESS, category: 'home_address', reason: ADDRESS_REASON },
   { pattern: PO_BOX, category: 'home_address', reason: ADDRESS_REASON },
@@ -134,6 +154,7 @@ const CHECKS: PatternCheck[] = [
     pattern: CREDENTIAL_ASSIGNMENT,
     category: 'credentials',
     reason: CREDENTIAL_REASON,
+    accept: (_raw, match) => looksLikeSecretValue(match),
     excerpt: maskValue,
   },
   {
@@ -186,7 +207,7 @@ export function detectPatternFindings(text: string): RiskFinding[] {
     const view = check.normalized ? (normalized ??= normalizedView(text)) : text;
     for (const match of view.matchAll(pattern)) {
       const raw = match[0].trim();
-      if (!raw || (accept && !accept(raw))) continue;
+      if (!raw || (accept && !accept(raw, match))) continue;
       const key = `${category}\u0000${raw.toLowerCase()}`;
       if (seen.has(key)) continue;
       seen.add(key);

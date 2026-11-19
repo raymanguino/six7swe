@@ -106,9 +106,9 @@ describe('detectPatternFindings', () => {
       ['"password": "hunter22"', 'password": "[redacted, 8 chars]'],
       ["api_key: 'abcd1234efgh'", "api_key: '[redacted, 12 chars]"],
       ['API_KEY=abcd1234efgh', 'API_KEY=[redacted, 12 chars]'],
-      ['secret=wxyz9876', 'secret=[redacted, 8 chars]'],
+      ['secret=Zx81kq0Lm2Nv7Pq4', 'secret=[redacted, 16 chars]'],
       ['access_token: abc.def.ghi', 'access_token: [redacted, 11 chars]'],
-      ['token: zzzz1111', 'token: [redacted, 8 chars]'],
+      ['token: 3f9a8c2e7b1d4a6f9e0c', 'token: [redacted, 20 chars]'],
     ];
     for (const [secret, excerpt] of cases) {
       const found = detectPatternFindings(`Notes\n${secret}\nmore`);
@@ -116,6 +116,19 @@ describe('detectPatternFindings', () => {
         secret,
         found: [['credentials', excerpt]],
       });
+    }
+  });
+
+  it('asks a bare token or secret for a value that looks like a secret', () => {
+    for (const text of [
+      'token: 8192',
+      'context window token: 128k',
+      'Token = Bearer',
+      'secret: none',
+      'token: abcdefghijklmnopqrst', // long, but no digits
+      'secret: 12345678901234567890', // long, but no letters
+    ]) {
+      expect({ text, found: detectPatternFindings(text) }).toEqual({ text, found: [] });
     }
   });
 
