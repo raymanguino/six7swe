@@ -104,7 +104,16 @@ afterAll(async () => {
 
 describeRepositoryContract(
   'drizzle (Postgres + pgvector)',
-  () => ({ repo: db().repo, newOwner: freshOwner }),
+  () => ({
+    repo: db().repo,
+    newOwner: freshOwner,
+    async forgetScan(id) {
+      await db()
+        .handle.db.update(documents)
+        .set({ scannedAt: null, riskFindings: null })
+        .where(eq(documents.id, id));
+    },
+  }),
   {
     skip: !url,
   },
@@ -443,8 +452,8 @@ describe.skipIf(!url)('Drizzle repository (Postgres + pgvector)', () => {
     ]);
     const vec = (t: string) => hashEmbed(t, EMBEDDING_DIMENSIONS);
     await Promise.all([
-      r.completeIngestion(a.document.id, 'a', [chunkOf('alpha', 0, vec('alpha'))]),
-      r.completeIngestion(b.document.id, 'b', [chunkOf('bravo', 0, vec('bravo'))]),
+      r.completeIngestion(a.document.id, 'a', [chunkOf('alpha', 0, vec('alpha'))], []),
+      r.completeIngestion(b.document.id, 'b', [chunkOf('bravo', 0, vec('bravo'))], []),
     ]);
     expect(await r.getVersion(o)).toBe(2);
   });
@@ -506,6 +515,7 @@ describe.skipIf(!url)('Drizzle repository (Postgres + pgvector)', () => {
         Array.from({ length: 6 }, (_, i) =>
           chunkOf(`hidden ${i}`, i, hashEmbed(`needle haystack hidden${i}`, EMBEDDING_DIMENSIONS)),
         ),
+        [],
       );
       await r.markProcessing(hidden.id);
 
@@ -521,6 +531,7 @@ describe.skipIf(!url)('Drizzle repository (Postgres + pgvector)', () => {
             hashEmbed(`needle haystack visible${i} extra${i}`, EMBEDDING_DIMENSIONS),
           ),
         ),
+        [],
       );
 
       const found = await indexedRepo.search(o, query, 3);

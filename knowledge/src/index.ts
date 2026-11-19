@@ -9,6 +9,7 @@ import { createDb } from './db/index.js';
 import { EMBEDDING_DIMENSIONS } from './db/schema.js';
 import { createEmbedder } from './services/embedding/index.js';
 import { createProfileDrafter } from './services/profile/drafter.js';
+import { createRiskScanner } from './services/risk/scanner.js';
 import { createFileStore } from './services/storage/index.js';
 import { createShutdown } from './shutdown.js';
 
@@ -21,6 +22,7 @@ async function main(): Promise<void> {
   const drafter = createProfileDrafter(env.profileDrafter);
   const evalRepo = createDrizzleEvalRepository(db);
   const answerer = createEvalAnswerer(env.evalAnswerer);
+  const riskScanner = createRiskScanner(env.riskScanner);
 
   // Runs cut off by the last shutdown never finish; say so instead of "running" forever.
   const abandoned = await evalRepo.abandonRunning(RUN_INTERRUPTED);
@@ -45,6 +47,7 @@ async function main(): Promise<void> {
     mcpKey: env.KNOWLEDGE_MCP_KEY,
     ownerId: env.OWNER_AUTH_ID,
     maxUploadBytes: env.MAX_UPLOAD_BYTES,
+    riskScanner,
   });
   const queue = app.ingestionQueue;
 
@@ -54,6 +57,7 @@ async function main(): Promise<void> {
       files: files.name,
       profileDrafter: drafter?.name ?? 'off',
       evalAnswerer: answerer?.name ?? 'off',
+      riskScanner: riskScanner?.name ?? 'patterns only',
     },
     'Knowledge service configured',
   );
@@ -67,6 +71,11 @@ async function main(): Promise<void> {
     }
   }
 
+  // Ready documents from before the risk scan (#212) are scanned once, in the
+  // background; they keep serving until the owner reviews any findings.
+  const backfill = await app.riskBackfill.start();
+  if (backfill > 0) app.log.info({ count: backfill }, 'Queued the risk scan backfill');
+
   const shutdown = createShutdown({
     closeApp: () => app.close(),
     // Drafting is not durable: a draft cut off here is not written, and the
@@ -79,6 +88,8 @@ async function main(): Promise<void> {
         app.profileDrafting.stop(),
         app.evalSet.stop(),
         app.evalRunner.stop(),
+        // A backfill scan cut off here leaves the document unscanned for the next boot.
+        app.riskBackfill.stop(),
       ]),
     closeDb: close,
     log: app.log,

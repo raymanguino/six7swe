@@ -14,10 +14,13 @@ POST /documents ──► file store (Supabase Storage `portfolio-files`)
       │
       ▼  documents row: pending
  serial queue ──► extract text (unpdf for PDF; md/txt decoded)
+      │          ──► risk scan (patterns + MiniMax; see Risk scan below)
       │          ──► chunk (markdown by headings; otherwise ~700-token windows, 15% overlap)
       │          ──► embed (OpenAI text-embedding-3-small, 1536d)
       ▼
- one transaction: replace chunks, mark ready, bump corpus_version
+ one transaction: replace chunks, store findings,
+                  no findings: mark ready, bump corpus_version
+                  any finding: mark needs_review (not served until the owner approves)
 
 POST /retrieve {query, k} ──► embed query ──► pgvector cosine search (HNSW)
 ```
@@ -34,32 +37,46 @@ POST /retrieve {query, k} ──► embed query ──► pgvector cosine search
 
 Every route declares who may call it: `public`, `service`, `owner` or `mcp` (`src/plugins/serviceAuth.ts`). A route that declares nothing is `service`, so a forgotten declaration fails closed. `service` and `owner` take a key in the `x-knowledge-key` header (never in a query string), but each accepts only its own: `service` routes take `KNOWLEDGE_SERVICE_KEY`, and `owner` routes take `KNOWLEDGE_OWNER_KEY`. The service key gets 401 on owner routes and the owner key gets 401 on service routes. `mcp` takes its own key as `Authorization: Bearer` instead (see MCP adapter below). Unknown paths answer 401 without the service key and 404 with it.
 
-| Method | Path                     | Purpose                                                                                                                           |
-| ------ | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/health`                | Liveness (public)                                                                                                                 |
-| POST   | `/retrieve`              | `{ query, k? }` returns `{ version, chunks[] }`; `k` defaults to 6, max 20                                                        |
-| GET    | `/version`               | `{ version }`                                                                                                                     |
-| POST   | `/documents`             | Multipart upload with a `file` part (`.pdf`, `.md`, `.txt`). Add `?kind=resume` for a resume. Returns 202, or 200 if a duplicate. |
-| GET    | `/documents`             | List documents with status and chunk count                                                                                        |
-| GET    | `/documents/:id`         | One document                                                                                                                      |
-| GET    | `/documents/:id/text`    | `{ documentId, text }`: the extracted text, for previews; `text` is null until an ingest has extracted it                         |
-| PUT    | `/documents/:id/primary` | Makes a ready resume the primary one; 409 for anything else                                                                       |
-| DELETE | `/documents/:id`         | Deletes the document, its chunks and its file (204)                                                                               |
-| POST   | `/search`                | The same as `/retrieve`, as an owner route, for the Knowledge page's "ask as a visitor" playground                                |
-| GET    | `/profile/published`     | `{ profile, resume }`: the published profile and the primary resume (filename, `isPdf`, extracted text); either may be null       |
-| GET    | `/resume.pdf`            | The primary resume's file when it is a PDF; 404 otherwise                                                                         |
-| GET    | `/profile`               | `{ draft, published, drafting }`: both stages and the last drafting attempt, for the review screen                                |
-| PUT    | `/profile/draft`         | `{ data, expectedVersion? }`: saves the owner's edits as the draft; 409 with the current draft if it is no longer the one opened  |
-| POST   | `/profile/draft`         | Drafts again from the primary resume, in the background (202); 409 when drafting is off                                           |
-| DELETE | `/profile/draft`         | Discards the draft (204)                                                                                                          |
-| POST   | `/profile/publish`       | `{ draftVersion }`: publishes the draft the owner reviewed; 409 if it changed since, 404 if there is none                         |
-| GET    | `/eval`                  | The chat eval set: settings, questions, the latest run with its diff, and whether a run is in progress                            |
-| POST   | `/eval/runs`             | Runs the active eval questions now, in the background (202)                                                                       |
-| POST   | `/eval/questions/:id`    | `{ action }`: `pin`, `unpin`, `retire`, `promote`, `off-topic` or `on-topic`; 409 when it cannot apply                            |
+| Method | Path                      | Purpose                                                                                                                                  |
+| ------ | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/health`                 | Liveness (public)                                                                                                                        |
+| POST   | `/retrieve`               | `{ query, k? }` returns `{ version, chunks[] }`; `k` defaults to 6, max 20                                                               |
+| GET    | `/version`                | `{ version }`                                                                                                                            |
+| POST   | `/documents`              | Multipart upload with a `file` part (`.pdf`, `.md`, `.txt`). Add `?kind=resume` for a resume. Returns 202, or 200 if a duplicate.        |
+| GET    | `/documents`              | List documents with status and chunk count                                                                                               |
+| GET    | `/documents/:id`          | One document                                                                                                                             |
+| GET    | `/documents/:id/text`     | `{ documentId, text }`: the extracted text, for previews; `text` is null until an ingest has extracted it                                |
+| GET    | `/documents/:id/findings` | `{ document, findings[] }`: the last risk scan's findings (category, excerpt, reason, location)                                          |
+| POST   | `/documents/:id/approve`  | Approves the findings as they are: `needs_review` becomes `ready`; a backfill-flagged ready document records the approval. 409 otherwise |
+| PUT    | `/documents/:id/primary`  | Makes a ready resume the primary one; 409 for anything else                                                                              |
+| DELETE | `/documents/:id`          | Deletes the document, its chunks and its file (204)                                                                                      |
+| POST   | `/search`                 | The same as `/retrieve`, as an owner route, for the Knowledge page's "ask as a visitor" playground                                       |
+| GET    | `/profile/published`      | `{ profile, resume }`: the published profile and the primary resume (filename, `isPdf`, extracted text); either may be null              |
+| GET    | `/resume.pdf`             | The primary resume's file when it is a PDF; 404 otherwise                                                                                |
+| GET    | `/profile`                | `{ draft, published, drafting }`: both stages and the last drafting attempt, for the review screen                                       |
+| PUT    | `/profile/draft`          | `{ data, expectedVersion? }`: saves the owner's edits as the draft; 409 with the current draft if it is no longer the one opened         |
+| POST   | `/profile/draft`          | Drafts again from the primary resume, in the background (202); 409 when drafting is off                                                  |
+| DELETE | `/profile/draft`          | Discards the draft (204)                                                                                                                 |
+| POST   | `/profile/publish`        | `{ draftVersion }`: publishes the draft the owner reviewed; 409 if it changed since, 404 if there is none                                |
+| GET    | `/eval`                   | The chat eval set: settings, questions, the latest run with its diff, and whether a run is in progress                                   |
+| POST   | `/eval/runs`              | Runs the active eval questions now, in the background (202)                                                                              |
+| POST   | `/eval/questions/:id`     | `{ action }`: `pin`, `unpin`, `retire`, `promote`, `off-topic` or `on-topic`; 409 when it cannot apply                                   |
 
 `/retrieve`, `/version`, `/profile/published` and `/resume.pdf` are `service` routes; `/documents/*`, `/search`, `/profile`, `/profile/draft`, `/profile/publish` and `/eval/*` are `owner` routes; `/mcp` is an `mcp` route (`KNOWLEDGE_MCP_KEY`).
 
 `/retrieve` also takes `record: true` with a `sessionId` (see the eval set below); `/search` never records.
+
+## Risk scan (#212)
+
+Everything uploaded is treated as public: the chat answers from it and quotes it. So every ingest scans the extracted text before the document can be searched (`src/services/risk/`).
+
+- **Deterministic checks** always run: email addresses and phone numbers (the eval set's masking patterns, `services/evalSet/redact.ts`), street addresses, PO boxes, Canadian postal codes and US state + ZIP codes.
+- **The model pass** (`RISK_SCANNER`) asks MiniMax for personal contact details, a home address, compensation or salary expectations, references' personal details, employer-confidential or NDA material, health, family or immigration details, credentials or keys, and negative remarks about named people. Long text is read in 20,000-character windows (at most 8); the whole pass gives up after 5 minutes.
+- **Findings** (category, source, excerpt, reason, and location: a character offset into the extracted text; `page` is null because PDF pages are merged on extraction) are stored with the document (`documents.risk_findings`). None: the document becomes `ready`. Any: it becomes `needs_review`, which retrieval never serves, and a resume in review is never primary (so `/resume.pdf` cannot serve it).
+- **A scan that cannot finish** (provider down, timeout, an answer cut off or not in the expected shape, text too long to read in full) adds a `scan_failed` finding, so the document is held for review. It never becomes `ready` unscanned.
+- **Review.** The Knowledge page lists flagged documents with their findings. **Approve as is** (`POST /documents/:id/approve`) makes a held document `ready` and records `approved_at`; **Replace file** uses the page's replace flow, which uploads the new file (scanned again) and deletes the old one once the new one is ready or held. There is no in-app editing, so the stored file and its searchable text never diverge. Re-uploading the same bytes of a held document is a no-op, like a ready one.
+- **Backfill.** On boot, ready documents never scanned (everything ingested before the scan existed) are scanned once on their own serial queue. They stay `ready` and searchable whatever is found, so the live chat loses nothing; their findings show on the Knowledge page until the owner approves them (which records `approved_at`) or replaces the file. A scan cut off by a restart is redone on the next boot.
+- **`RISK_SCANNER`**: `minimax` (the drafter's MiniMax keys; `RISK_SCAN_MODEL` overrides the model), `stub` (offline, flags lines mentioning salary, credentials or NDAs; refused in production) or `none` (patterns only; refused in production). Unset, it is `minimax` when `MINIMAX_API_KEY` is set and `none` otherwise. Production sets `minimax` in `railway.ts`. Only finding counts are logged, never excerpts.
 
 ## MCP adapter (#89)
 
@@ -111,7 +128,7 @@ The service does not verify the JWT again. The owner key is the only thing that 
 
 **Choosing the primary resume.** By default the newest ready resume is primary. `PUT /documents/:id/primary` picks another ready resume. That choice holds until another resume finishes ingesting (the newest-ready rule applies again) or the primary is deleted.
 
-**Replacing a document** is done by the Knowledge page. It uploads the new file, waits until the new document is `ready`, and only then deletes the old one, so retrieval never loses the content in between. If the new document fails, or is still processing after 5 minutes, the old one is kept. If the new bytes are identical, the upload returns the existing document and nothing is deleted.
+**Replacing a document** is done by the Knowledge page. It uploads the new file, waits until the new document is `ready` (or held in `needs_review` by the risk scan: the owner replaced the old file to change what it says, so the new one takes its place for review), and only then deletes the old one, so retrieval never loses the content of a clean replacement in between. If the new document fails, or is still processing after 5 minutes, the old one is kept. If the new bytes are identical, the upload returns the existing document and nothing is deleted.
 
 The wire contract lives in the shared package [`packages/knowledge-types`](../packages/knowledge-types) (`@six7swe/knowledge-types`) as zod schemas with inferred types (request bodies, the document and chunk DTOs, the retrieve, version, upload and document-text responses, and the error body). The backend imports the same package, so both sides share one definition. Inside the service, `src/contract.ts` re-exports it. The package depends on nothing but zod and is compiled to CommonJS in its `dist/`. `pnpm install` does not build it (a `prepare` hook would run before Railpack and the backend Dockerfile copy the source); instead the service's `build`, `typecheck` and `test` scripts build it first. Anything else that reads it, such as an editor, needs `pnpm build:types` after a change. The database enums are derived from its `DOCUMENT_KINDS` and `DOCUMENT_STATUSES`.
 
@@ -223,7 +240,7 @@ The service validates its whole environment at boot and refuses to start if anyt
 | `OPENAI_API_KEY`            | An OpenAI API key                                                       | platform.openai.com → **API keys**. Required because `EMBEDDER` defaults to `openai`. Tip: create a dedicated project for this service with a monthly budget cap, and a key scoped to that project, so a runaway ingest can't run up the bill.                                                      |
 | `SUPABASE_URL`              | `https://<project-ref>.supabase.co`                                     | Supabase dashboard → **Project Settings → Data API**.                                                                                                                                                                                                                                               |
 | `SUPABASE_SECRET_KEY`       | A Supabase secret key (`sb_secret_…`, or the legacy `service_role` key) | Supabase dashboard → **Project Settings → API Keys**. Server-side only: it bypasses RLS. Required because `FILE_STORE` defaults to `supabase`.                                                                                                                                                      |
-| `MINIMAX_API_KEY`           | A MiniMax API key (the backend's value)                                 | Required because `railway.ts` sets `PROFILE_DRAFTER=minimax`; the service refuses to boot without it. Copy it from the backend service's variables.                                                                                                                                                 |
+| `MINIMAX_API_KEY`           | A MiniMax API key (the backend's value)                                 | Required because `railway.ts` sets `PROFILE_DRAFTER=minimax` and `RISK_SCANNER=minimax`; the service refuses to boot without it. Copy it from the backend service's variables.                                                                                                                      |
 | `MINIMAX_API_KEY_SECONDARY` | Optional: a second MiniMax key                                          | Tried once when MiniMax answers 429 to the first. Copy it from the backend if set there; leave it empty otherwise.                                                                                                                                                                                  |
 
 **Leave these unset.** They are not in `railway.ts`, so an apply would delete them anyway. To change one, add it to `railway.ts` first.

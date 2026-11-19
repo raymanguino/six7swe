@@ -569,7 +569,7 @@ describe('drafting races', () => {
       storagePath: 'owner/b.md',
       kind: 'resume',
     });
-    await repo.completeIngestion(document.id, RESUME_MD, []);
+    await repo.completeIngestion(document.id, RESUME_MD, [], []);
     const drafting = createProfileDrafting({ repo, profiles, drafter, log: silentLogger });
     return { repo, profiles, drafting, document };
   }
@@ -624,7 +624,7 @@ describe('drafting races', () => {
       storagePath: 'owner/c.md',
       kind: 'resume',
     });
-    await repo.completeIngestion(second.id, RESUME_MD, []);
+    await repo.completeIngestion(second.id, RESUME_MD, [], []);
     await repo.setPrimaryResume('owner', first.id);
 
     await drafting.resumeIngested(second);

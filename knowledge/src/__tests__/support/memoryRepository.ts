@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { RiskFindingSchema, type RiskFinding } from '../../contract.js';
 import {
   ConflictError,
   type DocumentRecord,
@@ -34,9 +35,11 @@ export function createMemoryRepository(): KnowledgeRepository & {
   documents: Map<string, DocumentRecord>;
   chunks: StoredChunk[];
   extractedText: Map<string, string>;
+  findings: Map<string, RiskFinding[]>;
 } {
   const documents = new Map<string, DocumentRecord>();
   const extractedText = new Map<string, string>();
+  const findings = new Map<string, RiskFinding[]>();
   let chunks: StoredChunk[] = [];
   const versions = new Map<string, number>();
 
@@ -79,6 +82,7 @@ export function createMemoryRepository(): KnowledgeRepository & {
       return chunks;
     },
     extractedText,
+    findings,
 
     async findBySha256(ownerId, sha256) {
       return (
@@ -100,6 +104,9 @@ export function createMemoryRepository(): KnowledgeRepository & {
         status: 'pending',
         error: null,
         chunkCount: 0,
+        findingCount: 0,
+        scannedAt: null,
+        approvedAt: null,
         createdAt: now,
         updatedAt: now,
       };
@@ -152,15 +159,59 @@ export function createMemoryRepository(): KnowledgeRepository & {
       leaveReady(id, { status: 'processing', error: null });
     },
 
-    async completeIngestion(id, text, newChunks) {
+    async completeIngestion(id, text, newChunks, scanFindings) {
       const doc = documents.get(id);
       if (!doc) throw new Error(`document ${id} no longer exists`);
+      const stored = RiskFindingSchema.array().parse(scanFindings);
       chunks = chunks.filter((c) => c.documentId !== id);
       chunks.push(...newChunks.map((c) => ({ ...c, id: randomUUID(), documentId: id })));
       extractedText.set(id, text);
-      update(id, { status: 'ready', error: null, chunkCount: newChunks.length });
+      findings.set(id, stored);
+      const flagged = stored.length > 0;
+      update(id, {
+        status: flagged ? 'needs_review' : 'ready',
+        error: null,
+        chunkCount: newChunks.length,
+        findingCount: stored.length,
+        scannedAt: new Date(),
+        approvedAt: null,
+      });
       if (doc.kind === 'resume') refreshPrimaryResume(doc.ownerId);
-      return bump(doc.ownerId);
+      return flagged ? (versions.get(doc.ownerId) ?? 0) : bump(doc.ownerId);
+    },
+
+    async getRiskFindings(ownerId, id) {
+      const doc = documents.get(id);
+      if (!doc || doc.ownerId !== ownerId) return null;
+      return { document: doc, findings: findings.get(id) ?? [] };
+    },
+
+    async approveDocument(ownerId, id) {
+      const doc = documents.get(id);
+      if (!doc || doc.ownerId !== ownerId) return null;
+      if (doc.status === 'needs_review') {
+        update(id, { status: 'ready', approvedAt: new Date() });
+        if (doc.kind === 'resume') refreshPrimaryResume(ownerId);
+        bump(ownerId);
+      } else if (doc.status === 'ready' && doc.findingCount > 0 && doc.approvedAt === null) {
+        update(id, { approvedAt: new Date() });
+      } else {
+        throw new ConflictError('Only a document with findings to review can be approved');
+      }
+      return documents.get(id) ?? null;
+    },
+
+    async listUnscannedReady() {
+      return [...documents.values()].filter((d) => d.status === 'ready' && d.scannedAt === null);
+    },
+
+    async recordBackfillScan(id, scanFindings) {
+      const doc = documents.get(id);
+      if (!doc || doc.status !== 'ready' || doc.scannedAt !== null) return false;
+      const stored = RiskFindingSchema.array().parse(scanFindings);
+      findings.set(id, stored);
+      update(id, { findingCount: stored.length, scannedAt: new Date() });
+      return true;
     },
 
     async failIngestion(id, error) {

@@ -24,6 +24,7 @@ import {
   EVAL_RUN_TRIGGERS,
   PROFILE_STAGES,
   type ProfileData,
+  type RiskFinding,
 } from '../contract.js';
 
 /**
@@ -67,6 +68,16 @@ export const documents = knowledge.table(
     /** The text extracted from the file, kept for previews and re-chunking. */
     extractedText: text('extracted_text'),
     chunkCount: integer('chunk_count').notNull().default(0),
+    /**
+     * The risk scan's findings for the current extracted text (#212),
+     * validated against `RiskFindingSchema` on the way in. Null until the
+     * text has been scanned; an empty list when the scan found nothing.
+     */
+    riskFindings: jsonb('risk_findings').$type<RiskFinding[]>(),
+    /** When the current extracted text was scanned; null until then. */
+    scannedAt: timestamp('scanned_at', { withTimezone: true }),
+    /** When the owner approved the current findings as they are; null otherwise. */
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()

@@ -48,6 +48,9 @@ export function toDocumentDto(doc: DocumentRecord): DocumentDto {
     status: doc.status,
     error: doc.error,
     chunkCount: doc.chunkCount,
+    findingCount: doc.findingCount,
+    scannedAt: doc.scannedAt?.toISOString() ?? null,
+    approvedAt: doc.approvedAt?.toISOString() ?? null,
     createdAt: doc.createdAt.toISOString(),
     updatedAt: doc.updatedAt.toISOString(),
   };

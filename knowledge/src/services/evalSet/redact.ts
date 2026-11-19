@@ -12,7 +12,8 @@ export const LINK_MASK = '[link]';
 export const HANDLE_MASK = '[handle]';
 export const PHONE_MASK = '[phone]';
 
-const EMAIL = /[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+/gu;
+/** Also the risk scan's email check (#212). */
+export const EMAIL = /[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+/gu;
 /**
  * A URL with a scheme or `www.`, or a bare domain on a common TLD followed by
  * a path ("linkedin.com/in/jane"). Tech names like "Node.js/Express" are
@@ -22,15 +23,22 @@ const LINK =
   /(?:\b(?:https?:\/\/|www\.)[^\s]+|\b[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)*\.(?:com|org|net|io|dev|co|me|ai|app|ca|uk|us|de|fr|in|xyz|info|page|site)\/[^\s]*)/giu;
 /** "@jane_doe", but not the "@" inside a word. */
 const HANDLE = /(^|[^\p{L}\p{N}_])@[\p{L}\p{N}_.]{2,}/gu;
-/** A run of digits with phone-like separators; the replacer decides by digit count. */
-const PHONE_LIKE = /\+?\(?\d[\d\s().-]{5,}\d/g;
+/**
+ * A run of digits with phone-like separators; `isPhoneNumber` decides by
+ * digit count. Also the risk scan's phone check (#212).
+ */
+export const PHONE_LIKE = /\+?\(?\d[\d\s().-]{5,}\d/g;
 /** "2019 - 2024" is a year range, not a phone number. */
 const YEAR_RANGE = /^\(?(?:19|20)\d{2}\)?\s*[-–.]\s*\(?(?:19|20)\d{2}\)?$/;
 
-function maskPhone(match: string): string {
+/** Whether a `PHONE_LIKE` match is a phone number: 7 to 15 digits, and not a year range. */
+export function isPhoneNumber(match: string): boolean {
   const digits = match.replace(/\D/g, '').length;
-  if (digits < 7 || digits > 15 || YEAR_RANGE.test(match.trim())) return match;
-  return PHONE_MASK;
+  return digits >= 7 && digits <= 15 && !YEAR_RANGE.test(match.trim());
+}
+
+function maskPhone(match: string): string {
+  return isPhoneNumber(match) ? PHONE_MASK : match;
 }
 
 /** The question as stored: whitespace collapsed, contact details masked, then truncated. */

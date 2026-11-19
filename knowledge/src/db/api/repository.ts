@@ -1,4 +1,4 @@
-import type { DocumentKind, DocumentStatus } from '../../contract.js';
+import type { DocumentKind, DocumentStatus, RiskFinding } from '../../contract.js';
 
 /**
  * Persistence boundary for the knowledge service.
@@ -22,6 +22,12 @@ export interface DocumentRecord {
   status: DocumentStatus;
   error: string | null;
   chunkCount: number;
+  /** How many findings the last risk scan stored (#212); 0 when none or not scanned. */
+  findingCount: number;
+  /** When the current extracted text was risk-scanned; null until then. */
+  scannedAt: Date | null;
+  /** When the owner approved the current findings as they are; null otherwise. */
+  approvedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -128,11 +134,52 @@ export interface KnowledgeRepository {
   markProcessing(id: string): Promise<void>;
 
   /**
-   * Replaces the document's chunks, marks it ready and bumps the owner's
-   * corpus version, atomically. For a resume, also re-applies the
-   * primary-resume rule. Returns the new version.
+   * Replaces the document's chunks and stores the risk scan's findings
+   * (#212), atomically. With no findings the document becomes `ready` and the
+   * owner's corpus version is bumped; with any, it becomes `needs_review`,
+   * which retrieval does not serve, and the version is left alone. Either
+   * way the approval of an earlier scan is cleared. For a resume, also
+   * re-applies the primary-resume rule (so a flagged resume is never
+   * primary). Returns the corpus version after the change.
    */
-  completeIngestion(id: string, extractedText: string, chunks: NewChunk[]): Promise<number>;
+  completeIngestion(
+    id: string,
+    extractedText: string,
+    chunks: NewChunk[],
+    findings: RiskFinding[],
+  ): Promise<number>;
+
+  /**
+   * The findings of the document's last risk scan, with the document. Null
+   * when it does not exist or belongs to someone else; `findings` is empty
+   * when the text has not been scanned or nothing was found.
+   */
+  getRiskFindings(
+    ownerId: string,
+    id: string,
+  ): Promise<{ document: DocumentRecord; findings: RiskFinding[] } | null>;
+
+  /**
+   * The owner approves a document's findings as they are, recorded in
+   * `approvedAt`. A `needs_review` document becomes `ready` (bumping the
+   * corpus version, and re-applying the primary-resume rule for a resume); a
+   * `ready` document with unapproved findings (flagged by the backfill) only
+   * records the approval. Returns the updated document, or null when it does
+   * not exist or belongs to someone else. Throws a ConflictError for
+   * anything else (nothing to approve, or not ingested).
+   */
+  approveDocument(ownerId: string, id: string): Promise<DocumentRecord | null>;
+
+  /** Ready documents, of every owner, whose text has never been risk-scanned (the backfill). */
+  listUnscannedReady(): Promise<DocumentRecord[]>;
+
+  /**
+   * Stores a backfill scan's findings on a ready document, leaving its status
+   * alone: it keeps serving until the owner reviews them. Writes only while
+   * the document is still ready and unscanned, so a re-ingest that finished
+   * meanwhile is not overwritten. Returns false when nothing was written.
+   */
+  recordBackfillScan(id: string, findings: RiskFinding[]): Promise<boolean>;
 
   /** Marks the document failed. Its previous chunks are kept but no longer served. */
   failIngestion(id: string, error: string): Promise<void>;

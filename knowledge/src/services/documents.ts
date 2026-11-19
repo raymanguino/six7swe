@@ -106,7 +106,9 @@ async function resumeExisting(
   bytes: Uint8Array,
 ): Promise<UploadResult> {
   const unchanged = { document: existing, deduplicated: true };
-  if (existing.status === 'ready' || deps.queue.has(existing.id)) return unchanged;
+  // A flagged document is settled too: the same bytes would be flagged again.
+  const settled = existing.status === 'ready' || existing.status === 'needs_review';
+  if (settled || deps.queue.has(existing.id)) return unchanged;
 
   await deps.files.put(existing.storagePath, bytes, existing.mimeType);
   if (deps.queue.has(existing.id)) return unchanged;
@@ -159,6 +161,53 @@ export async function setPrimaryResume(
   id: string,
 ): Promise<DocumentRecord | null> {
   return deps.repo.setPrimaryResume(ownerId, id);
+}
+
+/**
+ * The findings of a document's last risk scan (#212). Null when it does not
+ * exist or belongs to someone else.
+ */
+export async function getDocumentFindings(
+  deps: Pick<KnowledgeDeps, 'repo'>,
+  ownerId: string,
+  id: string,
+) {
+  return deps.repo.getRiskFindings(ownerId, id);
+}
+
+export interface ApproveDeps extends Pick<KnowledgeDeps, 'repo'> {
+  log: FastifyBaseLogger;
+  /** Called when the approval made the document searchable. Must not throw. */
+  onCorpusChanged?: (ownerId: string) => void;
+  /** Called when an approved resume became searchable (profile drafting hooks in here). */
+  onResumeReady?: (doc: DocumentRecord) => void | Promise<void>;
+}
+
+/**
+ * The owner approves a document's findings as they are (#212). A flagged
+ * document becomes ready and searchable; a ready one flagged by the backfill
+ * keeps serving and records the approval. Null when it does not exist;
+ * throws a 409 ConflictError when there is nothing to approve.
+ */
+export async function approveDocument(
+  deps: ApproveDeps,
+  ownerId: string,
+  id: string,
+): Promise<DocumentRecord | null> {
+  const before = await deps.repo.getDocument(ownerId, id);
+  const approved = await deps.repo.approveDocument(ownerId, id);
+  if (!approved) return null;
+  if (before?.status === 'needs_review' && approved.status === 'ready') {
+    deps.onCorpusChanged?.(ownerId);
+    if (approved.kind === 'resume' && deps.onResumeReady) {
+      try {
+        await deps.onResumeReady(approved);
+      } catch (error) {
+        deps.log.warn({ documentId: id, err: error }, 'Post-approval resume hook failed');
+      }
+    }
+  }
+  return approved;
 }
 
 /** Deletes the document, its chunks and its file. Returns false when it did not exist. */
