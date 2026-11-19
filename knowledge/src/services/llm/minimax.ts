@@ -60,6 +60,15 @@ export interface MiniMaxOptions {
   timeoutMs?: number;
   /** Stops the call early as well (the caller's own timeout, or its work being abandoned). */
   signal?: AbortSignal;
+  /** Reasoning and answer together; defaults to `MINIMAX_MAX_COMPLETION_TOKENS`. */
+  maxCompletionTokens?: number;
+}
+
+export interface MiniMaxCompletion {
+  /** The answer's text, thinking removed; never empty. */
+  content: string;
+  /** `length` when the token limit cut the answer off. */
+  finishReason: string | null;
 }
 
 export interface ChatMessage {
@@ -72,13 +81,25 @@ export async function completeWithMiniMax(
   options: MiniMaxOptions,
   messages: ChatMessage[],
   /** The message when the token limit cut the answer off. */
-  lengthMessage = `${MINIMAX} hit its token limit before answering.`,
+  lengthMessage?: string,
 ): Promise<string> {
+  return (await completeWithMiniMaxDetailed(options, messages, lengthMessage)).content;
+}
+
+/**
+ * As `completeWithMiniMax`, with the finish reason: a non-empty answer can
+ * still have been cut off by the token limit.
+ */
+export async function completeWithMiniMaxDetailed(
+  options: MiniMaxOptions,
+  messages: ChatMessage[],
+  lengthMessage = `${MINIMAX} hit its token limit before answering.`,
+): Promise<MiniMaxCompletion> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const body = JSON.stringify({
     model: options.model,
     messages,
-    max_completion_tokens: MINIMAX_MAX_COMPLETION_TOKENS,
+    max_completion_tokens: options.maxCompletionTokens ?? MINIMAX_MAX_COMPLETION_TOKENS,
     reasoning_effort: 'medium',
   });
   const deadline = AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
@@ -141,5 +162,5 @@ export async function completeWithMiniMax(
     if (choice?.finish_reason === 'length') throw new ModelError(lengthMessage);
     throw new ModelError(`${MINIMAX} sent an empty answer.`);
   }
-  return content;
+  return { content, finishReason: choice?.finish_reason ?? null };
 }

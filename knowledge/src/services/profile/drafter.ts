@@ -2,11 +2,11 @@ import { z } from 'zod';
 import type { ProfileDrafterConfig } from '../../config/env.js';
 import { PROFILE_LIMITS, type ProfileData } from '../../contract.js';
 import {
-  completeWithMiniMax,
+  completeWithMiniMaxDetailed,
   MINIMAX,
-  MINIMAX_MAX_COMPLETION_TOKENS,
   ModelError,
   stripThinking,
+  type MiniMaxCompletion,
   type MiniMaxOptions,
 } from '../llm/minimax.js';
 import { normalizeProfileDraft } from './normalize.js';
@@ -49,6 +49,14 @@ export const MAX_RESUME_CHARS = 40_000;
  * keeps polling, so a long wait costs nothing but time.
  */
 const TIMEOUT_MS = 240_000;
+/**
+ * MiniMax-M3's reasoning shares the completion budget with the answer, and a
+ * full profile is a few thousand tokens on its own: at the shared 8192 the
+ * answer was cut off partway through the JSON.
+ */
+export const DRAFT_MAX_COMPLETION_TOKENS = 16_384;
+/** Shown for an empty answer and for JSON cut off by the token limit alike. */
+const DRAFT_LENGTH_MESSAGE = `${MINIMAX} hit its token limit before answering. Try again, or shorten the resume.`;
 
 export const DRAFT_SYSTEM_PROMPT = `You turn a software engineer's resume into a structured profile for their portfolio website.
 
@@ -85,7 +93,7 @@ function tryJson(text: string): { ok: true; value: unknown } | { ok: false } {
 /**
  * The model's JSON. A Markdown code fence around it is tolerated, and so is
  * prose around it: failing a whole parse, the text from the first `{` to the
- * last `}` is tried. Only the answer's length is logged, never its text,
+ * last `}` is tried. Only the answer's shape is logged, never its text,
  * which can echo the resume.
  */
 export function parseModelJson(content: string): unknown {
@@ -102,9 +110,18 @@ export function parseModelJson(content: string): unknown {
     if (embedded.ok) return embedded.value;
   }
   // No `cause`: JSON.parse's message quotes the text it choked on.
-  throw new DraftError(
-    'The model did not answer with JSON.',
-    `answer of ${body.length} characters was not JSON`,
+  throw new DraftError('The model did not answer with JSON.', describeAnswer(body));
+}
+
+/** The answer's shape for the logs (length and a few yes/no facts), never its text. */
+function describeAnswer(body: string): string {
+  const yesNo = (value: boolean) => (value ? 'yes' : 'no');
+  return (
+    `answer of ${body.length} characters was not JSON ` +
+    `(starts with {: ${yesNo(body.startsWith('{'))}, ` +
+    `ends with }: ${yesNo(body.endsWith('}'))}, ` +
+    // A leading think block is already stripped; a tag left anywhere else breaks the JSON.
+    `leftover <think>: ${yesNo(/<\/?think>/i.test(body))})`
   );
 }
 
@@ -120,7 +137,7 @@ export function toProfileData(raw: unknown): ProfileData {
   }
 }
 
-export { MINIMAX_MAX_COMPLETION_TOKENS, stripThinking };
+export { stripThinking };
 
 export type MiniMaxDrafterOptions = MiniMaxOptions;
 
@@ -132,15 +149,19 @@ export function createMiniMaxProfileDrafter(options: MiniMaxDrafterOptions): Pro
   return {
     name: `minimax:${options.model}`,
     async draft(resumeText) {
-      let content: string;
+      let completion: MiniMaxCompletion;
       try {
-        content = await completeWithMiniMax(
-          { ...options, timeoutMs: options.timeoutMs ?? TIMEOUT_MS },
+        completion = await completeWithMiniMaxDetailed(
+          {
+            ...options,
+            timeoutMs: options.timeoutMs ?? TIMEOUT_MS,
+            maxCompletionTokens: options.maxCompletionTokens ?? DRAFT_MAX_COMPLETION_TOKENS,
+          },
           [
             { role: 'system', content: DRAFT_SYSTEM_PROMPT },
             { role: 'user', content: draftUserPrompt(resumeText) },
           ],
-          `${MINIMAX} hit its token limit before answering. Try again, or shorten the resume.`,
+          DRAFT_LENGTH_MESSAGE,
         );
       } catch (error) {
         if (error instanceof ModelError) {
@@ -148,7 +169,17 @@ export function createMiniMaxProfileDrafter(options: MiniMaxDrafterOptions): Pro
         }
         throw error;
       }
-      return toProfileData(parseModelJson(content));
+      let raw: unknown;
+      try {
+        raw = parseModelJson(completion.content);
+      } catch (error) {
+        // A cut-off answer is half a JSON object: say so, not "not JSON".
+        if (error instanceof DraftError && completion.finishReason === 'length') {
+          throw new DraftError(DRAFT_LENGTH_MESSAGE, error.detail);
+        }
+        throw error;
+      }
+      return toProfileData(raw);
     },
   };
 }

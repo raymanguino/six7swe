@@ -15,7 +15,6 @@ import { createHashingEmbedder } from '../services/embedding/hashing.js';
 import { ingestDocument } from '../services/ingestion/pipeline.js';
 import {
   createMiniMaxProfileDrafter,
-  MINIMAX_MAX_COMPLETION_TOKENS,
   stripThinking,
   createProfileDrafter,
   createStubProfileDrafter,
@@ -705,12 +704,27 @@ describe('MiniMax drafter', () => {
     };
     expect(body).toMatchObject({
       model: 'MiniMax-M3',
-      max_completion_tokens: MINIMAX_MAX_COMPLETION_TOKENS,
+      max_completion_tokens: 16_384,
       reasoning_effort: 'medium',
     });
     expect(body).not.toHaveProperty('response_format');
     expect(body.messages.map((m) => m.role)).toEqual(['system', 'user']);
     expect(body.messages[1]?.content).toContain('Acme Corp');
+  });
+
+  it('lets the caller set the completion budget', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(() =>
+      Promise.resolve(answer(JSON.stringify(SAMPLE_PROFILE))),
+    );
+    await createMiniMaxProfileDrafter({
+      url: URL,
+      apiKey: 'mm-primary',
+      model: 'MiniMax-M3',
+      fetchImpl,
+      maxCompletionTokens: 4096,
+    }).draft('x');
+    const body = JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
+    expect(body.max_completion_tokens).toBe(4096);
   });
 
   it('strips a leading think block before parsing', async () => {
@@ -789,8 +803,23 @@ describe('MiniMax drafter', () => {
       drafterWith(() => Promise.resolve(answer('Jordan lives at 1 Main St'))).draft('x'),
     );
     expect(error.message).toBe('The model did not answer with JSON.');
-    expect(error.detail).toBe('answer of 25 characters was not JSON');
+    expect(error.detail).toBe(
+      'answer of 25 characters was not JSON (starts with {: no, ends with }: no, leftover <think>: no)',
+    );
     expect(error.cause).toBeUndefined();
+  });
+
+  it('reports the token limit when the answer was cut off partway through the JSON', async () => {
+    const cut = JSON.stringify(SAMPLE_PROFILE).slice(0, 80);
+    const error = await failure(
+      drafterWith(() => Promise.resolve(answer(cut, 'length'))).draft('x'),
+    );
+    expect(error.message).toBe(
+      'MiniMax hit its token limit before answering. Try again, or shorten the resume.',
+    );
+    expect(error.detail).toBe(
+      'answer of 80 characters was not JSON (starts with {: yes, ends with }: no, leftover <think>: no)',
+    );
   });
 
   it('reports the token limit when reasoning was cut off inside <think>', async () => {
