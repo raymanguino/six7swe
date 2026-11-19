@@ -17,6 +17,7 @@ import {
   setPrimaryResume,
   uploadDocument,
 } from '../../services/documents.js';
+import type { DocumentRecord } from '../../db/api/repository.js';
 import type { KnowledgeContext } from '../context.js';
 import { toDocumentDto } from '../mappers.js';
 
@@ -27,6 +28,8 @@ export function documentHandlers(ctx: KnowledgeContext) {
     queue: ctx.queue,
     log: req.log,
     onCorpusChanged: (ownerId: string) => ctx.evalRunner.corpusChanged(ownerId),
+    // An approved resume that became searchable may now be primary (#212).
+    onResumeReady: (doc: DocumentRecord) => ctx.drafting.resumeIngested(doc),
   });
 
   return {
@@ -98,16 +101,7 @@ export function documentHandlers(ctx: KnowledgeContext) {
     async approve(req: FastifyRequest, reply: FastifyReply) {
       const ownerId = requireOwner(req);
       const { id } = IdParamsSchema.parse(req.params);
-      const document = await approveDocument(
-        {
-          repo: ctx.repo,
-          log: req.log,
-          onCorpusChanged: (owner) => ctx.evalRunner.corpusChanged(owner),
-          onResumeReady: (doc) => ctx.drafting.resumeIngested(doc),
-        },
-        ownerId,
-        id,
-      );
+      const document = await approveDocument(deps(req), ownerId, id);
       if (!document) return reply.code(404).send({ error: 'Document not found' });
       const body: DocumentResponse = { document: toDocumentDto(document) };
       return body;

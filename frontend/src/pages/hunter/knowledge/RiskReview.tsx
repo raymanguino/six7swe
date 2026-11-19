@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { apiRequest } from '../../../utils/api';
 import { errorMessage } from '../../../utils/errorMessage';
+import type { BusyRows } from './rowActions';
 import {
-  ACCEPTED_EXTENSIONS,
   hasFindingsToReview,
   parseFindings,
   type KnowledgeDocument,
@@ -10,10 +10,11 @@ import {
   type RiskFinding,
 } from './types';
 
-interface RiskReviewProps {
+interface RiskReviewProps extends BusyRows {
   documents: KnowledgeDocument[];
   onApprove: (doc: KnowledgeDocument) => Promise<void>;
-  onReplace: (doc: KnowledgeDocument, file: File) => Promise<void>;
+  /** Opens the shared file picker to replace the document. */
+  onPickReplacement: (doc: KnowledgeDocument) => void;
 }
 
 const CATEGORY_LABELS: Record<RiskCategory, string> = {
@@ -96,26 +97,15 @@ function Findings({ doc }: { doc: KnowledgeDocument }) {
  * (which is scanned again). There is no in-app editing, so the stored file
  * and its searchable text never diverge.
  */
-export default function RiskReview({ documents, onApprove, onReplace }: RiskReviewProps) {
+export default function RiskReview({
+  documents,
+  onApprove,
+  onPickReplacement,
+  busyIds,
+  withBusy,
+}: RiskReviewProps) {
   const flagged = documents.filter(hasFindingsToReview);
-  const replaceInput = useRef<HTMLInputElement>(null);
-  const [replacing, setReplacing] = useState<KnowledgeDocument | null>(null);
-  const [busyIds, setBusyIds] = useState<ReadonlySet<string>>(() => new Set());
-
   if (flagged.length === 0) return null;
-
-  const withBusy = async (doc: KnowledgeDocument, action: () => Promise<void>) => {
-    setBusyIds((ids) => new Set(ids).add(doc.id));
-    try {
-      await action();
-    } finally {
-      setBusyIds((ids) => {
-        const next = new Set(ids);
-        next.delete(doc.id);
-        return next;
-      });
-    }
-  };
 
   const handleApprove = (doc: KnowledgeDocument) => {
     const message =
@@ -128,19 +118,6 @@ export default function RiskReview({ documents, onApprove, onReplace }: RiskRevi
 
   return (
     <section className="space-y-4">
-      <input
-        ref={replaceInput}
-        type="file"
-        accept={ACCEPTED_EXTENSIONS.join(',')}
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          const target = replacing;
-          e.target.value = '';
-          setReplacing(null);
-          if (file && target) void withBusy(target, () => onReplace(target, file));
-        }}
-      />
       <div>
         <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Needs review</h3>
         <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
@@ -178,10 +155,7 @@ export default function RiskReview({ documents, onApprove, onReplace }: RiskRevi
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={() => {
-                    setReplacing(doc);
-                    replaceInput.current?.click();
-                  }}
+                  onClick={() => onPickReplacement(doc)}
                   className="text-primary-600 hover:underline disabled:opacity-50"
                 >
                   Replace file

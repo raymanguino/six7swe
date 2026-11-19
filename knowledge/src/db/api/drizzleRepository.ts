@@ -372,7 +372,8 @@ export function createDrizzleRepository(db: KnowledgeDb): KnowledgeRepository {
           .for('update');
         if (!doc) return null;
 
-        if (doc.status === 'needs_review') {
+        const activated = doc.status === 'needs_review';
+        if (activated) {
           await tx
             .update(documents)
             .set({ status: 'ready', approvedAt: sql`now()` })
@@ -392,7 +393,7 @@ export function createDrizzleRepository(db: KnowledgeDb): KnowledgeRepository {
           .select(documentColumns)
           .from(documents)
           .where(eq(documents.id, id));
-        return updated ?? null;
+        return updated ? { document: updated, activated } : null;
       });
     },
 

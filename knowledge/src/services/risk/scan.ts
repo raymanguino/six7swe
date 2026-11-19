@@ -12,10 +12,13 @@ import { RiskScanError, type RiskScanner } from './scanner.js';
  * The risk scan (#212): the deterministic checks plus, when a model is
  * configured, the model pass, over a document's extracted text.
  *
- * It never throws and never reports a document clean when it could not look:
- * a model failure (provider down, timeout, garbled answer) or text too long
- * to read in full adds a `scan_failed` finding, which holds the document for
- * the owner's review like any other finding.
+ * It never throws and never reports a document clean when it could not look.
+ * A model failure (provider down, timeout, garbled answer) adds a
+ * `scan_failed` finding, and the result is not `complete`: uploading the same
+ * file again rescans it, and the backfill retries it on the next boot. Text
+ * too long to read in full, and findings past the cap, add a note (category
+ * `other`, source `scan`) instead: rescanning would not change them.
+ * Either way the document is held for the owner's review like any finding.
  */
 
 /** The model reads the text in windows of this many characters... */
@@ -28,6 +31,18 @@ export const SCAN_MAX_WINDOWS = 8;
 export const SCAN_DEADLINE_MS = 5 * 60_000;
 
 const GENERIC_SCAN_FAILURE = 'The risk scan failed unexpectedly.';
+const DEADLINE_FAILURE = 'The risk scan did not finish in time.';
+
+export interface ScanResult {
+  findings: RiskFinding[];
+  /**
+   * False when the model pass could not finish (provider down, timeout, a
+   * garbled answer): the findings then hold a `scan_failed` one, and a
+   * rescan may give a different answer. True otherwise, including with no
+   * model configured and for text too long to read in full.
+   */
+  complete: boolean;
+}
 
 export interface ScanOptions {
   /** Null: the deterministic checks only. */
@@ -51,6 +66,24 @@ export function scanFailedFinding(why: string): RiskFinding {
     location: { page: null, offset: null },
   };
 }
+
+/** A note from the scan about its own coverage; rescanning would not change it. */
+export function scanNote(note: string): RiskFinding {
+  return {
+    category: 'other',
+    source: 'scan',
+    excerpt: '',
+    reason: truncate(
+      `${note} Check the document yourself before approving it.`,
+      RISK_REASON_MAX_CHARS,
+    ),
+    location: { page: null, offset: null },
+  };
+}
+
+/** True when the findings include a scan failure: a rescan may give another answer. */
+export const hasScanFailure = (findings: readonly RiskFinding[]): boolean =>
+  findings.some((f) => f.category === 'scan_failed');
 
 interface Window {
   start: number;
@@ -85,43 +118,53 @@ export function locateExcerpt(text: string, excerpt: string, from: number): numb
   return match ? from + match.index : null;
 }
 
-/** One finding per category and excerpt, in text order, at most `RISK_MAX_FINDINGS`. */
-function finalize(findings: RiskFinding[]): RiskFinding[] {
+/**
+ * One finding per category and excerpt (and reason, for a finding without an
+ * excerpt), in text order. The scan's own findings come first: they say the
+ * list is incomplete. Past `RISK_MAX_FINDINGS`, the last slot says how many
+ * more were found, so nothing is dropped silently.
+ */
+export function finalize(findings: RiskFinding[]): RiskFinding[] {
   const seen = new Set<string>();
   const unique = findings.filter((f) => {
-    const key = `${f.category}\u0000${f.excerpt.toLowerCase()}`;
+    const key = [f.category, f.excerpt.toLowerCase(), f.excerpt ? '' : f.reason].join('\u0000');
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
-  const failed = unique.filter((f) => f.category === 'scan_failed');
+  const fromScan = unique.filter((f) => f.source === 'scan');
   const rest = unique
-    .filter((f) => f.category !== 'scan_failed')
+    .filter((f) => f.source !== 'scan')
     .sort(
       (a, b) =>
         (a.location.offset ?? Number.MAX_SAFE_INTEGER) -
         (b.location.offset ?? Number.MAX_SAFE_INTEGER),
     );
-  // A scan failure is always kept, first: it says the list is incomplete.
-  return [...failed, ...rest].slice(0, RISK_MAX_FINDINGS);
+  const ordered = [...fromScan, ...rest];
+  if (ordered.length <= RISK_MAX_FINDINGS) return ordered;
+  const kept = ordered.slice(0, RISK_MAX_FINDINGS - 1);
+  const more = ordered.length - kept.length;
+  return [...kept, scanNote(`${more} more findings were found but not listed.`)];
 }
 
-export async function scanDocument(text: string, options: ScanOptions): Promise<RiskFinding[]> {
+export async function scanDocument(text: string, options: ScanOptions): Promise<ScanResult> {
   const { scanner, log, documentId } = options;
   const findings: RiskFinding[] = [];
+  let complete = true;
   try {
     findings.push(...detectPatternFindings(text));
   } catch (error) {
     log.warn({ documentId, err: error }, 'Risk scan pattern checks failed');
     findings.push(scanFailedFinding(GENERIC_SCAN_FAILURE));
+    complete = false;
   }
-  if (!scanner) return finalize(findings);
+  if (!scanner) return { findings: finalize(findings), complete };
 
   const { windows, covered } = windowsOf(text);
   const deadline = AbortSignal.timeout(options.deadlineMs ?? SCAN_DEADLINE_MS);
   try {
     for (const window of windows) {
-      if (deadline.aborted) throw new RiskScanError('The risk scan did not finish in time.');
+      if (deadline.aborted) throw new RiskScanError(DEADLINE_FAILURE);
       const found = await scanner.scan(window.text, deadline);
       for (const f of found) {
         findings.push({
@@ -129,13 +172,16 @@ export async function scanDocument(text: string, options: ScanOptions): Promise<
           source: 'model',
           excerpt: truncate(f.excerpt, RISK_EXCERPT_MAX_CHARS),
           reason: truncate(f.reason, RISK_REASON_MAX_CHARS),
-          location: { page: null, offset: locateExcerpt(text, f.excerpt, window.start) },
+          location: {
+            page: null,
+            offset: f.excerpt ? locateExcerpt(text, f.excerpt, window.start) : null,
+          },
         });
       }
     }
     if (covered < text.length) {
       findings.push(
-        scanFailedFinding(
+        scanNote(
           `The document is too long to scan in full: only the first ${covered} of ${text.length} characters were checked.`,
         ),
       );
@@ -148,10 +194,11 @@ export async function scanDocument(text: string, options: ScanOptions): Promise<
         error instanceof RiskScanError
           ? error.message
           : deadline.aborted
-            ? 'The risk scan did not finish in time.'
+            ? DEADLINE_FAILURE
             : GENERIC_SCAN_FAILURE,
       ),
     );
+    complete = false;
   }
-  return finalize(findings);
+  return { findings: finalize(findings), complete };
 }

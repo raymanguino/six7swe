@@ -29,16 +29,39 @@ export interface RiskBackfill {
   stop(): Promise<number>;
 }
 
-export async function backfillDocument(deps: RiskBackfillDeps, doc: DocumentRecord): Promise<void> {
+/**
+ * Scans one document and records the result, unless the model pass could not
+ * finish (provider down, timeout): then nothing is recorded, the document
+ * stays unscanned and the next boot tries again, rather than a transient
+ * outage using up its one scan.
+ */
+export async function backfillDocument(
+  deps: RiskBackfillDeps & { scanner: RiskScanner },
+  doc: DocumentRecord,
+): Promise<void> {
   const found = await deps.repo.getExtractedText(doc.ownerId, doc.id);
-  // Deleted meanwhile, or ready without text (cannot happen through ingestion).
-  if (!found || found.text === null) return;
-  const findings = await scanDocument(found.text, {
+  if (!found) {
+    deps.log.info({ documentId: doc.id }, 'Backfill risk scan skipped: document deleted meanwhile');
+    return;
+  }
+  if (found.text === null) {
+    // Ingestion always stores the text with `ready`, so this is a damaged row.
+    deps.log.warn({ documentId: doc.id }, 'Backfill risk scan skipped: ready document has no text');
+    return;
+  }
+  const { findings, complete } = await scanDocument(found.text, {
     scanner: deps.scanner,
     log: deps.log,
     documentId: doc.id,
     deadlineMs: deps.deadlineMs,
   });
+  if (!complete) {
+    deps.log.warn(
+      { documentId: doc.id },
+      'Backfill risk scan did not finish; it is retried on the next boot',
+    );
+    return;
+  }
   const written = await deps.repo.recordBackfillScan(doc.id, findings);
   // Only the count is logged: findings quote the document.
   if (written) {
@@ -47,13 +70,20 @@ export async function backfillDocument(deps: RiskBackfillDeps, doc: DocumentReco
 }
 
 export function createRiskBackfill(deps: RiskBackfillDeps): RiskBackfill {
+  const { scanner } = deps;
   const queue = new SerialQueue<DocumentRecord>(
-    (doc) => backfillDocument(deps, doc),
+    (doc) => (scanner ? backfillDocument({ ...deps, scanner }, doc) : Promise.resolve()),
     (doc, error) =>
       deps.log.warn({ documentId: doc.id, err: error }, 'Backfill risk scan could not be stored'),
   );
   return {
     async start() {
+      // Without the model pass the backfill would mark documents scanned that
+      // only had the pattern checks; it waits for a configured model instead.
+      if (!scanner) {
+        deps.log.info('Risk scan backfill skipped: no RISK_SCANNER model configured');
+        return 0;
+      }
       const unscanned = await deps.repo.listUnscannedReady();
       let queued = 0;
       for (const doc of unscanned) if (queue.enqueue(doc)) queued++;

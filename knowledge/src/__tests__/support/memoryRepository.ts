@@ -189,7 +189,8 @@ export function createMemoryRepository(): KnowledgeRepository & {
     async approveDocument(ownerId, id) {
       const doc = documents.get(id);
       if (!doc || doc.ownerId !== ownerId) return null;
-      if (doc.status === 'needs_review') {
+      const activated = doc.status === 'needs_review';
+      if (activated) {
         update(id, { status: 'ready', approvedAt: new Date() });
         if (doc.kind === 'resume') refreshPrimaryResume(ownerId);
         bump(ownerId);
@@ -198,7 +199,8 @@ export function createMemoryRepository(): KnowledgeRepository & {
       } else {
         throw new ConflictError('Only a document with findings to review can be approved');
       }
-      return documents.get(id) ?? null;
+      const updated = documents.get(id);
+      return updated ? { document: updated, activated } : null;
     },
 
     async listUnscannedReady() {

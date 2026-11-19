@@ -31,14 +31,19 @@ export interface KnowledgeDocuments {
   uploadBatch: (files: File[], kind: DocumentKind) => Promise<void>;
   /**
    * Uploads `file` as the new version of `previous`, waits until the new
-   * document is scanned (ready, or held for review), then deletes
-   * `previous`. If the new one fails, the previous one is kept. Identical
+   * document is ready, then deletes `previous`. If the new one fails, the
+   * previous one is kept. If the risk scan holds the new one for review, a
+   * searchable previous one is kept until the new one is approved. Identical
    * bytes resolve to the same document, which is then kept as it is.
    */
   replace: (previous: KnowledgeDocument, file: File) => Promise<void>;
   remove: (doc: KnowledgeDocument) => Promise<void>;
   setPrimary: (doc: KnowledgeDocument) => Promise<void>;
-  /** Approves the risk scan's findings as they are, making a held document searchable (#212). */
+  /**
+   * Approves the risk scan's findings as they are, making a held document
+   * searchable (#212). Approving a held replacement deletes the version it
+   * replaces.
+   */
   approve: (doc: KnowledgeDocument) => Promise<void>;
 }
 
@@ -66,6 +71,13 @@ export function useKnowledgeDocuments(enabled: boolean): KnowledgeDocuments {
   const mounted = useRef(true);
   /** Only the newest read's answer is applied; an older one arriving late is dropped. */
   const loadSeq = useRef(0);
+  /**
+   * Replacements the risk scan held for review (#212), by the new document's
+   * id: the searchable version each replaces, deleted once the new one is
+   * approved. Kept for this page visit only; the notice tells the owner to
+   * delete the old version by hand if they approve it later, elsewhere.
+   */
+  const pendingReplacements = useRef(new Map<string, KnowledgeDocument>());
 
   useEffect(() => {
     mounted.current = true;
@@ -208,9 +220,22 @@ export function useKnowledgeDocuments(enabled: boolean): KnowledgeDocuments {
           return;
         }
 
-        // A new version the risk scan holds for review still replaces the old
-        // one: the owner replaced it to change what it says, and the new
-        // findings are shown for review in its place.
+        // Held for review: the new version is not searchable yet, so a
+        // searchable previous one is kept until the owner approves the new
+        // one (`approve` then deletes it). Without this, replacing the primary
+        // resume, which nearly always has contact details, would leave no
+        // primary until the approval. A previous version that is not
+        // searchable either (itself held for review) has nothing to keep.
+        if (settled.status === 'needs_review' && previous.status === 'ready') {
+          pendingReplacements.current.set(settled.id, previous);
+          report(
+            `Replacing ${name}: the risk scan flagged ${settled.filename}, so ${name} is kept and ` +
+              `still searchable. Review the new version under "Needs review"; approving it on ` +
+              `this page replaces ${name} (after a reload, delete ${name} by hand once it is approved).`,
+          );
+          return;
+        }
+
         // Issued even if the page has been left: only the UI updates below
         // (report, the final load) depend on it still being mounted.
         try {
@@ -257,13 +282,31 @@ export function useKnowledgeDocuments(enabled: boolean): KnowledgeDocuments {
   const approve = useCallback(
     async (doc: KnowledgeDocument) => {
       try {
-        parseDocument(
-          await apiRequest(`/knowledge/documents/${doc.id}/approve`, { method: 'POST' }),
-        );
-      } catch (err) {
-        report(`Approving ${doc.filename}: ${errorMessage(err, 'request failed')}`);
+        try {
+          parseDocument(
+            await apiRequest(`/knowledge/documents/${doc.id}/approve`, { method: 'POST' }),
+          );
+        } catch (err) {
+          report(`Approving ${doc.filename}: ${errorMessage(err, 'request failed')}`);
+          return;
+        }
+        // The approved document was a replacement held for review: it is
+        // searchable now, so the version it replaces goes.
+        const previous = pendingReplacements.current.get(doc.id);
+        if (!previous) return;
+        pendingReplacements.current.delete(doc.id);
+        try {
+          await apiRequest(`/knowledge/documents/${previous.id}`, { method: 'DELETE' });
+        } catch (err) {
+          report(
+            `Replacing ${previous.filename}: ${doc.filename} is approved, but ` +
+              `${previous.filename} could not be deleted (${errorMessage(err, 'request failed')}). ` +
+              `It remains; delete it by hand.`,
+          );
+        }
+      } finally {
+        if (mounted.current) await load();
       }
-      await load();
     },
     [load, report],
   );

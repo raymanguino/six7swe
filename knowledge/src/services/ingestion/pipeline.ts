@@ -121,7 +121,8 @@ export async function ingestDocument(deps: PipelineDeps, doc: DocumentRecord): P
     }
 
     // Never throws: a scan that cannot finish is itself a finding.
-    const findings = await scanDocument(text, {
+    // An incomplete scan carries a scan_failed finding, so it is held like any other.
+    const { findings } = await scanDocument(text, {
       scanner: deps.riskScanner ?? null,
       log,
       documentId: doc.id,

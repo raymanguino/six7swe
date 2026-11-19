@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
-import type { DocumentKind } from '../contract.js';
+import type { DocumentKind, RiskFinding } from '../contract.js';
 import type { DocumentRecord } from '../db/api/repository.js';
 import type { KnowledgeDeps } from './deps.js';
 import type { IngestionQueue } from './ingestion/pipeline.js';
 import { detectMimeType, extensionOf } from './ingestion/parse.js';
+import { hasScanFailure } from './risk/scan.js';
 
 export interface DocumentServiceDeps extends Pick<KnowledgeDeps, 'repo' | 'files'> {
   queue: IngestionQueue;
@@ -95,7 +96,11 @@ export async function uploadDocument(
  * could not be recorded, or by a boot with RESUME_INGESTION_ON_BOOT=false).
  * The bytes are stored again first, in case the stored copy was what failed.
  *
- * Only a `failed` document is reset to `pending` here; a stranded
+ * A `needs_review` document is settled too (the same bytes would be flagged
+ * again), unless its scan failed (#212): a `scan_failed` finding tells the
+ * owner to upload the file again to rescan, so that re-upload retries it.
+ *
+ * A `failed` or scan-failed document is reset to `pending` here; a stranded
  * pending/processing one is just enqueued, and the worker's markProcessing
  * moves it on. The queue is checked again after the (slow) store, so a
  * concurrent re-upload that queued it meanwhile is not doubled.
@@ -106,20 +111,27 @@ async function resumeExisting(
   bytes: Uint8Array,
 ): Promise<UploadResult> {
   const unchanged = { document: existing, deduplicated: true };
-  // A flagged document is settled too: the same bytes would be flagged again.
-  const settled = existing.status === 'ready' || existing.status === 'needs_review';
-  if (settled || deps.queue.has(existing.id)) return unchanged;
+  if (existing.status === 'ready' || deps.queue.has(existing.id)) return unchanged;
+  if (existing.status === 'needs_review' && !(await scanFailed(deps, existing))) {
+    return unchanged;
+  }
 
   await deps.files.put(existing.storagePath, bytes, existing.mimeType);
   if (deps.queue.has(existing.id)) return unchanged;
 
   let retried = existing;
-  if (existing.status === 'failed') {
+  if (existing.status === 'failed' || existing.status === 'needs_review') {
     await deps.repo.resetToPending(existing.id);
     retried = { ...existing, status: 'pending', error: null };
   }
   deps.queue.enqueue(retried);
   return { document: retried, deduplicated: true };
+}
+
+/** Whether the document's last scan could not finish, so a rescan may answer differently. */
+async function scanFailed(deps: DocumentServiceDeps, doc: DocumentRecord): Promise<boolean> {
+  const found = await deps.repo.getRiskFindings(doc.ownerId, doc.id);
+  return found !== null && hasScanFailure(found.findings);
 }
 
 /** The owner's documents, newest first. */
@@ -171,7 +183,7 @@ export async function getDocumentFindings(
   deps: Pick<KnowledgeDeps, 'repo'>,
   ownerId: string,
   id: string,
-) {
+): Promise<{ document: DocumentRecord; findings: RiskFinding[] } | null> {
   return deps.repo.getRiskFindings(ownerId, id);
 }
 
@@ -194,20 +206,21 @@ export async function approveDocument(
   ownerId: string,
   id: string,
 ): Promise<DocumentRecord | null> {
-  const before = await deps.repo.getDocument(ownerId, id);
-  const approved = await deps.repo.approveDocument(ownerId, id);
-  if (!approved) return null;
-  if (before?.status === 'needs_review' && approved.status === 'ready') {
+  const result = await deps.repo.approveDocument(ownerId, id);
+  if (!result) return null;
+  const { document, activated } = result;
+  // Decided under the repository's lock, so a second approval never re-runs these.
+  if (activated) {
     deps.onCorpusChanged?.(ownerId);
-    if (approved.kind === 'resume' && deps.onResumeReady) {
+    if (document.kind === 'resume' && deps.onResumeReady) {
       try {
-        await deps.onResumeReady(approved);
+        await deps.onResumeReady(document);
       } catch (error) {
         deps.log.warn({ documentId: id, err: error }, 'Post-approval resume hook failed');
       }
     }
   }
-  return approved;
+  return document;
 }
 
 /** Deletes the document, its chunks and its file. Returns false when it did not exist. */

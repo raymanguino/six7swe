@@ -5,6 +5,7 @@ import DocumentTable from './DocumentTable';
 import EvalSetPanel from './EvalSetPanel';
 import ProfileReview from './ProfileReview';
 import RiskReview from './RiskReview';
+import { useBusyRows, useReplacePicker } from './rowActions';
 import SearchPlayground from './SearchPlayground';
 import TextPreview from './TextPreview';
 import UploadDropzone from './UploadDropzone';
@@ -38,6 +39,9 @@ export default function KnowledgePage() {
     .join(',');
   const evalSet = useEvalSet(knowledgeOwner.isOwner === true, readyKey);
   const [previewId, setPreviewId] = useState<string | null>(null);
+  // Shared by the risk review and the table, so a row busy in one is busy in both.
+  const rows = useBusyRows();
+  const replacePicker = useReplacePicker(knowledge.replace, rows.withBusy);
 
   if (knowledgeOwner.failed) {
     return (
@@ -88,10 +92,14 @@ export default function KnowledgePage() {
 
       <UploadDropzone onUploadBatch={knowledge.uploadBatch} />
 
+      {replacePicker.input}
+
       <RiskReview
         documents={knowledge.documents}
         onApprove={knowledge.approve}
-        onReplace={knowledge.replace}
+        onPickReplacement={replacePicker.pick}
+        busyIds={rows.busyIds}
+        withBusy={rows.withBusy}
       />
 
       <section className="space-y-4">
@@ -101,7 +109,9 @@ export default function KnowledgePage() {
           loading={knowledge.loading}
           selectedId={previewId}
           onPreview={(doc) => setPreviewId(doc.id)}
-          onReplace={knowledge.replace}
+          onPickReplacement={replacePicker.pick}
+          busyIds={rows.busyIds}
+          withBusy={rows.withBusy}
           onDelete={async (doc) => {
             await knowledge.remove(doc);
             if (doc.id === previewId) setPreviewId(null);

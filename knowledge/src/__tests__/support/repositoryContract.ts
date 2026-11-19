@@ -250,8 +250,11 @@ export function describeRepositoryContract(
 
       expect(await repo.approveDocument(newOwner(), document.id)).toBeNull();
       const approved = await repo.approveDocument(owner, document.id);
-      expect(approved).toMatchObject({ status: 'ready', findingCount: 1 });
-      expect(approved?.approvedAt).toBeInstanceOf(Date);
+      expect(approved).toMatchObject({
+        activated: true,
+        document: { status: 'ready', findingCount: 1 },
+      });
+      expect(approved?.document.approvedAt).toBeInstanceOf(Date);
       expect(await repo.getVersion(owner)).toBe(before + 1);
       expect(await repo.search(owner, hashEmbed('call', EMBEDDING_DIMENSIONS), 5)).toHaveLength(1);
 
@@ -303,8 +306,9 @@ export function describeRepositoryContract(
 
       // The owner approves the backfill's findings: still ready, approval recorded.
       const approved = await repo.approveDocument(owner, doc.id);
-      expect(approved).toMatchObject({ status: 'ready' });
-      expect(approved?.approvedAt).toBeInstanceOf(Date);
+      // Recorded, but nothing became searchable: it already was.
+      expect(approved).toMatchObject({ activated: false, document: { status: 'ready' } });
+      expect(approved?.document.approvedAt).toBeInstanceOf(Date);
       expect(await repo.getVersion(owner)).toBe(version);
     });
 

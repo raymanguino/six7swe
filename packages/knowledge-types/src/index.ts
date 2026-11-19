@@ -51,7 +51,8 @@ export type DocumentStatus = z.infer<typeof DocumentStatusSchema>;
 
 /**
  * What a finding is about. `scan_failed` is not a risk in the text: the scan
- * could not finish, so the owner has to check the document themselves.
+ * could not finish, so the owner has to check the document themselves, and
+ * uploading the same file again rescans it.
  */
 export const RISK_CATEGORIES = [
   'contact_details',
@@ -76,13 +77,19 @@ export type RiskFindingSource = z.infer<typeof RiskFindingSourceSchema>;
 /** Longest stored excerpt and reason; longer ones are cut. */
 export const RISK_EXCERPT_MAX_CHARS = 300;
 export const RISK_REASON_MAX_CHARS = 300;
-/** At most this many findings are stored per document; the scan stops there. */
+/**
+ * At most this many findings are stored per document. Past it, the last one
+ * is a note (category `other`, source `scan`) saying how many more were found.
+ */
 export const RISK_MAX_FINDINGS = 100;
 
 export const RiskFindingSchema = z.object({
   category: RiskCategorySchema,
   source: RiskFindingSourceSchema,
-  /** The flagged text as it appears in the extracted text; empty for `scan_failed`. */
+  /**
+   * The flagged text as it appears in the extracted text. Empty for the
+   * scan's own findings, and for a model finding that quoted nothing.
+   */
   excerpt: z.string().max(RISK_EXCERPT_MAX_CHARS),
   reason: z.string().max(RISK_REASON_MAX_CHARS),
   /**

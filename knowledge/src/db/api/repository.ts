@@ -164,11 +164,15 @@ export interface KnowledgeRepository {
    * `approvedAt`. A `needs_review` document becomes `ready` (bumping the
    * corpus version, and re-applying the primary-resume rule for a resume); a
    * `ready` document with unapproved findings (flagged by the backfill) only
-   * records the approval. Returns the updated document, or null when it does
-   * not exist or belongs to someone else. Throws a ConflictError for
-   * anything else (nothing to approve, or not ingested).
+   * records the approval. Returns the updated document and whether this
+   * approval made it searchable (`activated`, decided under the same lock),
+   * or null when it does not exist or belongs to someone else. Throws a
+   * ConflictError for anything else (nothing to approve, or not ingested).
    */
-  approveDocument(ownerId: string, id: string): Promise<DocumentRecord | null>;
+  approveDocument(
+    ownerId: string,
+    id: string,
+  ): Promise<{ document: DocumentRecord; activated: boolean } | null>;
 
   /** Ready documents, of every owner, whose text has never been risk-scanned (the backfill). */
   listUnscannedReady(): Promise<DocumentRecord[]>;

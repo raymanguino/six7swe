@@ -1,17 +1,13 @@
-import { useRef, useState } from 'react';
-import {
-  ACCEPTED_EXTENSIONS,
-  hasFindingsToReview,
-  type DocumentStatus,
-  type KnowledgeDocument,
-} from './types';
+import type { BusyRows } from './rowActions';
+import { hasFindingsToReview, type DocumentStatus, type KnowledgeDocument } from './types';
 
-interface DocumentTableProps {
+interface DocumentTableProps extends BusyRows {
   documents: KnowledgeDocument[];
   loading: boolean;
   selectedId: string | null;
   onPreview: (doc: KnowledgeDocument) => void;
-  onReplace: (doc: KnowledgeDocument, file: File) => Promise<void>;
+  /** Opens the shared file picker to replace the document. */
+  onPickReplacement: (doc: KnowledgeDocument) => void;
   onDelete: (doc: KnowledgeDocument) => Promise<void>;
   onSetPrimary: (doc: KnowledgeDocument) => Promise<void>;
 }
@@ -36,33 +32,12 @@ export default function DocumentTable({
   loading,
   selectedId,
   onPreview,
-  onReplace,
+  onPickReplacement,
   onDelete,
   onSetPrimary,
+  busyIds,
+  withBusy,
 }: DocumentTableProps) {
-  const replaceInput = useRef<HTMLInputElement>(null);
-  const [replacing, setReplacing] = useState<KnowledgeDocument | null>(null);
-  // Per row: a replace can run for minutes while other rows stay usable.
-  const [busyIds, setBusyIds] = useState<ReadonlySet<string>>(() => new Set());
-
-  const withBusy = async (doc: KnowledgeDocument, action: () => Promise<void>) => {
-    setBusyIds((ids) => new Set(ids).add(doc.id));
-    try {
-      await action();
-    } finally {
-      setBusyIds((ids) => {
-        const next = new Set(ids);
-        next.delete(doc.id);
-        return next;
-      });
-    }
-  };
-
-  const startReplace = (doc: KnowledgeDocument) => {
-    setReplacing(doc);
-    replaceInput.current?.click();
-  };
-
   const handleDelete = (doc: KnowledgeDocument) => {
     if (!window.confirm(`Delete ${doc.filename}? Its chunks stop being served immediately.`)) {
       return;
@@ -84,19 +59,6 @@ export default function DocumentTable({
 
   return (
     <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
-      <input
-        ref={replaceInput}
-        type="file"
-        accept={ACCEPTED_EXTENSIONS.join(',')}
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          const target = replacing;
-          e.target.value = '';
-          setReplacing(null);
-          if (file && target) void withBusy(target, () => onReplace(target, file));
-        }}
-      />
       <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-gray-700">
         <thead className="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-900/40 dark:text-gray-400">
           <tr>
@@ -171,7 +133,7 @@ export default function DocumentTable({
                     <button
                       type="button"
                       disabled={busy}
-                      onClick={() => startReplace(doc)}
+                      onClick={() => onPickReplacement(doc)}
                       className="text-primary-600 hover:underline disabled:opacity-50"
                     >
                       Replace
