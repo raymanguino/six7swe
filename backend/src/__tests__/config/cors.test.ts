@@ -1,6 +1,6 @@
 import fastifyCors from '@fastify/cors';
 import Fastify from 'fastify';
-import { getCorsOrigin } from '../../config/cors';
+import { CORS_METHODS, getCorsOrigin } from '../../config/cors';
 
 describe('getCorsOrigin', () => {
   it.each(['development', 'test'])('allows every origin when NODE_ENV is %s', (nodeEnv) => {
@@ -62,17 +62,18 @@ describe('getCorsOrigin', () => {
       expect(await allowOriginHeader('https://evil.example.com')).toBeUndefined();
     });
 
-    async function preflight(origin: string) {
+    async function preflight(origin: string, method = 'GET') {
       const app = Fastify();
       await app.register(fastifyCors, {
         origin: getCorsOrigin({ NODE_ENV: 'production', CORS_ORIGINS: 'https://app.example.com' }),
+        methods: CORS_METHODS,
         credentials: true,
       });
       app.get('/', async () => ({ ok: true }));
       const res = await app.inject({
         method: 'OPTIONS',
         url: '/',
-        headers: { origin, 'access-control-request-method': 'GET' },
+        headers: { origin, 'access-control-request-method': method },
       });
       await app.close();
       return res.headers;
@@ -82,6 +83,12 @@ describe('getCorsOrigin', () => {
       const headers = await preflight('https://app.example.com');
       expect(headers['access-control-allow-origin']).toBe('https://app.example.com');
       expect(headers['access-control-allow-credentials']).toBe('true');
+    });
+
+    it.each(['PUT', 'PATCH', 'DELETE'])('allows %s in a preflight', async (method) => {
+      const headers = await preflight('https://app.example.com', method);
+      const allowed = String(headers['access-control-allow-methods']).split(/,\s*/);
+      expect(allowed).toContain(method);
     });
 
     it('does not allow a preflight from an unlisted origin', async () => {
