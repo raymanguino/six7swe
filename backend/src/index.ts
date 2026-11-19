@@ -5,7 +5,7 @@ import fastifyCors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import { FastifyReply, FastifyRequest } from 'fastify';
 import { UnauthenticatedUser } from './constants';
-import { getCorsOrigin } from './config/cors';
+import { CORS_METHODS, getCorsOrigin } from './config/cors';
 import { getSafeEnv } from './config/env';
 import { assertKnowledgeRetrievalConfigured } from './config/knowledgeRetrieval';
 import * as plugins from './plugins';
@@ -44,6 +44,7 @@ declare module '@fastify/request-context' {
 // assertions. Every origin in development and test; CORS_ORIGINS otherwise.
 fastify.register(fastifyCors, () => ({
   origin: getCorsOrigin(),
+  methods: CORS_METHODS,
   credentials: true,
 }));
 

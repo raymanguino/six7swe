@@ -43,6 +43,13 @@ const originListSchema = z
   )
   .pipe(z.array(originSchema).min(1, 'at least one origin is required'));
 
+/**
+ * Methods a cross-origin request may use. @fastify/cors v10+ defaults to `GET,HEAD,POST`, so
+ * without this the browser's preflight rejects PUT/PATCH/DELETE and fetch fails with a network
+ * error ("Failed to fetch") before the request is ever sent.
+ */
+export const CORS_METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'];
+
 export function getCorsOrigin(
   env: Record<string, string | undefined> = process.env,
 ): true | string[] {
