@@ -1,4 +1,4 @@
-import { FastifyRequest, FastifyReply } from 'fastify';
+import type { FastifyRequest, FastifyReply } from 'fastify';
 import { getResumeDownload } from '../../services/resumeDownload';
 
 /**
@@ -15,20 +15,27 @@ export function attachmentDisposition(filename: string): string {
   return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }
 
-function sendPdf(reply: FastifyReply, filename: string, body: Buffer) {
-  reply.header('Content-Type', 'application/pdf');
-  reply.header('X-Content-Type-Options', 'nosniff');
-  reply.header('Content-Disposition', attachmentDisposition(filename));
-  return reply.send(body);
-}
+/** The name the resume is offered under; the service does not send the uploaded name. */
+const RESUME_FILENAME = 'resume.pdf';
 
 export async function resumeHandler(request: FastifyRequest, reply: FastifyReply) {
   try {
     const resume = await getResumeDownload(request.log);
-    if (resume.found) return sendPdf(reply, resume.filename, resume.body);
+    if (!resume.found) {
+      request.log.warn('Resume not found: the knowledge service has no primary resume');
+      reply.header('Cache-Control', 'no-store');
+      return reply.code(404).send({ error: 'Resume not found' });
+    }
 
-    request.log.warn('Resume not found: the knowledge service has no primary resume');
-    return reply.code(404).send({ error: 'Resume not found' });
+    // Revalidated on every download; the ETag (the corpus version) makes that a cheap 304.
+    reply.header('Cache-Control', 'public, max-age=0, must-revalidate');
+    reply.header('ETag', resume.etag);
+    if (request.headers['if-none-match'] === resume.etag) return reply.code(304).send();
+
+    reply.header('Content-Type', 'application/pdf');
+    reply.header('X-Content-Type-Options', 'nosniff');
+    reply.header('Content-Disposition', attachmentDisposition(RESUME_FILENAME));
+    return reply.send(resume.body);
   } catch (error) {
     request.log.error(error, 'Error serving resume');
     return reply.code(500).send({ error: 'Failed to serve resume' });

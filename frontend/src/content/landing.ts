@@ -1,6 +1,13 @@
 // Static landing-page content. Edit by hand; there is no runtime content source.
 
-export const ABOUT_STRENGTH_COLUMNS = [
+export type StrengthColumn = {
+  title: string;
+  icon: 'check' | 'circle' | 'tools';
+  iconClass: string;
+  items: string[];
+};
+
+export const ABOUT_STRENGTH_COLUMNS: StrengthColumn[] = [
   {
     title: 'Strong',
     icon: 'check',
@@ -122,11 +129,8 @@ export type ProjectTile = {
   id: string;
   title: string;
   briefDescription?: string;
-  techLabels: string[];
   overview: string;
   keyChallenges: string[];
-  liveSiteUrl: string | null;
-  liveSiteDisabled?: boolean;
 };
 
 export const PROJECT_TILES: ProjectTile[] = [
@@ -135,7 +139,6 @@ export const PROJECT_TILES: ProjectTile[] = [
     title: 'Mission Control',
     briefDescription:
       'Agent orchestration platform that coordinates specialized AI workers for software project delivery, from approval to deployment, with integrated task workflows and quality control.',
-    techLabels: ['MCP', 'Webhooks', 'TypeScript', 'Node.js', 'AI Agents'],
     overview:
       'Mission Control is a tailnet-native API platform that creates, manages, and coordinates multi-agent workflows for software development. It standardizes webhook events and a unified MCP tool interface. The system provides automated project decomposition, task routing, and progress tracking while maintaining a consistent agent communication architecture.',
     keyChallenges: [
@@ -143,24 +146,19 @@ export const PROJECT_TILES: ProjectTile[] = [
       'Designing workflows that handle async task completion without losing project context.',
       'Creating an MCP interface that enables agent collaboration while enforcing quality gates.',
     ],
-    liveSiteUrl: '#',
-    liveSiteDisabled: true,
   },
   {
     id: 'portfolio',
     title: 'Portfolio',
     briefDescription:
-      'A portfolio site that loads profile, projects, skills, and resume content from a custom MCP service, serves resume assets, and includes a floating chat assistant that answers using that portfolio and resume context.',
-    techLabels: ['React', 'TypeScript', 'Vite', 'Fastify', 'MCP', 'PostgreSQL'],
+      'This site: a static React landing page, a resume served from a private knowledge service, and a floating chat assistant that answers from retrieved background documents.',
     overview:
-      'A full-stack TypeScript portfolio app: the React/Vite SPA loads profile, projects, skills, experience, and contact from a Fastify API backed by a custom MCP service, with resume PDFs and extra content sections served from the backend. A built-in chat widget calls the API so visitors can ask questions about your work using an assistant grounded on stored portfolio and resume context.',
+      'A full-stack TypeScript portfolio. The landing page is static content in the React/Vite SPA. A Fastify API serves the resume PDF from a separate knowledge service that holds background documents as embedded chunks, and powers a chat widget and a job fit checker that answer from passages retrieved from those documents.',
     keyChallenges: [
-      'The portfolio API must serve the same shape from PostgreSQL or optional MCP without pushing that complexity into the frontend.',
-      'The chat assistant needs enough resume and portfolio context to answer well, without oversized prompts or leaking internal-only details.',
-      'Resume and asset URLs must stay correct and fresh across static files, storage, and caching so downloads don\'t break or go stale after updates.',
+      'The chat assistant needs enough background context to answer well, without oversized prompts or leaking internal-only details.',
+      'Retrieval results and the resume download are cached by corpus version, so an update to the documents shows up quickly without calling the knowledge service on every request.',
+      'The knowledge service stays on a private network; the public site reaches it only through the backend.',
     ],
-    liveSiteUrl: '#',
-    liveSiteDisabled: true,
   },
 ];
 
@@ -172,41 +170,44 @@ export const SKILL_LEVEL_CONFIG: Record<SkillLevel, { label: string; dotClass: s
   intermediate: { label: 'Familiar', dotClass: 'bg-orange-500' },
 };
 
-export const SKILLS_GROUPS = [
+export type SkillItem = { name: string; percent: number; level: SkillLevel };
+export type SkillGroup = { name: string; items: SkillItem[] };
+
+export const SKILLS_GROUPS: SkillGroup[] = [
   {
     name: 'Backend',
     items: [
-      { name: 'Node.js', percent: 95, level: 'expert' as SkillLevel },
-      { name: 'PostgreSQL', percent: 88, level: 'advanced' as SkillLevel },
-      { name: 'Go', percent: 83, level: 'advanced' as SkillLevel },
-      { name: 'Python', percent: 70, level: 'intermediate' as SkillLevel },
+      { name: 'Node.js', percent: 95, level: 'expert' },
+      { name: 'PostgreSQL', percent: 88, level: 'advanced' },
+      { name: 'Go', percent: 83, level: 'advanced' },
+      { name: 'Python', percent: 70, level: 'intermediate' },
     ],
   },
   {
     name: 'Frontend',
     items: [
-      { name: 'JavaScript/ES6', percent: 95, level: 'expert' as SkillLevel },
-      { name: 'TypeScript', percent: 90, level: 'expert' as SkillLevel },
-      { name: 'React', percent: 80, level: 'advanced' as SkillLevel },
-      { name: 'CSS/SCSS', percent: 70, level: 'intermediate' as SkillLevel },
+      { name: 'JavaScript/ES6', percent: 95, level: 'expert' },
+      { name: 'TypeScript', percent: 90, level: 'expert' },
+      { name: 'React', percent: 80, level: 'advanced' },
+      { name: 'CSS/SCSS', percent: 70, level: 'intermediate' },
     ],
   },
   {
     name: 'DevOps & Cloud',
     items: [
-      { name: 'AWS', percent: 92, level: 'expert' as SkillLevel },
-      { name: 'Docker', percent: 88, level: 'expert' as SkillLevel },
-      { name: 'CI/CD', percent: 85, level: 'advanced' as SkillLevel },
-      { name: 'Terraform', percent: 75, level: 'advanced' as SkillLevel },
+      { name: 'AWS', percent: 92, level: 'expert' },
+      { name: 'Docker', percent: 88, level: 'expert' },
+      { name: 'CI/CD', percent: 85, level: 'advanced' },
+      { name: 'Terraform', percent: 75, level: 'advanced' },
     ],
   },
   {
     name: 'AI',
     items: [
-      { name: 'Prompt Craft', percent: 80, level: 'advanced' as SkillLevel },
-      { name: 'Context/Intent/Spec Engineering', percent: 70, level: 'intermediate' as SkillLevel },
-      { name: 'MiniMax Agents SDK', percent: 70, level: 'intermediate' as SkillLevel },
-      { name: 'OpenClaw', percent: 70, level: 'intermediate' as SkillLevel },
+      { name: 'Prompt Craft', percent: 80, level: 'advanced' },
+      { name: 'Context/Intent/Spec Engineering', percent: 70, level: 'intermediate' },
+      { name: 'MiniMax Agents SDK', percent: 70, level: 'intermediate' },
+      { name: 'OpenClaw', percent: 70, level: 'intermediate' },
     ],
   },
 ];

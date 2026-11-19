@@ -141,6 +141,7 @@ export function createMemoryRepository(): KnowledgeRepository & {
         }
       }
       if (!doc.isPrimaryResume) update(id, { isPrimaryResume: true });
+      bump(ownerId);
       return documents.get(id) ?? null;
     },
 
@@ -172,7 +173,7 @@ export function createMemoryRepository(): KnowledgeRepository & {
       if (!doc || doc.ownerId !== ownerId) return null;
       documents.delete(id);
       chunks = chunks.filter((c) => c.documentId !== id);
-      if (doc.status === 'ready' && doc.chunkCount > 0) bump(ownerId);
+      if ((doc.status === 'ready' && doc.chunkCount > 0) || doc.isPrimaryResume) bump(ownerId);
       if (doc.isPrimaryResume) refreshPrimaryResume(ownerId);
       return doc;
     },

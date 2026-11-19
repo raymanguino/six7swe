@@ -1,10 +1,6 @@
 import Fastify, { FastifyInstance } from 'fastify';
-import { resumeHandler } from '../../routes/handlers/resumeHandlers';
-import {
-  createResumeDownloader,
-  getResumeDownload,
-  type ResumeDownload,
-} from '../../services/resumeDownload';
+import { attachmentDisposition, resumeHandler } from '../../routes/handlers/resumeHandlers';
+import { createResumeDownloader, getResumeDownload } from '../../services/resumeDownload';
 import type { KnowledgeProfileClient } from '../../services/knowledge/profileClient';
 
 jest.mock('../../services/resumeDownload', () => ({
@@ -14,6 +10,23 @@ jest.mock('../../services/resumeDownload', () => ({
 
 const mockedGetResumeDownload = jest.mocked(getResumeDownload);
 const PDF = Buffer.from('%PDF-1.4 resume');
+
+describe('attachmentDisposition', () => {
+  it('keeps a plain name', () => {
+    expect(attachmentDisposition('resume.pdf')).toBe(
+      `attachment; filename="resume.pdf"; filename*=UTF-8''resume.pdf`,
+    );
+  });
+
+  it('replaces quotes, backslashes and non-ASCII in the plain name and encodes the real one', () => {
+    expect(attachmentDisposition('a"b\\c.pdf')).toBe(
+      `attachment; filename="a_b_c.pdf"; filename*=UTF-8''a%22b%5Cc.pdf`,
+    );
+    expect(attachmentDisposition('履歴書 (2026).pdf')).toBe(
+      `attachment; filename="___ (2026).pdf"; filename*=UTF-8''${encodeURIComponent('履歴書')}%20%282026%29.pdf`,
+    );
+  });
+});
 
 describe('GET /resume', () => {
   let app: FastifyInstance;
@@ -29,26 +42,41 @@ describe('GET /resume', () => {
     jest.resetAllMocks();
   });
 
-  it('serves the primary resume PDF as an attachment', async () => {
-    mockedGetResumeDownload.mockResolvedValue({ found: true, filename: 'resume.pdf', body: PDF });
+  it('serves the primary resume PDF as a revalidated attachment', async () => {
+    mockedGetResumeDownload.mockResolvedValue({ found: true, body: PDF, etag: '"resume-v3"' });
 
     const res = await app.inject({ method: 'GET', url: '/resume' });
 
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toBe('application/pdf');
     expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers['cache-control']).toBe('public, max-age=0, must-revalidate');
+    expect(res.headers.etag).toBe('"resume-v3"');
     expect(res.headers['content-disposition']).toBe(
       `attachment; filename="resume.pdf"; filename*=UTF-8''resume.pdf`,
     );
     expect(res.rawPayload).toEqual(PDF);
   });
 
-  it('answers 404 when there is no primary resume', async () => {
+  it('answers 304 when the ETag matches', async () => {
+    mockedGetResumeDownload.mockResolvedValue({ found: true, body: PDF, etag: '"resume-v3"' });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/resume',
+      headers: { 'if-none-match': '"resume-v3"' },
+    });
+
+    expect(res.statusCode).toBe(304);
+  });
+
+  it('answers 404, uncacheable, when there is no primary resume', async () => {
     mockedGetResumeDownload.mockResolvedValue({ found: false });
 
     const res = await app.inject({ method: 'GET', url: '/resume' });
 
     expect(res.statusCode).toBe(404);
+    expect(res.headers['cache-control']).toBe('no-store');
     expect(res.json()).toEqual({ error: 'Resume not found' });
   });
 
@@ -63,21 +91,39 @@ describe('GET /resume', () => {
 
 describe('createResumeDownloader', () => {
   const log = { warn: jest.fn() };
+  const TTL = 30_000;
+  const STALE = 60 * 60_000;
+  let clock: number;
   let version: number | Error;
   let resume: Buffer | null;
   let getResumePdf: jest.Mock<Promise<Buffer | null>, []>;
   let getVersion: jest.Mock<Promise<number>, []>;
 
-  function build(configured = true) {
+  function build(options: { configured?: boolean; maxPdfBytes?: number } = {}) {
+    const configured = options.configured ?? true;
     const client: KnowledgeProfileClient = { getPublished: jest.fn(), getResumePdf };
-    return createResumeDownloader({
-      getProfileClient: () => (configured ? client : null),
-      getVersionClient: () => (configured ? { getVersion } : null),
-    });
+    return createResumeDownloader(
+      {
+        getProfileClient: () => (configured ? client : null),
+        getVersionClient: () => (configured ? { getVersion } : null),
+      },
+      {
+        versionTtlMs: TTL,
+        maxStaleMs: STALE,
+        maxPdfBytes: options.maxPdfBytes,
+        now: () => clock,
+      },
+    );
   }
+
+  /** Moves time past the version TTL so the next request re-reads `/version`. */
+  const pastTtl = () => {
+    clock += TTL + 1;
+  };
 
   beforeEach(() => {
     log.warn.mockReset();
+    clock = 1_000_000;
     version = 1;
     resume = PDF;
     getResumePdf = jest.fn(() => Promise.resolve(resume));
@@ -86,36 +132,66 @@ describe('createResumeDownloader', () => {
     );
   });
 
-  it('downloads the PDF once per corpus version', async () => {
+  it('downloads the PDF once per version and reads /version at most once per TTL', async () => {
     const downloader = build();
     await downloader.get(log);
     const second = await downloader.get(log);
 
-    expect(second).toEqual({ found: true, filename: 'resume.pdf', body: PDF });
+    expect(second).toEqual({ found: true, body: PDF, etag: '"resume-v1"' });
+    expect(getVersion).toHaveBeenCalledTimes(1);
+
+    pastTtl();
+    await downloader.get(log);
+    expect(getVersion).toHaveBeenCalledTimes(2);
     expect(getResumePdf).toHaveBeenCalledTimes(1);
   });
 
-  it('serves the new primary resume as soon as the version changes', async () => {
+  it('serves the new primary resume once the version changes', async () => {
     const downloader = build();
     await downloader.get(log);
 
     version = 2;
     resume = Buffer.from('%PDF-1.4 new primary');
+    pastTtl();
     const next = await downloader.get(log);
 
     expect(getResumePdf).toHaveBeenCalledTimes(2);
-    expect(next).toEqual({ found: true, filename: 'resume.pdf', body: resume });
+    expect(next).toEqual({ found: true, body: resume, etag: '"resume-v2"' });
+  });
+
+  it('shares one version read and one download between concurrent requests', async () => {
+    const downloader = build();
+    const results = await Promise.all([
+      downloader.get(log),
+      downloader.get(log),
+      downloader.get(log),
+    ]);
+
+    expect(results.every((r) => r.found)).toBe(true);
+    expect(getVersion).toHaveBeenCalledTimes(1);
+    expect(getResumePdf).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries after a failed download instead of caching the failure', async () => {
+    const downloader = build();
+    getResumePdf.mockRejectedValueOnce(new Error('unreachable'));
+    await expect(downloader.get(log)).rejects.toThrow('unreachable');
+
+    expect((await downloader.get(log)).found).toBe(true);
+    expect(getResumePdf).toHaveBeenCalledTimes(2);
   });
 
   it('is not found without a primary resume, and notices a later upload', async () => {
     resume = null;
     const downloader = build();
     expect(await downloader.get(log)).toEqual({ found: false });
+    pastTtl();
     expect(await downloader.get(log)).toEqual({ found: false });
     expect(getResumePdf).toHaveBeenCalledTimes(1);
 
     version = 2;
     resume = PDF;
+    pastTtl();
     expect((await downloader.get(log)).found).toBe(true);
   });
 
@@ -124,23 +200,63 @@ describe('createResumeDownloader', () => {
     await downloader.get(log);
     version = 2;
     resume = null;
+    pastTtl();
     expect(await downloader.get(log)).toEqual({ found: false });
   });
 
-  it('serves the cached PDF when /version is unreachable', async () => {
+  it('never replaces a newer cache entry with an older download', async () => {
+    let releaseOld: (pdf: Buffer) => void = () => undefined;
+    const downloader = build();
+    getResumePdf
+      .mockImplementationOnce(() => new Promise<Buffer | null>((r) => (releaseOld = r)))
+      .mockResolvedValueOnce(Buffer.from('%PDF-1.4 v2'));
+
+    const slowV1 = downloader.get(log);
+    await Promise.resolve();
+    await Promise.resolve();
+    version = 2;
+    pastTtl();
+    const fastV2 = await downloader.get(log);
+    expect(fastV2).toMatchObject({ found: true, etag: '"resume-v2"' });
+
+    releaseOld(Buffer.from('%PDF-1.4 v1'));
+    await slowV1;
+    pastTtl();
+    const after = await downloader.get(log);
+    expect(after).toMatchObject({ found: true, etag: '"resume-v2"' });
+    expect(getResumePdf).toHaveBeenCalledTimes(2);
+  });
+
+  it('serves the cached PDF when /version is unreachable, but only for a bounded time', async () => {
     const downloader = build();
     await downloader.get(log);
 
     version = new Error('down');
-    const res: ResumeDownload = await downloader.get(log);
-
-    expect(res).toEqual({ found: true, filename: 'resume.pdf', body: PDF });
-    expect(getResumePdf).toHaveBeenCalledTimes(1);
+    pastTtl();
+    expect(await downloader.get(log)).toEqual({ found: true, body: PDF, etag: '"resume-v1"' });
     expect(log.warn).toHaveBeenCalled();
+    expect(getResumePdf).toHaveBeenCalledTimes(1);
+
+    clock += STALE;
+    await expect(downloader.get(log)).rejects.toThrow('down');
   });
 
-  it('is not found when the knowledge service is not configured', async () => {
-    expect(await build(false).get(log)).toEqual({ found: false });
+  it('rejects a PDF over the size cap and one without the PDF magic', async () => {
+    resume = Buffer.from('%PDF-1.4 ' + 'x'.repeat(100));
+    await expect(build({ maxPdfBytes: 50 }).get(log)).rejects.toThrow(/larger than/);
+
+    resume = Buffer.from('<html>not a pdf</html>');
+    await expect(build().get(log)).rejects.toThrow(/not a PDF/);
+  });
+
+  it('rejects when the download fails and nothing is cached', async () => {
+    getResumePdf.mockRejectedValue(new Error('service down'));
+    await expect(build().get(log)).rejects.toThrow('service down');
+  });
+
+  it('is not found, with a distinct warning, when the knowledge service is not configured', async () => {
+    expect(await build({ configured: false }).get(log)).toEqual({ found: false });
     expect(getResumePdf).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('not configured'));
   });
 });

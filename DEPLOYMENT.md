@@ -236,7 +236,7 @@ what that does and why it matters.
 
 ### 4. Resume PDF
 
-The frontend downloads the resume from the backend via `GET /resume`. The backend serves only the knowledge service's primary resume (`/resume.pdf`), cached by the corpus `/version`, so a new primary resume is served right away. There is no local or `public/` fallback: upload a PDF through the owner's knowledge page and mark it primary. `GET /resume` returns 404 (logged at `warn` as `Resume not found`) when there is no primary resume, or when `KNOWLEDGE_URL` / `KNOWLEDGE_SERVICE_KEY` are not set.
+The frontend downloads the resume from the backend via `GET /resume`. The backend serves only the knowledge service's primary resume (`/resume.pdf`), cached by the corpus `/version` (re-read every 30 s), so a new primary resume is served within about 30 s. There is no local or `public/` fallback: upload a PDF through the owner's knowledge page and mark it primary. `GET /resume` returns 404 (logged at `warn` as `Resume not found`) when there is no primary resume, or when `KNOWLEDGE_URL` / `KNOWLEDGE_SERVICE_KEY` are not set.
 
 > Supabase Storage is **not** currently read by the backend — `@supabase/supabase-js` is not a dependency and no code path reads `SUPABASE_URL` or `SUPABASE_SECRET_KEY`. Serving the resume from Storage requires implementing that path first.
 

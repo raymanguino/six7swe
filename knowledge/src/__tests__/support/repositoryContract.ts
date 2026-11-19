@@ -192,6 +192,26 @@ export function describeRepositoryContract(
       expect(await repo.getDocument(owner, old.id)).toMatchObject({ isPrimaryResume: false });
     });
 
+    it('moves the corpus version when the primary resume changes', async () => {
+      const { repo, newOwner } = target();
+      const owner = newOwner();
+      const old = await ready(owner, 'old resume', { kind: 'resume' });
+      await ready(owner, 'new resume', { kind: 'resume' });
+
+      const beforePick = await repo.getVersion(owner);
+      await repo.setPrimaryResume(owner, old.id);
+      expect(await repo.getVersion(owner)).toBeGreaterThan(beforePick);
+
+      // Deleting the primary moves it, even when it has no chunks.
+      const { document: empty } = await repo.createDocument(newDoc(owner, { kind: 'resume' }));
+      await repo.markProcessing(empty.id);
+      await repo.completeIngestion(empty.id, '', []);
+      expect(await repo.getPrimaryResume(owner)).toMatchObject({ id: empty.id });
+      const beforeDelete = await repo.getVersion(owner);
+      await repo.deleteDocument(owner, empty.id);
+      expect(await repo.getVersion(owner)).toBeGreaterThan(beforeDelete);
+    });
+
     it('returns the extracted text to the owner only', async () => {
       const { repo, newOwner } = target();
       const owner = newOwner();
