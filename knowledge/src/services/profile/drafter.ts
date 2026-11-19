@@ -6,6 +6,7 @@ import {
   MINIMAX,
   ModelError,
   stripThinking,
+  type MiniMaxCompletion,
   type MiniMaxOptions,
 } from '../llm/minimax.js';
 import { normalizeProfileDraft } from './normalize.js';
@@ -54,6 +55,8 @@ const TIMEOUT_MS = 240_000;
  * answer was cut off partway through the JSON.
  */
 export const DRAFT_MAX_COMPLETION_TOKENS = 16_384;
+/** Shown for an empty answer and for JSON cut off by the token limit alike. */
+const DRAFT_LENGTH_MESSAGE = `${MINIMAX} hit its token limit before answering. Try again, or shorten the resume.`;
 
 export const DRAFT_SYSTEM_PROMPT = `You turn a software engineer's resume into a structured profile for their portfolio website.
 
@@ -90,7 +93,7 @@ function tryJson(text: string): { ok: true; value: unknown } | { ok: false } {
 /**
  * The model's JSON. A Markdown code fence around it is tolerated, and so is
  * prose around it: failing a whole parse, the text from the first `{` to the
- * last `}` is tried. Only the answer's length is logged, never its text,
+ * last `}` is tried. Only the answer's shape is logged, never its text,
  * which can echo the resume.
  */
 export function parseModelJson(content: string): unknown {
@@ -145,8 +148,7 @@ export function createMiniMaxProfileDrafter(options: MiniMaxDrafterOptions): Pro
   return {
     name: `minimax:${options.model}`,
     async draft(resumeText) {
-      const lengthMessage = `${MINIMAX} hit its token limit before answering. Try again, or shorten the resume.`;
-      let completion: { content: string; finishReason: string | null };
+      let completion: MiniMaxCompletion;
       try {
         completion = await completeWithMiniMaxDetailed(
           {
@@ -158,7 +160,7 @@ export function createMiniMaxProfileDrafter(options: MiniMaxDrafterOptions): Pro
             { role: 'system', content: DRAFT_SYSTEM_PROMPT },
             { role: 'user', content: draftUserPrompt(resumeText) },
           ],
-          lengthMessage,
+          DRAFT_LENGTH_MESSAGE,
         );
       } catch (error) {
         if (error instanceof ModelError) {
@@ -172,7 +174,7 @@ export function createMiniMaxProfileDrafter(options: MiniMaxDrafterOptions): Pro
       } catch (error) {
         // A cut-off answer is half a JSON object: say so, not "not JSON".
         if (error instanceof DraftError && completion.finishReason === 'length') {
-          throw new DraftError(lengthMessage, error.detail);
+          throw new DraftError(DRAFT_LENGTH_MESSAGE, error.detail);
         }
         throw error;
       }

@@ -15,7 +15,6 @@ import { createHashingEmbedder } from '../services/embedding/hashing.js';
 import { ingestDocument } from '../services/ingestion/pipeline.js';
 import {
   createMiniMaxProfileDrafter,
-  DRAFT_MAX_COMPLETION_TOKENS,
   stripThinking,
   createProfileDrafter,
   createStubProfileDrafter,
@@ -705,12 +704,27 @@ describe('MiniMax drafter', () => {
     };
     expect(body).toMatchObject({
       model: 'MiniMax-M3',
-      max_completion_tokens: DRAFT_MAX_COMPLETION_TOKENS,
+      max_completion_tokens: 16_384,
       reasoning_effort: 'medium',
     });
     expect(body).not.toHaveProperty('response_format');
     expect(body.messages.map((m) => m.role)).toEqual(['system', 'user']);
     expect(body.messages[1]?.content).toContain('Acme Corp');
+  });
+
+  it('lets the caller set the completion budget', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(() =>
+      Promise.resolve(answer(JSON.stringify(SAMPLE_PROFILE))),
+    );
+    await createMiniMaxProfileDrafter({
+      url: URL,
+      apiKey: 'mm-primary',
+      model: 'MiniMax-M3',
+      fetchImpl,
+      maxCompletionTokens: 4096,
+    }).draft('x');
+    const body = JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
+    expect(body.max_completion_tokens).toBe(4096);
   });
 
   it('strips a leading think block before parsing', async () => {
