@@ -4,6 +4,7 @@ import type { HunterOutletContext } from '../HunterLayout';
 import DocumentTable from './DocumentTable';
 import EvalSetPanel from './EvalSetPanel';
 import ProfileReview from './ProfileReview';
+import RiskReview from './RiskReview';
 import SearchPlayground from './SearchPlayground';
 import TextPreview from './TextPreview';
 import UploadDropzone from './UploadDropzone';
@@ -12,7 +13,7 @@ import { useKnowledgeDocuments } from './useKnowledgeDocuments';
 import { useKnowledgeProfile } from './useKnowledgeProfile';
 
 /**
- * The owner's knowledge base: upload, the document table with live status,
+ * The owner's knowledge base: upload, the risk scan's review (#212), the document table with live status,
  * the extracted-text preview, the landing profile's review and publish, the
  * "ask as a visitor" playground, and the chat eval set (#85).
  *
@@ -59,9 +60,10 @@ export default function KnowledgePage() {
       <section>
         <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Knowledge</h2>
         <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
-          The documents the portfolio chat and the job matcher answer from. When a resume finishes
-          processing, the newest ready resume becomes primary. &ldquo;Make primary&rdquo; picks
-          another one until the next resume finishes processing.
+          The documents the portfolio chat and the job matcher answer from. Every upload is scanned
+          for anything risky to make public; a flagged document waits for your review before it is
+          searchable. When a resume finishes processing, the newest ready resume becomes primary.
+          &ldquo;Make primary&rdquo; picks another one until the next resume finishes processing.
         </p>
       </section>
 
@@ -85,6 +87,12 @@ export default function KnowledgePage() {
       )}
 
       <UploadDropzone onUploadBatch={knowledge.uploadBatch} />
+
+      <RiskReview
+        documents={knowledge.documents}
+        onApprove={knowledge.approve}
+        onReplace={knowledge.replace}
+      />
 
       <section className="space-y-4">
         <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Documents</h3>

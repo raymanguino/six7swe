@@ -13,7 +13,8 @@
 
 export type DocumentKind = 'resume' | 'supporting';
 
-export type DocumentStatus = 'pending' | 'processing' | 'ready' | 'failed';
+/** `needs_review`: the risk scan flagged it (#212); not searchable until approved. */
+export type DocumentStatus = 'pending' | 'processing' | 'needs_review' | 'ready' | 'failed';
 
 export interface KnowledgeDocument {
   id: string;
@@ -25,9 +26,48 @@ export interface KnowledgeDocument {
   status: DocumentStatus;
   error: string | null;
   chunkCount: number;
+  /** How many findings the last risk scan stored. */
+  findingCount: number;
+  /** When the text was last risk-scanned; null when it has not been yet. */
+  scannedAt: string | null;
+  /** When the owner approved the current findings as they are; null otherwise. */
+  approvedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
+
+export type RiskCategory =
+  | 'contact_details'
+  | 'home_address'
+  | 'compensation'
+  | 'reference_details'
+  | 'confidential'
+  | 'personal_details'
+  | 'credentials'
+  | 'negative_remarks'
+  | 'other'
+  | 'scan_failed';
+
+export interface RiskFinding {
+  category: RiskCategory;
+  source: 'pattern' | 'model' | 'scan';
+  excerpt: string;
+  reason: string;
+  location: { page: number | null; offset: number | null };
+}
+
+export interface DocumentFindingsResponse {
+  document: KnowledgeDocument;
+  findings: RiskFinding[];
+}
+
+/**
+ * Whether the owner still has findings to review: a document held by the
+ * scan, or a ready one the one-time backfill flagged and nobody approved yet.
+ */
+export const hasFindingsToReview = (doc: KnowledgeDocument): boolean =>
+  doc.status === 'needs_review' ||
+  (doc.status === 'ready' && doc.findingCount > 0 && doc.approvedAt === null);
 
 export interface UploadResponse {
   document: KnowledgeDocument;
@@ -72,8 +112,26 @@ export const DEFAULT_SEARCH_K = 6;
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
 
-const STATUSES: readonly string[] = ['pending', 'processing', 'ready', 'failed'];
+const STATUSES: readonly string[] = ['pending', 'processing', 'needs_review', 'ready', 'failed'];
 const KINDS: readonly string[] = ['resume', 'supporting'];
+const RISK_CATEGORIES: readonly string[] = [
+  'contact_details',
+  'home_address',
+  'compensation',
+  'reference_details',
+  'confidential',
+  'personal_details',
+  'credentials',
+  'negative_remarks',
+  'other',
+  'scan_failed',
+];
+const RISK_SOURCES: readonly string[] = ['pattern', 'model', 'scan'];
+
+const isNullableString = (value: unknown): value is string | null =>
+  value === null || typeof value === 'string';
+const isNullableNumber = (value: unknown): value is number | null =>
+  value === null || typeof value === 'number';
 
 const isDocument = (value: unknown): value is KnowledgeDocument =>
   isRecord(value) &&
@@ -88,7 +146,38 @@ const isDocument = (value: unknown): value is KnowledgeDocument =>
   KINDS.includes(value.kind) &&
   typeof value.status === 'string' &&
   STATUSES.includes(value.status) &&
-  (value.error === null || typeof value.error === 'string');
+  isNullableString(value.error) &&
+  typeof value.findingCount === 'number' &&
+  isNullableString(value.scannedAt) &&
+  isNullableString(value.approvedAt);
+
+/**
+ * The document, with the risk-scan fields defaulted when a service that
+ * predates them leaves them out (as the contract's own defaults do); null
+ * when it is not a document.
+ */
+function toDocument(value: unknown): KnowledgeDocument | null {
+  if (!isRecord(value)) return null;
+  const withDefaults = {
+    ...value,
+    findingCount: value.findingCount ?? 0,
+    scannedAt: value.scannedAt ?? null,
+    approvedAt: value.approvedAt ?? null,
+  };
+  return isDocument(withDefaults) ? withDefaults : null;
+}
+
+const isRiskFinding = (value: unknown): value is RiskFinding =>
+  isRecord(value) &&
+  typeof value.category === 'string' &&
+  RISK_CATEGORIES.includes(value.category) &&
+  typeof value.source === 'string' &&
+  RISK_SOURCES.includes(value.source) &&
+  typeof value.excerpt === 'string' &&
+  typeof value.reason === 'string' &&
+  isRecord(value.location) &&
+  isNullableNumber(value.location.page) &&
+  isNullableNumber(value.location.offset);
 
 const isChunk = (value: unknown): value is RetrievedChunk =>
   isRecord(value) &&
@@ -103,23 +192,42 @@ function invalid(what: string): never {
 }
 
 export function parseDocumentList(data: unknown): KnowledgeDocument[] {
-  if (!isRecord(data) || !Array.isArray(data.documents) || !data.documents.every(isDocument)) {
-    return invalid('document list');
+  if (!isRecord(data) || !Array.isArray(data.documents)) return invalid('document list');
+  const documents: KnowledgeDocument[] = [];
+  for (const raw of data.documents) {
+    const document = toDocument(raw);
+    if (!document) return invalid('document list');
+    documents.push(document);
   }
-  return data.documents;
+  return documents;
 }
 
-/** `GET /knowledge/documents/:id` and `PUT .../primary`. */
+/** `GET /knowledge/documents/:id`, `PUT .../primary` and `POST .../approve`. */
 export function parseDocument(data: unknown): KnowledgeDocument {
-  if (!isRecord(data) || !isDocument(data.document)) return invalid('document');
-  return data.document;
+  const document = isRecord(data) ? toDocument(data.document) : null;
+  return document ?? invalid('document');
 }
 
 export function parseUpload(data: unknown): UploadResponse {
-  if (!isRecord(data) || !isDocument(data.document) || typeof data.deduplicated !== 'boolean') {
+  const document = isRecord(data) ? toDocument(data.document) : null;
+  if (!isRecord(data) || !document || typeof data.deduplicated !== 'boolean') {
     return invalid('upload');
   }
-  return { document: data.document, deduplicated: data.deduplicated };
+  return { document, deduplicated: data.deduplicated };
+}
+
+/** `GET /knowledge/documents/:id/findings`. */
+export function parseFindings(data: unknown): DocumentFindingsResponse {
+  const document = isRecord(data) ? toDocument(data.document) : null;
+  if (
+    !isRecord(data) ||
+    !document ||
+    !Array.isArray(data.findings) ||
+    !data.findings.every(isRiskFinding)
+  ) {
+    return invalid('findings');
+  }
+  return { document, findings: data.findings };
 }
 
 export function parseText(data: unknown): DocumentTextResponse {

@@ -1,5 +1,10 @@
 import { useRef, useState } from 'react';
-import { ACCEPTED_EXTENSIONS, type DocumentStatus, type KnowledgeDocument } from './types';
+import {
+  ACCEPTED_EXTENSIONS,
+  hasFindingsToReview,
+  type DocumentStatus,
+  type KnowledgeDocument,
+} from './types';
 
 interface DocumentTableProps {
   documents: KnowledgeDocument[];
@@ -14,6 +19,7 @@ interface DocumentTableProps {
 const STATUS_STYLES: Record<DocumentStatus, string> = {
   pending: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200',
   processing: 'bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-200',
+  needs_review: 'bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200',
   ready: 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-200',
   failed: 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-200',
 };
@@ -131,8 +137,13 @@ export default function DocumentTable({
                   <span
                     className={`rounded-full px-2 py-0.5 text-xs font-semibold ${STATUS_STYLES[doc.status]}`}
                   >
-                    {doc.status}
+                    {doc.status === 'needs_review' ? 'needs review' : doc.status}
                   </span>
+                  {hasFindingsToReview(doc) && (
+                    <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                      {doc.findingCount} finding{doc.findingCount === 1 ? '' : 's'} to review
+                    </p>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums text-gray-700 dark:text-gray-300">
                   {doc.chunkCount}
@@ -151,7 +162,7 @@ export default function DocumentTable({
                     )}
                     <button
                       type="button"
-                      disabled={doc.status !== 'ready'}
+                      disabled={doc.status !== 'ready' && doc.status !== 'needs_review'}
                       onClick={() => onPreview(doc)}
                       className="text-primary-600 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
                     >

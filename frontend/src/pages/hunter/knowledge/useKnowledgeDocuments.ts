@@ -31,13 +31,15 @@ export interface KnowledgeDocuments {
   uploadBatch: (files: File[], kind: DocumentKind) => Promise<void>;
   /**
    * Uploads `file` as the new version of `previous`, waits until the new
-   * document is ready, then deletes `previous`. If the new one fails, the
-   * previous one is kept. Identical bytes resolve to the same document,
-   * which is then kept as it is.
+   * document is scanned (ready, or held for review), then deletes
+   * `previous`. If the new one fails, the previous one is kept. Identical
+   * bytes resolve to the same document, which is then kept as it is.
    */
   replace: (previous: KnowledgeDocument, file: File) => Promise<void>;
   remove: (doc: KnowledgeDocument) => Promise<void>;
   setPrimary: (doc: KnowledgeDocument) => Promise<void>;
+  /** Approves the risk scan's findings as they are, making a held document searchable (#212). */
+  approve: (doc: KnowledgeDocument) => Promise<void>;
 }
 
 async function uploadFile(file: File, kind: DocumentKind) {
@@ -51,7 +53,7 @@ async function uploadFile(file: File, kind: DocumentKind) {
 /**
  * The owner's documents through the backend's `/knowledge/*` proxy, with
  * live status: while any document is pending or processing, the list is
- * re-read until every one has settled (ready or failed), for at most
+ * re-read until every one has settled (ready, needs_review or failed), for at most
  * `POLL_LIMIT_MS`.
  */
 export function useKnowledgeDocuments(enabled: boolean): KnowledgeDocuments {
@@ -206,13 +208,16 @@ export function useKnowledgeDocuments(enabled: boolean): KnowledgeDocuments {
           return;
         }
 
+        // A new version the risk scan holds for review still replaces the old
+        // one: the owner replaced it to change what it says, and the new
+        // findings are shown for review in its place.
         // Issued even if the page has been left: only the UI updates below
         // (report, the final load) depend on it still being mounted.
         try {
           await apiRequest(`/knowledge/documents/${previous.id}`, { method: 'DELETE' });
         } catch (err) {
           report(
-            `Replacing ${name}: the new version ${settled.filename} is stored and ready, but ` +
+            `Replacing ${name}: the new version ${settled.filename} is stored, but ` +
               `${name} could not be deleted (${errorMessage(err, 'request failed')}). It remains; delete it by hand.`,
           );
         }
@@ -249,6 +254,20 @@ export function useKnowledgeDocuments(enabled: boolean): KnowledgeDocuments {
     [load, report],
   );
 
+  const approve = useCallback(
+    async (doc: KnowledgeDocument) => {
+      try {
+        parseDocument(
+          await apiRequest(`/knowledge/documents/${doc.id}/approve`, { method: 'POST' }),
+        );
+      } catch (err) {
+        report(`Approving ${doc.filename}: ${errorMessage(err, 'request failed')}`);
+      }
+      await load();
+    },
+    [load, report],
+  );
+
   return {
     documents,
     loading,
@@ -259,5 +278,6 @@ export function useKnowledgeDocuments(enabled: boolean): KnowledgeDocuments {
     replace,
     remove,
     setPrimary,
+    approve,
   };
 }

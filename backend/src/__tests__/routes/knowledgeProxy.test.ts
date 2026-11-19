@@ -188,6 +188,8 @@ describe('knowledge owner proxy routes', () => {
       { method: 'GET', url: `/knowledge/documents/${DOC_ID}` },
       { method: 'GET', url: `/knowledge/documents/${DOC_ID}/text` },
       { method: 'PUT', url: `/knowledge/documents/${DOC_ID}/primary` },
+      { method: 'GET', url: `/knowledge/documents/${DOC_ID}/findings` },
+      { method: 'POST', url: `/knowledge/documents/${DOC_ID}/approve` },
       { method: 'DELETE', url: `/knowledge/documents/${DOC_ID}` },
     ];
     for (const route of routes) {
@@ -250,6 +252,8 @@ describe('knowledge owner proxy routes', () => {
     await app.inject({ method: 'GET', url: `/knowledge/documents/${DOC_ID}` });
     await app.inject({ method: 'GET', url: `/knowledge/documents/${DOC_ID}/text` });
     await app.inject({ method: 'PUT', url: `/knowledge/documents/${DOC_ID}/primary` });
+    await app.inject({ method: 'GET', url: `/knowledge/documents/${DOC_ID}/findings` });
+    await app.inject({ method: 'POST', url: `/knowledge/documents/${DOC_ID}/approve` });
     const search = await app.inject({
       method: 'POST',
       url: '/knowledge/search',
@@ -263,10 +267,12 @@ describe('knowledge owner proxy routes', () => {
         `GET /documents/${DOC_ID}`,
         `GET /documents/${DOC_ID}/text`,
         `PUT /documents/${DOC_ID}/primary`,
+        `GET /documents/${DOC_ID}/findings`,
+        `POST /documents/${DOC_ID}/approve`,
         'POST /search',
       ],
     );
-    const searchCall = service.calls[4];
+    const searchCall = service.calls[6];
     expect(JSON.parse(String(searchCall?.init.body))).toEqual({ query: 'kafka', k: 3 });
     expect((searchCall?.init.headers as Record<string, string>)['content-type']).toBe(
       'application/json',

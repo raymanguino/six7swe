@@ -79,6 +79,9 @@ export async function registerKnowledgeRoutes(
       owner.post('/knowledge/documents', PRIVATE_ROUTE, handlers.uploadDocument);
       owner.get('/knowledge/documents/:id', PRIVATE_ROUTE, handlers.getDocument);
       owner.get('/knowledge/documents/:id/text', PRIVATE_ROUTE, handlers.getDocumentText);
+      // The risk scan's review gate (#212): the findings, and approving them as they are.
+      owner.get('/knowledge/documents/:id/findings', PRIVATE_ROUTE, handlers.getDocumentFindings);
+      owner.post('/knowledge/documents/:id/approve', PRIVATE_ROUTE, handlers.approveDocument);
       owner.put('/knowledge/documents/:id/primary', PRIVATE_ROUTE, handlers.setPrimaryResume);
       owner.delete('/knowledge/documents/:id', PRIVATE_ROUTE, handlers.deleteDocument);
       owner.post('/knowledge/search', PRIVATE_ROUTE, handlers.search);
