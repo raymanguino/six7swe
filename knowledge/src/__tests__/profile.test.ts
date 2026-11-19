@@ -15,7 +15,7 @@ import { createHashingEmbedder } from '../services/embedding/hashing.js';
 import { ingestDocument } from '../services/ingestion/pipeline.js';
 import {
   createMiniMaxProfileDrafter,
-  MINIMAX_MAX_COMPLETION_TOKENS,
+  DRAFT_MAX_COMPLETION_TOKENS,
   stripThinking,
   createProfileDrafter,
   createStubProfileDrafter,
@@ -705,7 +705,7 @@ describe('MiniMax drafter', () => {
     };
     expect(body).toMatchObject({
       model: 'MiniMax-M3',
-      max_completion_tokens: MINIMAX_MAX_COMPLETION_TOKENS,
+      max_completion_tokens: DRAFT_MAX_COMPLETION_TOKENS,
       reasoning_effort: 'medium',
     });
     expect(body).not.toHaveProperty('response_format');
@@ -789,8 +789,23 @@ describe('MiniMax drafter', () => {
       drafterWith(() => Promise.resolve(answer('Jordan lives at 1 Main St'))).draft('x'),
     );
     expect(error.message).toBe('The model did not answer with JSON.');
-    expect(error.detail).toBe('answer of 25 characters was not JSON');
+    expect(error.detail).toBe(
+      'answer of 25 characters was not JSON (starts with {: no, ends with }: no, has <think>: no)',
+    );
     expect(error.cause).toBeUndefined();
+  });
+
+  it('reports the token limit when the answer was cut off partway through the JSON', async () => {
+    const cut = JSON.stringify(SAMPLE_PROFILE).slice(0, 80);
+    const error = await failure(
+      drafterWith(() => Promise.resolve(answer(cut, 'length'))).draft('x'),
+    );
+    expect(error.message).toBe(
+      'MiniMax hit its token limit before answering. Try again, or shorten the resume.',
+    );
+    expect(error.detail).toBe(
+      'answer of 80 characters was not JSON (starts with {: yes, ends with }: no, has <think>: no)',
+    );
   });
 
   it('reports the token limit when reasoning was cut off inside <think>', async () => {

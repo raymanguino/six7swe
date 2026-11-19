@@ -2,9 +2,8 @@ import { z } from 'zod';
 import type { ProfileDrafterConfig } from '../../config/env.js';
 import { PROFILE_LIMITS, type ProfileData } from '../../contract.js';
 import {
-  completeWithMiniMax,
+  completeWithMiniMaxDetailed,
   MINIMAX,
-  MINIMAX_MAX_COMPLETION_TOKENS,
   ModelError,
   stripThinking,
   type MiniMaxOptions,
@@ -49,6 +48,12 @@ export const MAX_RESUME_CHARS = 40_000;
  * keeps polling, so a long wait costs nothing but time.
  */
 const TIMEOUT_MS = 240_000;
+/**
+ * MiniMax-M3's reasoning shares the completion budget with the answer, and a
+ * full profile is a few thousand tokens on its own: at the shared 8192 the
+ * answer was cut off partway through the JSON.
+ */
+export const DRAFT_MAX_COMPLETION_TOKENS = 16_384;
 
 export const DRAFT_SYSTEM_PROMPT = `You turn a software engineer's resume into a structured profile for their portfolio website.
 
@@ -102,9 +107,17 @@ export function parseModelJson(content: string): unknown {
     if (embedded.ok) return embedded.value;
   }
   // No `cause`: JSON.parse's message quotes the text it choked on.
-  throw new DraftError(
-    'The model did not answer with JSON.',
-    `answer of ${body.length} characters was not JSON`,
+  throw new DraftError('The model did not answer with JSON.', describeAnswer(body));
+}
+
+/** The answer's shape for the logs (length and a few yes/no facts), never its text. */
+function describeAnswer(body: string): string {
+  const yesNo = (value: boolean) => (value ? 'yes' : 'no');
+  return (
+    `answer of ${body.length} characters was not JSON ` +
+    `(starts with {: ${yesNo(body.startsWith('{'))}, ` +
+    `ends with }: ${yesNo(body.endsWith('}'))}, ` +
+    `has <think>: ${yesNo(/<\/?think>/i.test(body))})`
   );
 }
 
@@ -120,7 +133,7 @@ export function toProfileData(raw: unknown): ProfileData {
   }
 }
 
-export { MINIMAX_MAX_COMPLETION_TOKENS, stripThinking };
+export { stripThinking };
 
 export type MiniMaxDrafterOptions = MiniMaxOptions;
 
@@ -132,15 +145,20 @@ export function createMiniMaxProfileDrafter(options: MiniMaxDrafterOptions): Pro
   return {
     name: `minimax:${options.model}`,
     async draft(resumeText) {
-      let content: string;
+      const lengthMessage = `${MINIMAX} hit its token limit before answering. Try again, or shorten the resume.`;
+      let completion: { content: string; finishReason: string | null };
       try {
-        content = await completeWithMiniMax(
-          { ...options, timeoutMs: options.timeoutMs ?? TIMEOUT_MS },
+        completion = await completeWithMiniMaxDetailed(
+          {
+            ...options,
+            timeoutMs: options.timeoutMs ?? TIMEOUT_MS,
+            maxCompletionTokens: options.maxCompletionTokens ?? DRAFT_MAX_COMPLETION_TOKENS,
+          },
           [
             { role: 'system', content: DRAFT_SYSTEM_PROMPT },
             { role: 'user', content: draftUserPrompt(resumeText) },
           ],
-          `${MINIMAX} hit its token limit before answering. Try again, or shorten the resume.`,
+          lengthMessage,
         );
       } catch (error) {
         if (error instanceof ModelError) {
@@ -148,7 +166,17 @@ export function createMiniMaxProfileDrafter(options: MiniMaxDrafterOptions): Pro
         }
         throw error;
       }
-      return toProfileData(parseModelJson(content));
+      let raw: unknown;
+      try {
+        raw = parseModelJson(completion.content);
+      } catch (error) {
+        // A cut-off answer is half a JSON object: say so, not "not JSON".
+        if (error instanceof DraftError && completion.finishReason === 'length') {
+          throw new DraftError(lengthMessage, error.detail);
+        }
+        throw error;
+      }
+      return toProfileData(raw);
     },
   };
 }
