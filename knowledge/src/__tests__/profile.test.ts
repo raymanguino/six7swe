@@ -804,7 +804,7 @@ describe('MiniMax drafter', () => {
     );
     expect(error.message).toBe('The model did not answer with JSON.');
     expect(error.detail).toBe(
-      'answer of 25 characters was not JSON (starts with {: no, ends with }: no, has <think>: no)',
+      'answer of 25 characters was not JSON (starts with {: no, ends with }: no, leftover <think>: no)',
     );
     expect(error.cause).toBeUndefined();
   });
@@ -818,7 +818,7 @@ describe('MiniMax drafter', () => {
       'MiniMax hit its token limit before answering. Try again, or shorten the resume.',
     );
     expect(error.detail).toBe(
-      'answer of 80 characters was not JSON (starts with {: yes, ends with }: no, has <think>: no)',
+      'answer of 80 characters was not JSON (starts with {: yes, ends with }: no, leftover <think>: no)',
     );
   });
 

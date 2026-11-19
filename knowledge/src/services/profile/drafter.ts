@@ -120,7 +120,8 @@ function describeAnswer(body: string): string {
     `answer of ${body.length} characters was not JSON ` +
     `(starts with {: ${yesNo(body.startsWith('{'))}, ` +
     `ends with }: ${yesNo(body.endsWith('}'))}, ` +
-    `has <think>: ${yesNo(/<\/?think>/i.test(body))})`
+    // A leading think block is already stripped; a tag left anywhere else breaks the JSON.
+    `leftover <think>: ${yesNo(/<\/?think>/i.test(body))})`
   );
 }
 
