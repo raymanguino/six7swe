@@ -22,12 +22,16 @@ import {
 
 export interface KnowledgeProfileClient {
   getPublished(): Promise<PublishedProfileResponse>;
-  /** The primary resume's PDF; null when the service has none (404). */
-  getResumePdf(): Promise<Buffer | null>;
+  /**
+   * The primary resume's PDF; null when the service has none (404). A body over `maxBytes`
+   * (default `RESUME_PDF_MAX_BYTES`) throws `KnowledgeBodyTooLargeError`.
+   */
+  getResumePdf(maxBytes?: number): Promise<Buffer | null>;
 }
 
 /** A resume is at most the service's upload limit; the private network is fast. */
 export const RESUME_PDF_TIMEOUT_MS = 15_000;
+export const RESUME_PDF_MAX_BYTES = 10 * 1024 * 1024;
 const PDF_MIME = 'application/pdf';
 
 export function createKnowledgeProfileClient(
@@ -44,15 +48,18 @@ export function createKnowledgeProfileClient(
       );
     },
 
-    async getResumePdf() {
+    async getResumePdf(maxBytes = RESUME_PDF_MAX_BYTES) {
       const path = '/resume.pdf';
       let reply: KnowledgeBytesReply;
       try {
-        reply = await sendKnowledgeRequestForBytes({
-          ...base,
-          path,
-          timeoutMs: Math.max(config.timeoutMs, RESUME_PDF_TIMEOUT_MS),
-        });
+        reply = await sendKnowledgeRequestForBytes(
+          {
+            ...base,
+            path,
+            timeoutMs: Math.max(config.timeoutMs, RESUME_PDF_TIMEOUT_MS),
+          },
+          maxBytes,
+        );
       } catch (error) {
         if (!(error instanceof KnowledgeTransportError)) throw error;
         throw new KnowledgeServiceError(`Knowledge service ${path} ${error.message}`, {

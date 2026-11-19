@@ -88,15 +88,50 @@ export interface KnowledgeBytesReply {
   bytes: Buffer;
 }
 
-/** `sendKnowledgeRequest` for a binary body, such as the resume PDF. */
+/** The body is larger than the caller allows; the read stopped early. */
+export class KnowledgeBodyTooLargeError extends Error {
+  constructor(readonly maxBytes: number) {
+    super(`Knowledge service response is larger than ${maxBytes} bytes`);
+    this.name = 'KnowledgeBodyTooLargeError';
+  }
+}
+
+/**
+ * `sendKnowledgeRequest` for a binary body, such as the resume PDF. With `maxBytes`, a
+ * `Content-Length` over it is refused before reading, and the read stops once the body
+ * exceeds it (`KnowledgeBodyTooLargeError`).
+ */
 export async function sendKnowledgeRequestForBytes(
   request: KnowledgeRequest,
+  maxBytes: number = Number.POSITIVE_INFINITY,
 ): Promise<KnowledgeBytesReply> {
-  return exchange(request, async (response) => ({
-    status: response.status,
-    contentType: response.headers.get('content-type'),
-    bytes: Buffer.from(await response.arrayBuffer()),
-  }));
+  return exchange(request, async (response) => {
+    const declared = Number(response.headers.get('content-length'));
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      await response.body?.cancel();
+      throw new KnowledgeBodyTooLargeError(maxBytes);
+    }
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    if (response.body) {
+      const reader = response.body.getReader();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.length;
+        if (total > maxBytes) {
+          await reader.cancel();
+          throw new KnowledgeBodyTooLargeError(maxBytes);
+        }
+        chunks.push(value);
+      }
+    }
+    return {
+      status: response.status,
+      contentType: response.headers.get('content-type'),
+      bytes: Buffer.concat(chunks),
+    };
+  });
 }
 
 async function exchange<T>(
@@ -124,6 +159,7 @@ async function exchange<T>(
     // strike while the body streams in.
     return await read(response);
   } catch (error) {
+    if (error instanceof KnowledgeBodyTooLargeError) throw error;
     throw new KnowledgeTransportError(
       isTimeoutError(error) ? 'timeout' : 'unreachable',
       error,

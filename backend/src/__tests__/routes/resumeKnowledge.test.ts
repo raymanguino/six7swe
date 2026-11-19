@@ -70,6 +70,25 @@ describe('GET /resume', () => {
     expect(res.statusCode).toBe(304);
   });
 
+  it.each([
+    ['*', true],
+    ['W/"resume-v3"', true],
+    ['"resume-v1", "resume-v3"', true],
+    ['"resume-v1", W/"resume-v3"', true],
+    ['"resume-v1"', false],
+    ['', false],
+  ])('If-None-Match %j -> 304 is %s', async (header, hit) => {
+    mockedGetResumeDownload.mockResolvedValue({ found: true, body: PDF, etag: '"resume-v3"' });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/resume',
+      headers: { 'if-none-match': header },
+    });
+
+    expect(res.statusCode).toBe(hit ? 304 : 200);
+  });
+
   it('answers 404, uncacheable, when there is no primary resume', async () => {
     mockedGetResumeDownload.mockResolvedValue({ found: false });
 
@@ -88,6 +107,11 @@ describe('GET /resume', () => {
     expect(res.statusCode).toBe(500);
   });
 });
+
+async function waitFor(condition: () => boolean): Promise<void> {
+  for (let i = 0; i < 100 && !condition(); i++) await new Promise((r) => setTimeout(r, 0));
+  expect(condition()).toBe(true);
+}
 
 describe('createResumeDownloader', () => {
   const log = { warn: jest.fn() };
@@ -205,25 +229,73 @@ describe('createResumeDownloader', () => {
   });
 
   it('never replaces a newer cache entry with an older download', async () => {
-    let releaseOld: (pdf: Buffer) => void = () => undefined;
     const downloader = build();
+    let releaseOld: (pdf: Buffer) => void = () => undefined;
     getResumePdf
       .mockImplementationOnce(() => new Promise<Buffer | null>((r) => (releaseOld = r)))
       .mockResolvedValueOnce(Buffer.from('%PDF-1.4 v2'));
 
+    // v1 starts downloading and stalls; wait until it is actually inside getResumePdf.
     const slowV1 = downloader.get(log);
-    await Promise.resolve();
-    await Promise.resolve();
+    await waitFor(() => getResumePdf.mock.calls.length === 1);
+
     version = 2;
     pastTtl();
-    const fastV2 = await downloader.get(log);
-    expect(fastV2).toMatchObject({ found: true, etag: '"resume-v2"' });
+    expect(await downloader.get(log)).toMatchObject({ found: true, etag: '"resume-v2"' });
 
     releaseOld(Buffer.from('%PDF-1.4 v1'));
-    await slowV1;
+    // The late v1 caller gets the newer entry, and the cache keeps v2.
+    expect(await slowV1).toMatchObject({ found: true, etag: '"resume-v2"' });
+    expect(await downloader.get(log)).toMatchObject({ found: true, etag: '"resume-v2"' });
+    expect(getResumePdf).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-downloads when the version goes backwards (knowledge database reset)', async () => {
+    version = 5;
+    const downloader = build();
+    await downloader.get(log);
+
+    version = 1;
+    resume = Buffer.from('%PDF-1.4 after reset');
     pastTtl();
-    const after = await downloader.get(log);
-    expect(after).toMatchObject({ found: true, etag: '"resume-v2"' });
+    expect(await downloader.get(log)).toEqual({ found: true, body: resume, etag: '"resume-v1"' });
+    expect(getResumePdf).toHaveBeenCalledTimes(2);
+  });
+
+  it('serves the older cached PDF, bounded, when the newer version download fails', async () => {
+    const downloader = build();
+    await downloader.get(log);
+
+    version = 2;
+    pastTtl();
+    getResumePdf.mockRejectedValue(new Error('service down'));
+    expect(await downloader.get(log)).toEqual({ found: true, body: PDF, etag: '"resume-v1"' });
+
+    clock += STALE;
+    await expect(downloader.get(log)).rejects.toThrow('service down');
+  });
+
+  it('does not extend the stale window with requests served from the version TTL', async () => {
+    const downloader = build();
+    await downloader.get(log);
+    // Many cached requests inside the TTL, then /version goes down for good.
+    clock += TTL - 1;
+    await downloader.get(log);
+    version = new Error('down');
+    // The stale window counts from the last real /version read, so it has now passed.
+    clock += STALE - (TTL - 1);
+    await expect(downloader.get(log)).rejects.toThrow('down');
+  });
+
+  it('remembers a bad resume for a TTL instead of downloading it on every request', async () => {
+    resume = Buffer.from('<html>not a pdf</html>');
+    const downloader = build();
+    await expect(downloader.get(log)).rejects.toThrow(/not a PDF/);
+    await expect(downloader.get(log)).rejects.toThrow(/not a PDF/);
+    expect(getResumePdf).toHaveBeenCalledTimes(1);
+
+    pastTtl();
+    await expect(downloader.get(log)).rejects.toThrow(/not a PDF/);
     expect(getResumePdf).toHaveBeenCalledTimes(2);
   });
 

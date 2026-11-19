@@ -1,9 +1,11 @@
 import { SERVICE_KEY_HEADER } from '@six7swe/knowledge-types';
 import {
   isTimeoutError,
+  KnowledgeBodyTooLargeError,
   KnowledgeTransportError,
   parseJsonBody,
   sendKnowledgeRequest,
+  sendKnowledgeRequestForBytes,
   type FetchLike,
 } from '../../services/knowledge/transport';
 
@@ -90,6 +92,37 @@ describe('sendKnowledgeRequest', () => {
     const dropped = new Response('x');
     jest.spyOn(dropped, 'text').mockRejectedValue(new Error('socket hang up'));
     expect((await failure(capture(dropped))).kind).toBe('unreachable');
+  });
+});
+
+describe('sendKnowledgeRequestForBytes', () => {
+  const get = (fetch: FetchLike, maxBytes?: number) =>
+    sendKnowledgeRequestForBytes({ ...base, method: 'GET', fetch }, maxBytes);
+
+  it('returns the bytes of a body within the cap', async () => {
+    const reply = await get(capture(new Response('%PDF-abc', { status: 200 })), 8);
+    expect(reply.bytes.toString()).toBe('%PDF-abc');
+  });
+
+  it('refuses a declared Content-Length over the cap without reading', async () => {
+    const response = new Response('x', { status: 200, headers: { 'content-length': '100' } });
+    await expect(get(capture(response), 10)).rejects.toBeInstanceOf(KnowledgeBodyTooLargeError);
+  });
+
+  it('aborts a stream once it exceeds the cap', async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(6));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    await expect(get(capture(new Response(body, { status: 200 })), 10)).rejects.toBeInstanceOf(
+      KnowledgeBodyTooLargeError,
+    );
+    expect(cancelled).toBe(true);
   });
 });
 
