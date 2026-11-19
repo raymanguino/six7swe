@@ -121,17 +121,32 @@ async function resumeExisting(
 
   let retried = existing;
   if (existing.status === 'failed' || existing.status === 'needs_review') {
-    await deps.repo.resetToPending(existing.id);
+    // Re-checked under the row lock: an approval, delete or re-ingest since
+    // the read above wins, and the upload is then a plain duplicate.
+    const reset = await deps.repo.resetToPending(existing.id, [existing.status]);
+    if (!reset) {
+      const current = await deps.repo.getDocument(existing.ownerId, existing.id);
+      return { document: current ?? existing, deduplicated: true };
+    }
     retried = { ...existing, status: 'pending', error: null };
   }
   deps.queue.enqueue(retried);
   return { document: retried, deduplicated: true };
 }
 
-/** Whether the document's last scan could not finish, so a rescan may answer differently. */
+/**
+ * Whether the document's last scan could not finish, so a rescan may answer
+ * differently. Stored findings that cannot be read count as no: the upload is
+ * then a plain duplicate, not a 500.
+ */
 async function scanFailed(deps: DocumentServiceDeps, doc: DocumentRecord): Promise<boolean> {
-  const found = await deps.repo.getRiskFindings(doc.ownerId, doc.id);
-  return found !== null && hasScanFailure(found.findings);
+  try {
+    const found = await deps.repo.getRiskFindings(doc.ownerId, doc.id);
+    return found !== null && hasScanFailure(found.findings);
+  } catch (error) {
+    deps.log.warn({ documentId: doc.id, err: error }, 'Could not read the stored risk findings');
+    return false;
+  }
 }
 
 /** The owner's documents, newest first. */

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { apiRequest } from '../../../utils/api';
+import { ApiError, apiRequest } from '../../../utils/api';
 import { errorMessage } from '../../../utils/errorMessage';
 import {
   parseDocument,
@@ -165,6 +165,44 @@ export function useKnowledgeDocuments(enabled: boolean): KnowledgeDocuments {
     return null;
   }, []);
 
+  /**
+   * Deletes a version its replacement (`by`) has made redundant, after
+   * checking it is still the same document: gone already, or not the file it
+   * was (another upload or tab changed it), is left alone. Every pending link
+   * to it is dropped either way.
+   */
+  const deleteReplaced = useCallback(
+    async (previous: KnowledgeDocument, by: string) => {
+      for (const [newId, old] of pendingReplacements.current) {
+        if (old.id === previous.id) pendingReplacements.current.delete(newId);
+      }
+      let current: KnowledgeDocument;
+      try {
+        current = parseDocument(await apiRequest(`/knowledge/documents/${previous.id}`));
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return;
+        report(
+          `Replacing ${previous.filename}: ${by} is searchable, but ${previous.filename} could not ` +
+            `be checked (${errorMessage(err, 'request failed')}). Delete it by hand if it is no longer needed.`,
+        );
+        return;
+      }
+      // The client has no content hash; name and upload time identify the file.
+      if (current.filename !== previous.filename || current.createdAt !== previous.createdAt) {
+        return;
+      }
+      try {
+        await apiRequest(`/knowledge/documents/${previous.id}`, { method: 'DELETE' });
+      } catch (err) {
+        report(
+          `Replacing ${previous.filename}: ${by} is searchable, but ${previous.filename} could ` +
+            `not be deleted (${errorMessage(err, 'request failed')}). It remains; delete it by hand.`,
+        );
+      }
+    },
+    [report],
+  );
+
   const replace = useCallback(
     async (previous: KnowledgeDocument, file: File) => {
       const name = previous.filename;
@@ -220,20 +258,32 @@ export function useKnowledgeDocuments(enabled: boolean): KnowledgeDocuments {
           return;
         }
 
-        // Held for review: the new version is not searchable yet, so a
-        // searchable previous one is kept until the owner approves the new
-        // one (`approve` then deletes it). Without this, replacing the primary
-        // resume, which nearly always has contact details, would leave no
-        // primary until the approval. A previous version that is not
-        // searchable either (itself held for review) has nothing to keep.
-        if (settled.status === 'needs_review' && previous.status === 'ready') {
-          pendingReplacements.current.set(settled.id, previous);
-          report(
-            `Replacing ${name}: the risk scan flagged ${settled.filename}, so ${name} is kept and ` +
-              `still searchable. Review the new version under "Needs review"; approving it on ` +
-              `this page replaces ${name} (after a reload, delete ${name} by hand once it is approved).`,
-          );
-          return;
+        // `previous` may itself be a held replacement of an older, searchable
+        // version; that link moves to the new document.
+        const older = pendingReplacements.current.get(previous.id);
+        pendingReplacements.current.delete(previous.id);
+
+        if (settled.status === 'needs_review') {
+          // Held for review: the new version is not searchable yet, so the
+          // searchable version it replaces is kept until the owner approves
+          // the new one (`approve` then deletes it). Without this, replacing
+          // the primary resume, which nearly always has contact details,
+          // would leave no primary until the approval.
+          const searchable = older ?? (previous.status === 'ready' ? previous : undefined);
+          if (searchable) {
+            pendingReplacements.current.set(settled.id, searchable);
+            const kept = searchable.filename;
+            report(
+              `Replacing ${name}: the risk scan flagged ${settled.filename}, so ${kept} is kept and ` +
+                `still searchable. Review the new version under "Needs review"; approving it on ` +
+                `this page replaces ${kept} (after a reload, delete ${kept} by hand once it is approved).`,
+            );
+          }
+          // A held `previous` is not searchable, so nothing is lost by deleting it.
+          if (searchable === previous) return;
+        } else if (older) {
+          // Ready: the new version replaces the whole chain.
+          await deleteReplaced(older, settled.filename);
         }
 
         // Issued even if the page has been left: only the UI updates below
@@ -250,7 +300,7 @@ export function useKnowledgeDocuments(enabled: boolean): KnowledgeDocuments {
         if (mounted.current) await load();
       }
     },
-    [load, report, waitUntilSettled],
+    [load, report, waitUntilSettled, deleteReplaced],
   );
 
   const remove = useCallback(
@@ -282,33 +332,26 @@ export function useKnowledgeDocuments(enabled: boolean): KnowledgeDocuments {
   const approve = useCallback(
     async (doc: KnowledgeDocument) => {
       try {
+        let approved: KnowledgeDocument;
         try {
-          parseDocument(
+          approved = parseDocument(
             await apiRequest(`/knowledge/documents/${doc.id}/approve`, { method: 'POST' }),
           );
         } catch (err) {
           report(`Approving ${doc.filename}: ${errorMessage(err, 'request failed')}`);
           return;
         }
-        // The approved document was a replacement held for review: it is
-        // searchable now, so the version it replaces goes.
+        // The approved document was a replacement held for review. Only once
+        // it is searchable does the version it replaces go.
         const previous = pendingReplacements.current.get(doc.id);
-        if (!previous) return;
+        if (!previous || approved.status !== 'ready') return;
         pendingReplacements.current.delete(doc.id);
-        try {
-          await apiRequest(`/knowledge/documents/${previous.id}`, { method: 'DELETE' });
-        } catch (err) {
-          report(
-            `Replacing ${previous.filename}: ${doc.filename} is approved, but ` +
-              `${previous.filename} could not be deleted (${errorMessage(err, 'request failed')}). ` +
-              `It remains; delete it by hand.`,
-          );
-        }
+        await deleteReplaced(previous, approved.filename);
       } finally {
         if (mounted.current) await load();
       }
     },
-    [load, report],
+    [load, report, deleteReplaced],
   );
 
   return {

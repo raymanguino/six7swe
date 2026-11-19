@@ -67,6 +67,20 @@ export interface RetrievedChunk {
   similarity: number;
 }
 
+/**
+ * The rule `resetToPending` applies to the locked row: its status is one of
+ * `from`, and a `needs_review` document is retried only while its last scan
+ * failed (a `scan_failed` finding), since only then can a rescan change it.
+ */
+export function canResetToPending(
+  status: DocumentStatus,
+  findings: readonly RiskFinding[],
+  from: readonly DocumentStatus[],
+): boolean {
+  if (!from.includes(status)) return false;
+  return status !== 'needs_review' || findings.some((f) => f.category === 'scan_failed');
+}
+
 /** A write lost to a uniqueness rule other than the one the caller handles. Maps to 409. */
 export class ConflictError extends Error {
   readonly statusCode = 409;
@@ -128,8 +142,14 @@ export interface KnowledgeRepository {
    */
   setPrimaryResume(ownerId: string, id: string): Promise<DocumentRecord | null>;
 
-  /** Puts a failed or stranded document back to `pending` for another attempt. */
-  resetToPending(id: string): Promise<void>;
+  /**
+   * Puts a document back to `pending` for another attempt, only if its
+   * current status (read under the row lock) is one of `from`; a
+   * `needs_review` one must also still carry a `scan_failed` finding (see
+   * `canResetToPending`). Returns false when nothing changed: an approval,
+   * delete or re-ingest got there first.
+   */
+  resetToPending(id: string, from: readonly DocumentStatus[]): Promise<boolean>;
 
   markProcessing(id: string): Promise<void>;
 

@@ -12,8 +12,15 @@ export const LINK_MASK = '[link]';
 export const HANDLE_MASK = '[handle]';
 export const PHONE_MASK = '[phone]';
 
-/** Also the risk scan's email check (#212). */
-export const EMAIL = /[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+/gu;
+/**
+ * Also the risk scan's email check (#212), which runs over whole documents.
+ * The lookbehind starts a match only at the start of a run of local-part
+ * characters, and the local part is bounded (64, its RFC limit), so a long
+ * run with no "@" is rejected in linear time instead of retried from every
+ * position.
+ */
+export const EMAIL =
+  /(?<![\p{L}\p{N}._%+-])[\p{L}\p{N}._%+-]{1,64}@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+/gu;
 /**
  * A URL with a scheme or `www.`, or a bare domain on a common TLD followed by
  * a path ("linkedin.com/in/jane"). Tech names like "Node.js/Express" are
@@ -25,9 +32,11 @@ const LINK =
 const HANDLE = /(^|[^\p{L}\p{N}_])@[\p{L}\p{N}_.]{2,}/gu;
 /**
  * A run of digits with phone-like separators; `isPhoneNumber` decides by
- * digit count. Also the risk scan's phone check (#212).
+ * digit count. Also the risk scan's phone check (#212). The run is bounded,
+ * so a long stretch of digits and separators costs at most 40 steps per
+ * start position, not the rest of the document.
  */
-export const PHONE_LIKE = /\+?\(?\d[\d\s().-]{5,}\d/g;
+export const PHONE_LIKE = /\+?\(?\d[\d\s().-]{5,40}\d/g;
 /** "2019 - 2024" is a year range, not a phone number. */
 const YEAR_RANGE = /^\(?(?:19|20)\d{2}\)?\s*[-–.]\s*\(?(?:19|20)\d{2}\)?$/;
 

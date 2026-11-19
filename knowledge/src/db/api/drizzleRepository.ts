@@ -1,8 +1,9 @@
 import { and, asc, cosineDistance, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
-import { RiskFindingSchema, type RiskFinding } from '../../contract.js';
+import { RiskFindingSchema, type DocumentStatus, type RiskFinding } from '../../contract.js';
 import type { KnowledgeDb, KnowledgeExecutor, KnowledgeTx } from '../index.js';
 import { chunks, corpusState, documents } from '../schema.js';
 import {
+  canResetToPending,
   ConflictError,
   type DocumentRecord,
   type KnowledgeRepository,
@@ -160,17 +161,22 @@ export function createDrizzleRepository(db: KnowledgeDb): KnowledgeRepository {
   /**
    * Moves a document to a non-ready status. If it was ready with chunks, those
    * chunks stop being served (search only reads ready documents), so the
-   * version is bumped in the same transaction.
+   * version is bumped in the same transaction. With `guard`, the change is
+   * made only when the locked row passes it; returns whether it was made.
    */
-  async function leaveReady(id: string, change: StatusChange): Promise<void> {
-    await db.transaction(async (tx) => {
+  async function leaveReady(
+    id: string,
+    change: StatusChange,
+    guard?: (row: { status: DocumentStatus; riskFindings: unknown }) => boolean,
+  ): Promise<boolean> {
+    return db.transaction(async (tx) => {
       // owner_id never changes, so it can be read before taking the owner
       // lock, which comes before the row lock (see lockOwner).
       const [owner] = await tx
         .select({ ownerId: documents.ownerId })
         .from(documents)
         .where(eq(documents.id, id));
-      if (!owner) return;
+      if (!owner) return false;
       await lockOwner(tx, owner.ownerId);
 
       const [before] = await tx
@@ -178,16 +184,18 @@ export function createDrizzleRepository(db: KnowledgeDb): KnowledgeRepository {
           ownerId: documents.ownerId,
           status: documents.status,
           chunkCount: documents.chunkCount,
+          riskFindings: documents.riskFindings,
         })
         .from(documents)
         .where(eq(documents.id, id))
         .for('update');
-      if (!before) return;
+      if (!before || (guard && !guard(before))) return false;
 
       await tx.update(documents).set(change).where(eq(documents.id, id));
       if (before.status === 'ready' && before.chunkCount > 0) {
         await bumpVersion(tx, before.ownerId);
       }
+      return true;
     });
   }
 
@@ -290,8 +298,16 @@ export function createDrizzleRepository(db: KnowledgeDb): KnowledgeRepository {
       });
     },
 
-    async resetToPending(id) {
-      await leaveReady(id, { status: 'pending', error: null });
+    async resetToPending(id, from) {
+      return leaveReady(id, { status: 'pending', error: null }, (row) => {
+        let findings: RiskFinding[];
+        try {
+          findings = parseFindings(row.riskFindings);
+        } catch {
+          return false;
+        }
+        return canResetToPending(row.status, findings, from);
+      });
     },
 
     async markProcessing(id) {

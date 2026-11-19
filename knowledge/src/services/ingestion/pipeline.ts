@@ -10,7 +10,7 @@ import {
 } from './chunk.js';
 import { extractText, isSupportedMime } from './parse.js';
 import { SerialQueue } from './queue.js';
-import { scanDocument } from '../risk/scan.js';
+import { hasScanFailure, scanDocument, scanFailedFinding } from '../risk/scan.js';
 import type { RiskScanner } from '../risk/scanner.js';
 
 export interface PipelineDeps extends KnowledgeDeps {
@@ -121,13 +121,18 @@ export async function ingestDocument(deps: PipelineDeps, doc: DocumentRecord): P
     }
 
     // Never throws: a scan that cannot finish is itself a finding.
-    // An incomplete scan carries a scan_failed finding, so it is held like any other.
-    const { findings } = await scanDocument(text, {
+    const scan = await scanDocument(text, {
       scanner: deps.riskScanner ?? null,
       log,
       documentId: doc.id,
       deadlineMs: deps.riskScanDeadlineMs,
     });
+    // An incomplete scan must hold the document. scanDocument adds a
+    // scan_failed finding when it is incomplete; this does not rely on that.
+    const findings =
+      !scan.complete && !hasScanFailure(scan.findings)
+        ? [scanFailedFinding('The risk scan did not finish.'), ...scan.findings]
+        : scan.findings;
 
     const pieces = chunkDocument(text, mime, deps.chunkOptions ?? DEFAULT_CHUNK_OPTIONS);
     const vectors = await embedder.embed(pieces.map(embeddingInput));

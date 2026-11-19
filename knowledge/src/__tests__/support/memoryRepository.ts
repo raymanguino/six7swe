@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { RiskFindingSchema, type RiskFinding } from '../../contract.js';
 import {
+  canResetToPending,
   ConflictError,
   type DocumentRecord,
   type KnowledgeRepository,
@@ -151,8 +152,11 @@ export function createMemoryRepository(): KnowledgeRepository & {
       return documents.get(id) ?? null;
     },
 
-    async resetToPending(id) {
+    async resetToPending(id, from) {
+      const doc = documents.get(id);
+      if (!doc || !canResetToPending(doc.status, findings.get(id) ?? [], from)) return false;
       leaveReady(id, { status: 'pending', error: null });
+      return true;
     },
 
     async markProcessing(id) {

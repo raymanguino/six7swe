@@ -5,7 +5,7 @@ import {
   RISK_REASON_MAX_CHARS,
   type RiskFinding,
 } from '../../contract.js';
-import { detectPatternFindings, truncate } from './patterns.js';
+import { detectPatternFindings, maskSecret, truncate } from './patterns.js';
 import { RiskScanError, type RiskScanner } from './scanner.js';
 
 /**
@@ -127,7 +127,13 @@ export function locateExcerpt(text: string, excerpt: string, from: number): numb
 export function finalize(findings: RiskFinding[]): RiskFinding[] {
   const seen = new Set<string>();
   const unique = findings.filter((f) => {
-    const key = [f.category, f.excerpt.toLowerCase(), f.excerpt ? '' : f.reason].join('\u0000');
+    const key = [
+      f.category,
+      f.excerpt.toLowerCase(),
+      f.excerpt ? '' : f.reason,
+      // Masked credentials can look alike; where they are tells them apart.
+      f.category === 'credentials' ? String(f.location.offset) : '',
+    ].join('\u0000');
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -170,7 +176,11 @@ export async function scanDocument(text: string, options: ScanOptions): Promise<
         findings.push({
           category: f.category,
           source: 'model',
-          excerpt: truncate(f.excerpt, RISK_EXCERPT_MAX_CHARS),
+          // A credential is never stored, only its shape.
+          excerpt: truncate(
+            f.category === 'credentials' && f.excerpt ? maskSecret(f.excerpt) : f.excerpt,
+            RISK_EXCERPT_MAX_CHARS,
+          ),
           reason: truncate(f.reason, RISK_REASON_MAX_CHARS),
           location: {
             page: null,

@@ -91,7 +91,7 @@ export function describeRepositoryContract(
       expect(await repo.getVersion(owner)).toBe(2);
       await repo.failIngestion(doc.id, 'failed'); // already hidden
       expect(await repo.getVersion(owner)).toBe(2);
-      await repo.resetToPending(doc.id);
+      expect(await repo.resetToPending(doc.id, ['failed'])).toBe(true);
       expect(await repo.getVersion(owner)).toBe(2);
 
       const other = await ready(owner, 'education');
@@ -260,6 +260,63 @@ export function describeRepositoryContract(
 
       // Approved already: nothing left to approve.
       await expect(repo.approveDocument(owner, document.id)).rejects.toBeInstanceOf(ConflictError);
+    });
+
+    it('resets to pending only from the expected status, and a held one only after a failed scan', async () => {
+      const { repo, newOwner } = target();
+      const owner = newOwner();
+      const scanFailed: RiskFinding = {
+        category: 'scan_failed',
+        source: 'scan',
+        excerpt: '',
+        reason: 'The scan failed.',
+        location: { page: null, offset: null },
+      };
+
+      // Held after a failed scan: retried.
+      const { document: failedScan } = await repo.createDocument(newDoc(owner));
+      await repo.completeIngestion(failedScan.id, 'a', [chunk('a')], [scanFailed]);
+      expect(await repo.resetToPending(failedScan.id, ['failed'])).toBe(false);
+      expect(await repo.resetToPending(failedScan.id, ['needs_review'])).toBe(true);
+      expect(await repo.getDocument(owner, failedScan.id)).toMatchObject({ status: 'pending' });
+
+      // Held for a real finding: not retried.
+      const { document: flagged } = await repo.createDocument(newDoc(owner));
+      await repo.completeIngestion(flagged.id, 'b', [chunk('b')], [finding('416 555 0100')]);
+      expect(await repo.resetToPending(flagged.id, ['needs_review'])).toBe(false);
+
+      // Approved after the caller read it as held: the approval stands.
+      const { document: approved } = await repo.createDocument(newDoc(owner));
+      await repo.completeIngestion(approved.id, 'c', [chunk('c')], [scanFailed]);
+      await repo.approveDocument(owner, approved.id);
+      expect(await repo.resetToPending(approved.id, ['needs_review'])).toBe(false);
+      expect(await repo.getDocument(owner, approved.id)).toMatchObject({ status: 'ready' });
+
+      // Deleted: nothing to reset.
+      await repo.deleteDocument(owner, approved.id);
+      expect(await repo.resetToPending(approved.id, ['ready'])).toBe(false);
+    });
+
+    it('lets exactly one of two concurrent approvals activate a held document', async () => {
+      const { repo, newOwner } = target();
+      const owner = newOwner();
+      const { document } = await repo.createDocument(newDoc(owner));
+      await repo.completeIngestion(document.id, 'x', [chunk('x')], [finding('x')]);
+      const before = await repo.getVersion(owner);
+
+      const results = await Promise.allSettled([
+        repo.approveDocument(owner, document.id),
+        repo.approveDocument(owner, document.id),
+      ]);
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r) => r.status === 'rejected');
+      expect(fulfilled).toHaveLength(1);
+      expect(fulfilled[0]?.status === 'fulfilled' && fulfilled[0].value?.activated).toBe(true);
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0]?.status === 'rejected' && rejected[0].reason).toBeInstanceOf(
+        ConflictError,
+      );
+      expect(await repo.getVersion(owner)).toBe(before + 1);
     });
 
     it('refuses to approve a clean or unfinished document', async () => {
