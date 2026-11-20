@@ -4,11 +4,8 @@ import type { KnowledgeContext } from './context.js';
 import { documentHandlers } from './handlers/documentHandlers.js';
 import { evalHandlers } from './handlers/evalHandlers.js';
 import { mcpHandlers } from './handlers/mcpHandlers.js';
-import { profileHandlers } from './handlers/profileHandlers.js';
+import { resumeHandlers } from './handlers/resumeHandlers.js';
 import { retrievalHandlers } from './handlers/retrievalHandlers.js';
-
-/** Request body limit for a saved draft profile. */
-export const PROFILE_BODY_LIMIT = 512 * 1024;
 
 /**
  * Every route declares who may call it (see plugins/serviceAuth.ts). A route
@@ -17,7 +14,7 @@ export const PROFILE_BODY_LIMIT = 512 * 1024;
 export function registerRoutes(app: FastifyInstance, ctx: KnowledgeContext): void {
   const documents = documentHandlers(ctx);
   const retrieval = retrievalHandlers(ctx);
-  const profile = profileHandlers(ctx);
+  const resume = resumeHandlers(ctx);
   const evaluation = evalHandlers(ctx);
   const mcp = mcpHandlers(ctx);
 
@@ -47,17 +44,8 @@ export function registerRoutes(app: FastifyInstance, ctx: KnowledgeContext): voi
   app.post('/eval/runs', OWNER_ROUTE, evaluation.run);
   app.post('/eval/questions/:id', OWNER_ROUTE, evaluation.act);
 
-  // The structured profile (#86). The portfolio reads the published one and
-  // the primary resume's PDF with the service key; the owner reviews,
-  // edits and publishes drafts through the backend's owner proxy.
-  app.get('/profile/published', SERVICE_ROUTE, profile.published);
-  app.get('/resume.pdf', SERVICE_ROUTE, profile.resumePdf);
-  app.get('/profile', OWNER_ROUTE, profile.state);
-  // A full profile can outgrow the app's 64 KB JSON limit.
-  app.put('/profile/draft', { ...OWNER_ROUTE, bodyLimit: PROFILE_BODY_LIMIT }, profile.saveDraft);
-  app.post('/profile/draft', OWNER_ROUTE, profile.redraft);
-  app.delete('/profile/draft', OWNER_ROUTE, profile.discardDraft);
-  app.post('/profile/publish', OWNER_ROUTE, profile.publish);
+  // The primary resume's PDF, which the backend serves as `/resume`.
+  app.get('/resume.pdf', SERVICE_ROUTE, resume.resumePdf);
 
   // MCP adapter for personal Claude clients (#89): the owner key as a bearer token.
   app.post('/mcp', MCP_ROUTE, mcp.handle);

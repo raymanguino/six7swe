@@ -57,6 +57,13 @@
       "when": 1795114959686,
       "tag": "0007_risk_scan",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1795197725743,
+      "tag": "0008_drop_profiles",
+      "breakpoints": true
     }
   ]
 }

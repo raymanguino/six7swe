@@ -76,16 +76,10 @@ const EnvSchema = z
     EMBEDDING_MODEL: z.string().min(1).optional(),
 
     /**
-     * The chat model that drafts the structured profile from the primary
-     * resume (#86). `minimax` is MiniMax, the app's LLM provider (the
-     * backend's chat uses it too). `stub` is a deterministic, offline drafter
-     * for development and tests. `none` (the default) turns drafting off; the
-     * owner can still write and publish a profile by hand. Drafting has its
-     * own providers (`DRAFT_PROVIDERS`), apart from the embedders.
+     * MiniMax, the app's LLM provider (the backend's chat uses it too), for the
+     * risk scan and the eval answerer. The chat models have their own
+     * providers (`CHAT_MODEL_PROVIDERS`), apart from the embedders.
      */
-    PROFILE_DRAFTER: z.enum(['none', 'minimax', 'stub']).default('none'),
-    /** Overrides the provider's default drafting model. */
-    PROFILE_DRAFT_MODEL: z.string().min(1).optional(),
     MINIMAX_API_KEY: z.string().optional(),
     /** Optional: tried once when MiniMax answers 429 to the primary key. */
     MINIMAX_API_KEY_SECONDARY: z.string().optional(),
@@ -93,15 +87,14 @@ const EnvSchema = z
     /**
      * The chat model that answers each question in an eval run (#85), from
      * the chunks retrieved for it. `none` (the default) records retrieval
-     * only; `stub` is offline and deterministic. Uses the drafter's MiniMax
-     * keys.
+     * only; `stub` is offline and deterministic. Uses the MiniMax keys above.
      */
     EVAL_ANSWERER: z.enum(['none', 'minimax', 'stub']).default('none'),
     /** Overrides the provider's default answering model. */
     EVAL_ANSWER_MODEL: z.string().min(1).optional(),
     /**
      * The model pass of the risk scan run on every upload (#212). `minimax`
-     * uses the drafter's MiniMax keys; `stub` is offline and deterministic;
+     * uses the MiniMax keys above; `stub` is offline and deterministic;
      * `none` runs the deterministic checks (emails, phones, addresses) only,
      * and is refused in production. Unset: `minimax` when MINIMAX_API_KEY is
      * set, `none` otherwise.
@@ -214,9 +207,9 @@ const EnvSchema = z
       }
     }
 
-    /** The drafter, the eval answerer and the risk scanner pick a chat model the same way. */
+    /** The eval answerer and the risk scanner pick a chat model the same way. */
     const chatModel = (
-      variable: 'PROFILE_DRAFTER' | 'EVAL_ANSWERER' | 'RISK_SCANNER',
+      variable: 'EVAL_ANSWERER' | 'RISK_SCANNER',
       kind: 'none' | 'minimax' | 'stub',
       modelOverride: string | undefined,
     ): ChatModelConfig | undefined => {
@@ -231,7 +224,7 @@ const EnvSchema = z
         }
         return { kind: 'stub' };
       }
-      const provider = DRAFT_PROVIDERS[kind];
+      const provider = CHAT_MODEL_PROVIDERS[kind];
       const apiKey = env[provider.keyVariable];
       if (!apiKey) {
         ctx.addIssue({
@@ -249,11 +242,6 @@ const EnvSchema = z
         model: modelOverride ?? provider.defaultModel,
       };
     };
-    const profileDrafter = chatModel(
-      'PROFILE_DRAFTER',
-      env.PROFILE_DRAFTER,
-      env.PROFILE_DRAFT_MODEL,
-    );
     const evalAnswerer = chatModel('EVAL_ANSWERER', env.EVAL_ANSWERER, env.EVAL_ANSWER_MODEL);
 
     // Uploads are treated as public, so production never skips the model pass.
@@ -267,10 +255,10 @@ const EnvSchema = z
     }
     const riskScanner = chatModel('RISK_SCANNER', riskScannerKind, env.RISK_SCAN_MODEL);
 
-    if (!embedder || !fileStore || !profileDrafter || !evalAnswerer || !riskScanner) {
+    if (!embedder || !fileStore || !evalAnswerer || !riskScanner) {
       return z.NEVER;
     }
-    return { ...env, embedder, fileStore, profileDrafter, evalAnswerer, riskScanner };
+    return { ...env, embedder, fileStore, evalAnswerer, riskScanner };
   });
 
 /** Providers with an OpenAI-compatible embeddings API. */
@@ -292,12 +280,12 @@ export const EMBEDDING_PROVIDERS = {
 export type EmbeddingProvider = keyof typeof EMBEDDING_PROVIDERS;
 
 /**
- * Providers that draft the profile (#86), kept apart from the embedders so a
- * drafting provider can never be picked as an EMBEDDER. MiniMax's chat
- * completions API is the one the backend's chat uses
+ * Chat model providers (the risk scan and the eval answerer), kept apart from
+ * the embedders so a chat provider can never be picked as an EMBEDDER.
+ * MiniMax's chat completions API is the one the backend's chat uses
  * (`backend/src/services/minimaxService.ts`).
  */
-export const DRAFT_PROVIDERS = {
+export const CHAT_MODEL_PROVIDERS = {
   minimax: {
     label: 'MiniMax',
     url: 'https://api.minimax.io/v1/chat/completions',
@@ -317,8 +305,7 @@ export type EmbedderConfig =
       model: string;
     };
 
-/** The profile drafter (#86) and the eval answerer (#85) share the chat model providers. */
-export type ProfileDrafterConfig = ChatModelConfig;
+/** The eval answerer (#85) uses the chat model providers. */
 export type EvalAnswererConfig = ChatModelConfig;
 /** The risk scan's model pass (#212) uses the same providers. */
 export type RiskScannerConfig = ChatModelConfig;

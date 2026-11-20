@@ -206,8 +206,6 @@ export interface ApproveDeps extends Pick<KnowledgeDeps, 'repo'> {
   log: FastifyBaseLogger;
   /** Called when the approval made the document searchable. Must not throw. */
   onCorpusChanged?: (ownerId: string) => void;
-  /** Called when an approved resume became searchable (profile drafting hooks in here). */
-  onResumeReady?: (doc: DocumentRecord) => void | Promise<void>;
 }
 
 /**
@@ -224,17 +222,8 @@ export async function approveDocument(
   const result = await deps.repo.approveDocument(ownerId, id);
   if (!result) return null;
   const { document, activated } = result;
-  // Decided under the repository's lock, so a second approval never re-runs these.
-  if (activated) {
-    deps.onCorpusChanged?.(ownerId);
-    if (document.kind === 'resume' && deps.onResumeReady) {
-      try {
-        await deps.onResumeReady(document);
-      } catch (error) {
-        deps.log.warn({ documentId: id, err: error }, 'Post-approval resume hook failed');
-      }
-    }
-  }
+  // Decided under the repository's lock, so a second approval never re-runs it.
+  if (activated) deps.onCorpusChanged?.(ownerId);
   return document;
 }
 

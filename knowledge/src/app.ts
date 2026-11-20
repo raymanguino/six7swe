@@ -5,13 +5,10 @@ import { SERVICE_KEY_HEADER, type ErrorResponse } from './contract.js';
 import serviceAuth, { type Authenticators } from './plugins/serviceAuth.js';
 import { registerRoutes } from './routes/index.js';
 import type { EvalRepository } from './db/api/evalRepository.js';
-import type { ProfileRepository } from './db/api/profileRepository.js';
 import type { EvalAnswerer } from './services/evalSet/answerer.js';
 import { createEvalSet, type EvalSet, type EvalSettings } from './services/evalSet/evalSet.js';
 import { createEvalRunner, type EvalRunner } from './services/evalSet/runner.js';
 import type { KnowledgeDeps } from './services/deps.js';
-import type { ProfileDrafter } from './services/profile/drafter.js';
-import { createProfileDrafting, type ProfileDrafting } from './services/profile/profiles.js';
 import { createRiskBackfill, type RiskBackfill } from './services/risk/backfill.js';
 import type { RiskScanner } from './services/risk/scanner.js';
 import {
@@ -24,8 +21,6 @@ declare module 'fastify' {
   interface FastifyInstance {
     /** The serial ingestion queue; the entry point re-queues work on boot and drains it on shutdown. */
     ingestionQueue: IngestionQueue;
-    /** The profile drafting queue; the entry point stops it on shutdown. */
-    profileDrafting: ProfileDrafting;
     /** The eval set's question recorder (#85); the entry point stops it on shutdown. */
     evalSet: EvalSet;
     /** The eval run queue (#85); the entry point stops it on shutdown. */
@@ -37,8 +32,6 @@ declare module 'fastify' {
 
 export interface BuildAppOptions {
   deps: KnowledgeDeps;
-  /** The structured profile (#86): its storage, and the model that drafts it (null: off). */
-  profile: { repo: ProfileRepository; drafter: ProfileDrafter | null };
   /**
    * The evolving chat eval set (#85): its storage, the model that answers
    * each question in a run (null: retrieval only) and threshold overrides.
@@ -99,14 +92,6 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   });
 
   const { deps } = options;
-  const drafting = createProfileDrafting({
-    repo: deps.repo,
-    profiles: options.profile.repo,
-    drafter: options.profile.drafter,
-    log: app.log,
-  });
-  app.decorate('profileDrafting', drafting);
-
   const evalSet = createEvalSet({
     repo: options.evaluation.repo,
     embedder: deps.embedder,
@@ -129,7 +114,6 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       chunkOptions: options.chunkOptions,
       riskScanner: options.riskScanner ?? null,
       riskScanDeadlineMs: options.riskScanDeadlineMs,
-      onResumeIngested: (doc) => drafting.resumeIngested(doc),
       onCorpusChanged: (ownerId) => evalRunner.corpusChanged(ownerId),
     },
     app.log,
@@ -177,8 +161,6 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   registerRoutes(app, {
     ...deps,
     queue,
-    profiles: options.profile.repo,
-    drafting,
     evalRepo: options.evaluation.repo,
     evalSet,
     evalRunner,

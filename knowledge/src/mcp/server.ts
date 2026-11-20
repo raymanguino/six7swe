@@ -3,14 +3,9 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { SearchRequestSchema } from '../contract.js';
 import type { KnowledgeContext } from '../routes/context.js';
-import {
-  toDocumentDto,
-  toPrimaryResumeDto,
-  toProfileDto,
-  toRetrieveResponse,
-} from '../routes/mappers.js';
+import { toDocumentDto, toRetrieveResponse } from '../routes/mappers.js';
 import { listDocuments } from '../services/documents.js';
-import { findPrimaryResumePdf, getPublishedView } from '../services/profile/profiles.js';
+import { findPrimaryResumePdf } from '../services/resume.js';
 import { retrieve } from '../services/retrieval.js';
 
 /** A resume PDF above this is not inlined: base64 in one MCP message would be too heavy. */
@@ -81,24 +76,6 @@ export function createMcpServer(
   );
 
   server.registerTool(
-    'get_profile',
-    {
-      title: 'Get profile',
-      description:
-        "The owner's published structured profile (experience, projects, links) and the " +
-        'primary resume text, if any.',
-      annotations: { readOnlyHint: true },
-    },
-    guarded(log, 'get_profile', async () => {
-      const { profile, resume } = await getPublishedView(ctx, ownerId);
-      return json({
-        profile: profile && toProfileDto(profile),
-        resume: resume && toPrimaryResumeDto(resume.document, resume.text),
-      });
-    }),
-  );
-
-  server.registerTool(
     'list_documents',
     {
       title: 'List documents',
@@ -122,10 +99,12 @@ export function createMcpServer(
     guarded(log, 'get_resume_pdf', async () => {
       const found = await findPrimaryResumePdf(ctx, ownerId, maxPdfBytes);
       if (found.status === 'none') {
-        return failure('No PDF resume. Use get_profile for the resume text.');
+        return failure('No PDF resume. Use search_background for its content.');
       }
       if (found.status === 'too-large') {
-        return failure('The resume PDF is too large to return. Use get_profile for its text.');
+        return failure(
+          'The resume PDF is too large to return. Use search_background for its content.',
+        );
       }
       const { bytes } = found;
       return {

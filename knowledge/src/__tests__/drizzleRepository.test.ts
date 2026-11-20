@@ -1,20 +1,16 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq, like, sql } from 'drizzle-orm';
+import { eq, like } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDrizzleEvalRepository } from '../db/api/drizzleEvalRepository.js';
-import { createDrizzleProfileRepository } from '../db/api/drizzleProfileRepository.js';
 import { createDrizzleRepository } from '../db/api/drizzleRepository.js';
 import type { KnowledgeRepository, NewChunk, NewDocument } from '../db/api/repository.js';
-import type { ProfileRepository } from '../db/api/profileRepository.js';
-import { createDb, type DbHandle, type KnowledgeTx } from '../db/index.js';
+import { createDb, type DbHandle } from '../db/index.js';
 import {
   corpusState,
   documents,
   EMBEDDING_DIMENSIONS,
   evalQuestions,
   evalRuns,
-  nextProfileVersion,
-  profiles,
 } from '../db/schema.js';
 import { uploadDocument } from '../services/documents.js';
 import { createHashingEmbedder, hashEmbed } from '../services/embedding/hashing.js';
@@ -25,14 +21,11 @@ import {
   makePdf,
   PROJECT_NOTES_TXT,
   RESUME_MD,
-  SAMPLE_PROFILE,
   silentLogger,
   utf8,
 } from './support/fixtures.js';
 import { describeEvalRepositoryContract } from './support/evalRepositoryContract.js';
-import { describeProfileRepositoryContract } from './support/profileRepositoryContract.js';
 import { describeRepositoryContract } from './support/repositoryContract.js';
-import { seedDraft } from './support/seedDraft.js';
 
 /**
  * Runs the Drizzle repository against a real Postgres with pgvector 0.8+.
@@ -59,17 +52,6 @@ if (process.env.CI && !url) {
 const RUN_PREFIX = `test-${randomUUID()}-`;
 const freshOwner = () => `${RUN_PREFIX}${randomUUID()}`;
 
-/** A resume a profile may name as its source; unique bytes, so it is always created. */
-const newSource = (ownerId: string, name: string): NewDocument => ({
-  ownerId,
-  filename: name,
-  mimeType: 'text/markdown',
-  sizeBytes: 1,
-  sha256: randomUUID().replace(/-/g, '').padEnd(64, '0'),
-  storagePath: `${ownerId}/${randomUUID()}-${name}`,
-  kind: 'resume',
-});
-
 /** The same URL with connection parameters set at startup (postgres.js passes unknown ones on). */
 function withParams(base: string, params: Record<string, string>): string {
   const u = new URL(base);
@@ -95,7 +77,6 @@ afterAll(async () => {
   if (!handle) return;
   await handle.db.delete(documents).where(like(documents.ownerId, `${RUN_PREFIX}%`));
   await handle.db.delete(corpusState).where(like(corpusState.ownerId, `${RUN_PREFIX}%`));
-  await handle.db.delete(profiles).where(like(profiles.ownerId, `${RUN_PREFIX}%`));
   // Sessions and results go with them (on delete cascade).
   await handle.db.delete(evalRuns).where(like(evalRuns.ownerId, `${RUN_PREFIX}%`));
   await handle.db.delete(evalQuestions).where(like(evalQuestions.ownerId, `${RUN_PREFIX}%`));
@@ -118,266 +99,6 @@ describeRepositoryContract(
     skip: !url,
   },
 );
-
-describeProfileRepositoryContract(
-  'drizzle (Postgres)',
-  () => ({
-    profiles: createDrizzleProfileRepository(db().handle.db),
-    newOwner: freshOwner,
-    async setDraftUpdatedAt(ownerId, at) {
-      await db()
-        .handle.db.update(profiles)
-        // `version` is set to itself, or the column's `$onUpdate` would bump it.
-        .set({ updatedAt: at, version: sql`${profiles.version}` })
-        .where(and(eq(profiles.ownerId, ownerId), eq(profiles.stage, 'draft')));
-    },
-    async newSourceDocument(ownerId) {
-      const { document } = await db().repo.createDocument(newSource(ownerId, 'resume.md'));
-      return document.id;
-    },
-  }),
-  { skip: !url },
-);
-
-describe.skipIf(!url)('Drizzle profile repository: concurrent publish and save', () => {
-  // The publish locks the draft row, so a save landing meanwhile either waits
-  // and writes a new draft afterwards, or wins and makes the publish stale.
-  // Either way the owner's change is never deleted unseen.
-  it('publishes and keeps the new draft, or refuses as stale', async () => {
-    const repo = createDrizzleProfileRepository(db().handle.db);
-    for (let i = 0; i < 20; i++) {
-      const owner = freshOwner();
-      const reviewed = await seedDraft(repo, owner, SAMPLE_PROFILE, null);
-      const changedData = { ...SAMPLE_PROFILE, title: `Changed ${i}` };
-      const [outcome, save] = await Promise.all([
-        repo.publishDraft(owner, reviewed.version),
-        repo.saveOwnerDraft(owner, changedData),
-      ]);
-      if (save.status !== 'saved') throw new Error('an unchecked save is never stale');
-      const saved = save.profile;
-      const after = await repo.getProfiles(owner);
-
-      expect(after.draft?.data.title).toBe(changedData.title);
-      expect(after.draft?.version).toBe(saved.version);
-      expect(saved.version).toBeGreaterThan(reviewed.version);
-      if (outcome.status === 'published') {
-        expect(after.published?.data.title).toBe(SAMPLE_PROFILE.title);
-      } else {
-        expect(outcome.status).toBe('stale');
-        expect(after.published).toBeNull();
-      }
-    }
-  });
-});
-
-describe.skipIf(!url)('Drizzle profile repository: concurrent redraft and owner save', () => {
-  // #186: both check the version they started from under the same row lock,
-  // so exactly one of them writes, and the draft carries that writer's source.
-  it('writes exactly one of them, with its own source', async () => {
-    const repo = createDrizzleProfileRepository(db().handle.db);
-    for (let i = 0; i < 20; i++) {
-      const owner = freshOwner();
-      const { document: oldResume } = await db().repo.createDocument(newSource(owner, 'old.md'));
-      const { document: newResume } = await db().repo.createDocument(newSource(owner, 'new.md'));
-      const opened = await seedDraft(repo, owner, SAMPLE_PROFILE, oldResume.id);
-      const redraftData = { ...SAMPLE_PROFILE, title: `Redraft ${i}` };
-      const ownerData = { ...SAMPLE_PROFILE, title: `Owner ${i}` };
-      const [redrafted, saved] = await Promise.all([
-        repo.saveDraftIfUnchanged(owner, redraftData, newResume.id, opened.version),
-        repo.saveOwnerDraft(owner, ownerData, opened.version),
-      ]);
-      const draft = (await repo.getProfiles(owner)).draft;
-
-      if (redrafted) {
-        expect(saved).toMatchObject({ status: 'stale', draft: { version: redrafted.version } });
-        expect(draft).toMatchObject({ data: redraftData, sourceDocumentId: newResume.id });
-      } else {
-        expect(saved.status).toBe('saved');
-        expect(draft).toMatchObject({ data: ownerData, sourceDocumentId: oldResume.id });
-      }
-    }
-  });
-
-  // The tests below are deterministic, unlike the race above: a transaction
-  // holds the draft (its row lock, or its uncommitted insert), the writer is
-  // started, and Postgres confirms it is blocked before the holder commits.
-
-  // If the owner's save read the draft without locking it, it would pass the
-  // check against the old version and then overwrite the change committed
-  // meanwhile.
-  it('checks the owner’s save only once a transaction holding the draft commits', async () => {
-    const repo = createDrizzleProfileRepository(db().handle.db);
-    const owner = freshOwner();
-    const opened = await seedDraft(repo, owner, SAMPLE_PROFILE, null);
-    const isDraft = draftOf(owner);
-
-    const save = await whileHolding(
-      async (tx) => {
-        await tx.select().from(profiles).where(isDraft).for('update');
-      },
-      async (tx) => {
-        await tx
-          .update(profiles)
-          .set({ title: 'Redrafted', version: nextProfileVersion() })
-          .where(isDraft);
-      },
-      () => repo.saveOwnerDraft(owner, { ...SAMPLE_PROFILE, title: 'Owner edit' }, opened.version),
-    );
-    expect(save).toMatchObject({ status: 'stale', draft: { data: { title: 'Redrafted' } } });
-    expect((await repo.getProfiles(owner)).draft?.data.title).toBe('Redrafted');
-  });
-
-  // With no draft there is no row to lock: the writer's insert waits on the
-  // primary key for a draft inserted concurrently, and then defers to it as
-  // its expected version says.
-  describe('when a draft is inserted while the writer finds none', () => {
-    const newData = { ...SAMPLE_PROFILE, title: 'Writer' };
-
-    /**
-     * Runs `write` while another transaction's insert of a draft titled
-     * "Committed" is uncommitted, then reads the draft as it ends up.
-     */
-    async function raceInsert<T>(write: (repo: ProfileRepository, owner: string) => Promise<T>) {
-      const repo = createDrizzleProfileRepository(db().handle.db);
-      const owner = freshOwner();
-      const { document: source } = await db().repo.createDocument(newSource(owner, 'resume.md'));
-      const result = await whileHolding(
-        async (tx) => {
-          await tx.insert(profiles).values({
-            ownerId: owner,
-            stage: 'draft',
-            name: SAMPLE_PROFILE.name,
-            title: 'Committed',
-            location: SAMPLE_PROFILE.location,
-            summary: SAMPLE_PROFILE.summary,
-            skills: SAMPLE_PROFILE.skills,
-            experience: SAMPLE_PROFILE.experience,
-            projects: SAMPLE_PROFILE.projects,
-            links: SAMPLE_PROFILE.links,
-            sourceDocumentId: source.id,
-          });
-        },
-        async () => undefined,
-        () => write(repo, owner),
-      );
-      const after = (await repo.getProfiles(owner)).draft;
-      return { source: source.id, result, after };
-    }
-
-    it('refuses a checked owner save with the committed draft', async () => {
-      const { result, after, source } = await raceInsert((repo, owner) =>
-        repo.saveOwnerDraft(owner, newData, null),
-      );
-      expect(after).toMatchObject({ data: { title: 'Committed' }, sourceDocumentId: source });
-      expect(result).toEqual({ status: 'stale', draft: after });
-    });
-
-    it('writes nothing for the drafter', async () => {
-      const { result, after } = await raceInsert((repo, owner) =>
-        repo.saveDraftIfUnchanged(owner, newData, null, null),
-      );
-      expect(result).toBeNull();
-      expect(after?.data.title).toBe('Committed');
-    });
-
-    it('writes an unchecked owner save, keeping the committed draft’s source', async () => {
-      const { result, after, source } = await raceInsert((repo, owner) =>
-        repo.saveOwnerDraft(owner, newData),
-      );
-      expect(result).toMatchObject({
-        status: 'saved',
-        profile: { data: { title: 'Writer' }, sourceDocumentId: source },
-      });
-      expect(after).toMatchObject({ data: { title: 'Writer' }, sourceDocumentId: source });
-    });
-  });
-});
-
-const draftOf = (ownerId: string) =>
-  and(eq(profiles.ownerId, ownerId), eq(profiles.stage, 'draft'));
-
-/** A promise and the function that resolves it. */
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve: () => void = () => undefined;
-  const promise = new Promise<void>((r) => {
-    resolve = r;
-  });
-  return { promise, resolve };
-}
-
-/** How long a writer may take to block on the holder; under vitest's 5 s test timeout. */
-const BLOCK_TIMEOUT_MS = 2_000;
-
-/**
- * Opens a transaction, runs `hold` in it and keeps it open; starts `write`
- * and waits until Postgres reports it blocked by that transaction; then runs
- * `finish`, commits, and returns what `write` resolved to. The transaction
- * is released whatever happens, so a failure cannot leave a lock (or a pool
- * connection) behind for the next test and the cleanup.
- */
-async function whileHolding<T>(
-  hold: (tx: KnowledgeTx) => Promise<unknown>,
-  finish: (tx: KnowledgeTx) => Promise<void>,
-  write: () => Promise<T>,
-): Promise<T> {
-  const { db: d } = db().handle;
-  const held = deferred();
-  const release = deferred();
-  let holderPid: number | undefined;
-  const holder = d.transaction(async (tx) => {
-    const [row] = await tx.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`);
-    holderPid = row?.pid;
-    await hold(tx);
-    held.resolve();
-    await release.promise;
-    await finish(tx);
-  });
-  // Observed here, so a holder that fails is never an unhandled rejection.
-  const holderDone = holder.then(
-    () => ({ ok: true as const }),
-    (error: unknown) => ({ ok: false as const, error }),
-  );
-
-  let pending: Promise<T> | undefined;
-  let done: Awaited<typeof holderDone>;
-  try {
-    // A holder that fails before it holds anything ends the wait too.
-    const first = await Promise.race([held.promise.then(() => null), holderDone]);
-    if (first && !first.ok) throw first.error;
-    if (holderPid === undefined) throw new Error('the holder has no backend pid');
-
-    pending = write();
-    // Observed now, so a failure while blocked is not unhandled; awaited below.
-    pending.catch(() => undefined);
-    await waitUntilBlockedBy(holderPid);
-  } finally {
-    release.resolve();
-    done = await holderDone;
-  }
-  if (!done.ok) throw done.error;
-  if (!pending) throw new Error('the write never started');
-  return pending;
-}
-
-/** Waits until some backend in this database is waiting on a lock `pid` holds. */
-async function waitUntilBlockedBy(pid: number): Promise<void> {
-  const { db: d } = db().handle;
-  const deadline = Date.now() + BLOCK_TIMEOUT_MS;
-  for (;;) {
-    const [row] = await d.execute<{ blocked: number }>(sql`
-      select count(*)::int as blocked
-      from pg_stat_activity
-      where datname = current_database()
-        and wait_event_type = 'Lock'
-        and ${pid} = any(pg_blocking_pids(pid))
-    `);
-    if ((row?.blocked ?? 0) > 0) return;
-    if (Date.now() > deadline) {
-      throw new Error(`no backend blocked on pid ${pid} within ${BLOCK_TIMEOUT_MS} ms`);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-}
 
 describeEvalRepositoryContract(
   'drizzle (Postgres + pgvector)',
@@ -542,20 +263,5 @@ describe.skipIf(!url)('Drizzle repository (Postgres + pgvector)', () => {
     } finally {
       await indexed.close();
     }
-  });
-
-  it('keeps a profile when the resume it was drafted from is deleted', async () => {
-    const { repo: r, handle: h } = db();
-    const profileRepo = createDrizzleProfileRepository(h.db);
-    const o = freshOwner();
-    const { document } = await r.createDocument(newDoc(o, 'resume.txt'));
-    await seedDraft(profileRepo, o, SAMPLE_PROFILE, document.id);
-    expect((await profileRepo.getProfiles(o)).draft?.sourceDocumentId).toBe(document.id);
-
-    await r.deleteDocument(o, document.id);
-    expect((await profileRepo.getProfiles(o)).draft).toMatchObject({
-      sourceDocumentId: null,
-      data: SAMPLE_PROFILE,
-    });
   });
 });

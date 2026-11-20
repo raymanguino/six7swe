@@ -24,11 +24,6 @@ export interface PipelineDeps extends KnowledgeDeps {
   /** Overrides the risk scan's deadline, for tests. */
   riskScanDeadlineMs?: number;
   /**
-   * Called after a resume's ingest has committed (profile drafting hooks in
-   * here). Its failure is logged and never fails the ingest.
-   */
-  onResumeIngested?: (doc: DocumentRecord) => void | Promise<void>;
-  /**
    * Called after every ingest attempt, finished or failed: either may have
    * changed the corpus (the eval runner hooks in here, #85, and skips a run
    * when the version did not move). It must not throw.
@@ -83,8 +78,6 @@ export function publicIngestionError(error: unknown): string {
 export async function ingestDocument(deps: PipelineDeps, doc: DocumentRecord): Promise<void> {
   const { repo, files, embedder, log } = deps;
   const started = Date.now();
-  /** Set once the ingest commits: whether the risk scan held it for review. */
-  let flagged: boolean | undefined;
 
   try {
     await repo.markProcessing(doc.id);
@@ -157,7 +150,8 @@ export async function ingestDocument(deps: PipelineDeps, doc: DocumentRecord): P
     });
 
     const version = await repo.completeIngestion(doc.id, text, newChunks, findings);
-    flagged = findings.length > 0;
+    // Whether the risk scan held it for review.
+    const flagged = findings.length > 0;
 
     // Only the count is logged: findings quote the document.
     log.info(
@@ -176,16 +170,6 @@ export async function ingestDocument(deps: PipelineDeps, doc: DocumentRecord): P
     return;
   }
   deps.onCorpusChanged?.(doc.ownerId);
-
-  // Outside the try above: the ingest has committed, so nothing here may mark it failed.
-  // A flagged resume is not served, so it cannot be primary; approving it runs the hook.
-  if (doc.kind === 'resume' && flagged === false && deps.onResumeIngested) {
-    try {
-      await deps.onResumeIngested(doc);
-    } catch (error) {
-      log.warn({ documentId: doc.id, err: error }, 'Post-ingest resume hook failed');
-    }
-  }
 }
 
 async function recordFailure(

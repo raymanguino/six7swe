@@ -4,7 +4,7 @@ import { redactSecrets } from '../../lib/redact.js';
 /**
  * One chat completion from MiniMax, the app's LLM provider, called the way
  * the backend's chat calls it (`backend/src/services/minimaxService.ts`).
- * Shared by the profile drafter (#86) and the eval answerer (#85).
+ * Shared by the risk scan (#212) and the eval answerer (#85).
  *
  * Failures are `ModelError`s whose message is fixed and safe to show the
  * owner; MiniMax's own text goes to `detail`, redacted, for the logs only.
