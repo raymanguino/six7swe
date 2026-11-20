@@ -6,9 +6,9 @@ import { completeWithMiniMax, type MiniMaxOptions } from '../llm/minimax.js';
  * Answers an eval question from the chunks retrieved for it, so a run (#85)
  * records what a visitor would roughly be told, next to what was retrieved.
  *
- * It is not the production chat: the backend's prompt and profile summary
- * live there. It is a grounded answer from the same chunks, enough to see
- * an answer change, or turn into "I don't know", when the corpus does.
+ * It is not the production chat: the backend's prompt lives there. It is a
+ * grounded answer from the same chunks, enough to see an answer change, or
+ * turn into "I don't know", when the corpus does.
  */
 export interface EvalAnswerer {
   /** Identifies the model, for logs. */
