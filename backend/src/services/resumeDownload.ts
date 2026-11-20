@@ -39,8 +39,9 @@ class InvalidResumeError extends Error {}
  * that window and the PDF is downloaded once per version. Concurrent requests share one version
  * read and one download. If `/version` cannot be read, or a newer version's download fails, the
  * cached PDF is served for up to `maxStaleMs`; past that, or with nothing cached, the error
- * propagates. A resume that is too large or not a PDF is remembered as bad for `versionTtlMs`, so
- * it is not downloaded again on every request.
+ * propagates. A failed `/version` read is also remembered for `versionTtlMs`, so an outage costs
+ * one attempt per window rather than one per request. A resume that is too large or not a PDF is
+ * remembered as bad for `versionTtlMs`, so it is not downloaded again on every request.
  */
 export function createResumeDownloader(
   sources: ResumeSources,
@@ -54,6 +55,7 @@ export function createResumeDownloader(
   let cache: CacheEntry | null = null;
   let lastVersion: { version: number; at: number } | null = null;
   let versionInflight: Promise<number> | null = null;
+  let versionFailure: { error: unknown; at: number } | null = null;
   const downloads = new Map<number, Promise<Buffer | null>>();
   let badResume: { version: number; error: Error; at: number } | null = null;
 
@@ -69,12 +71,22 @@ export function createResumeDownloader(
     if (lastVersion && now() - lastVersion.at < versionTtlMs) {
       return Promise.resolve(lastVersion.version);
     }
+    if (versionFailure && now() - versionFailure.at < versionTtlMs) {
+      return Promise.reject(versionFailure.error);
+    }
     versionInflight ??= client
       .getVersion()
-      .then((version) => {
-        lastVersion = { version, at: now() };
-        return version;
-      })
+      .then(
+        (version) => {
+          lastVersion = { version, at: now() };
+          versionFailure = null;
+          return version;
+        },
+        (error: unknown) => {
+          versionFailure = { error, at: now() };
+          throw error;
+        },
+      )
       .finally(() => {
         versionInflight = null;
       });

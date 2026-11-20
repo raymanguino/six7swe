@@ -320,6 +320,30 @@ describe('createResumeDownloader', () => {
     expect(getResumePdf).toHaveBeenCalledTimes(2);
   });
 
+  it('retries an unreachable /version at most once per TTL', async () => {
+    const downloader = build();
+    await downloader.get(log);
+
+    version = new Error('down');
+    pastTtl();
+    await downloader.get(log);
+    await downloader.get(log);
+    await downloader.get(log);
+    expect(getVersion).toHaveBeenCalledTimes(2);
+
+    // Inside the failure window the cached PDF is still served without asking again.
+    clock += TTL - 1;
+    expect(await downloader.get(log)).toEqual({ found: true, body: PDF, etag: '"resume-v1"' });
+    expect(getVersion).toHaveBeenCalledTimes(2);
+
+    // Once the window passes it asks again, and a recovered service is picked up.
+    version = 2;
+    clock += 2;
+    resume = Buffer.concat([PDF, Buffer.from('v2')]);
+    expect(await downloader.get(log)).toMatchObject({ found: true, etag: '"resume-v2"' });
+    expect(getVersion).toHaveBeenCalledTimes(3);
+  });
+
   it('serves the cached PDF when /version is unreachable, but only for a bounded time', async () => {
     const downloader = build();
     await downloader.get(log);
