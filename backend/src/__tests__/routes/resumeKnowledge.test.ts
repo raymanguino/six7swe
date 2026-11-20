@@ -5,7 +5,7 @@ import {
   getResumeDownload,
   resumeEtag,
 } from '../../services/resumeDownload';
-import type { KnowledgeProfileClient } from '../../services/knowledge/profileClient';
+import type { KnowledgeResumeClient } from '../../services/knowledge/resumeClient';
 
 jest.mock('../../services/resumeDownload', () => ({
   ...jest.requireActual('../../services/resumeDownload'),
@@ -150,10 +150,10 @@ describe('createResumeDownloader', () => {
 
   function build(options: { configured?: boolean; maxPdfBytes?: number } = {}) {
     const configured = options.configured ?? true;
-    const client: KnowledgeProfileClient = { getPublished: jest.fn(), getResumePdf };
+    const client: KnowledgeResumeClient = { getResumePdf };
     return createResumeDownloader(
       {
-        getProfileClient: () => (configured ? client : null),
+        getResumeClient: () => (configured ? client : null),
         getVersionClient: () => (configured ? { getVersion } : null),
       },
       {

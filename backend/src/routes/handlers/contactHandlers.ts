@@ -1,7 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
-import { getPortfolioData } from '../../services/portfolioService';
 import { EmailDeliveryError, sendEmail } from '../../services/emailService';
-import { EmailConfigError } from '../../config/email';
+import { EmailConfigError, getContactRecipient } from '../../config/email';
 
 const INPUT_LIMITS = {
   name: 100,
@@ -44,11 +43,10 @@ export async function contactHandler(request: FastifyRequest, reply: FastifyRepl
       return reply.code(400).send({ error: 'Invalid email format' });
     }
 
-    const { profile } = await getPortfolioData();
-    const recipientEmail = profile?.email;
+    const recipientEmail = getContactRecipient();
     if (!recipientEmail) {
-      // A published profile may leave out the email: the form is then off, not broken.
-      request.log.warn('Contact form unavailable: the profile has no email address');
+      // Without a recipient the form is off, not broken.
+      request.log.warn('Contact form unavailable: CONTACT_TO_EMAIL is not an email address');
       return reply.code(503).send({ error: 'The contact form is not available right now' });
     }
 

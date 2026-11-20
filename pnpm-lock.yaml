@@ -51,9 +51,6 @@ importers:
       '@fastify/static':
         specifier: ^10.1.10
         version: 10.1.11
-      '@modelcontextprotocol/sdk':
-        specifier: ^1.29.0
-        version: 1.32.2(zod@4.6.7)
       '@six7swe/knowledge-types':
         specifier: workspace:*
         version: link:../packages/knowledge-types

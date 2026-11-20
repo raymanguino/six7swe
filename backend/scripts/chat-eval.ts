@@ -1,14 +1,11 @@
 /**
  * Runs the chat eval (#84): each seed question is answered once with the stuffed
- * context and once with the context retrieved from the knowledge service, and a
- * blind judge compares the two. Prints a Markdown report to attach to the PR.
+ * context (the extracted text of every ready knowledge document) and once with
+ * the context retrieved from the knowledge service, and a blind judge compares
+ * the two. Prints a Markdown report to attach to the PR.
  *
  * Both answers use the production chat prompt and model; only the context block
- * differs. The judge's reference is the stuffed context plus the extracted
- * text of every ready knowledge-service document (the resume PDF is only
- * there), each labeled. Without the owner key, or if fetching the documents
- * fails, the reference is the stuffed context only, and the report header and
- * stderr say so.
+ * differs. The judge's reference is the same whole corpus, each document labeled.
  *
  * Before anything else it waits for the knowledge service to answer /version (up to 30 s):
  * the chat:eval script rebuilds the knowledge-types package, which restarts a local
@@ -21,24 +18,20 @@
  *   pnpm --filter @six7swe/backend chat:eval [--remote] [--out report.md]
  *
  * Environment (backend/.env, or backend/.env.remote with --remote):
- *   DATABASE_URL            the portfolio tables (profile and content sections)
  *   MINIMAX_API_KEY         answers and judging
  *   KNOWLEDGE_URL           the knowledge service, e.g. http://127.0.0.1:3100 (not
  *                           localhost, which Windows resolves to ::1 first)
- *   KNOWLEDGE_SERVICE_KEY   its service key
- *   KNOWLEDGE_OWNER_KEY     optional: its owner key, to read the documents for the
- *                           judge's full reference (stuffed context only without it)
+ *   KNOWLEDGE_SERVICE_KEY   its service key, for retrieval
+ *   KNOWLEDGE_OWNER_KEY     its owner key, to read the documents for the stuffed
+ *                           context and the judge's reference
  *   KNOWLEDGE_RETRIEVE_K    optional: chunks retrieved per question (default 6)
  *   KNOWLEDGE_TIMEOUT_MS    optional: per-request retrieval timeout (default 3000)
- *
- * The knowledge service must already hold the same background as the portfolio
- * tables (upload the resume and the content sections), or the comparison
- * measures a corpus gap rather than retrieval.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { resolveDatabaseTarget } from './db-env';
+import dotenv from 'dotenv';
+import { wantsRemote } from './db-env';
 
 /** Reading whole documents is slower than a retrieval; this is a one-off, not a chat turn. */
 const REFERENCE_TIMEOUT_MS = 15_000;
@@ -55,13 +48,14 @@ function requireEnv(name: string): void {
 }
 
 async function main(): Promise<void> {
-  resolveDatabaseTarget();
+  dotenv.config({ path: path.resolve(__dirname, '..', wantsRemote ? '.env.remote' : '.env') });
   requireEnv('MINIMAX_API_KEY');
   requireEnv('KNOWLEDGE_URL');
   requireEnv('KNOWLEDGE_SERVICE_KEY');
+  requireEnv('KNOWLEDGE_OWNER_KEY');
 
-  // Imported after the env is loaded: `src/db` reads DATABASE_URL on load.
-  const { getChatContext, getKnowledgeChatContext } = await import('../src/data/chatContext');
+  // Imported after the env is loaded: the clients read it on first use.
+  const { getKnowledgeChatContext } = await import('../src/data/chatContext');
   const { getDefaultRetriever, resetDefaultRetriever } =
     await import('../src/services/knowledgeRetrieval');
   const { createKnowledgeDocumentClient } =
@@ -72,8 +66,8 @@ async function main(): Promise<void> {
   const {
     SEED_EVAL_QUESTIONS,
     JudgeVerdictSchema,
+    buildCorpusContext,
     buildJudgeMessages,
-    buildJudgeReference,
     renderEvalReport,
   } = await import('../src/domain/chatEval');
   type EvalRow = import('../src/domain/chatEval').EvalRow;
@@ -81,7 +75,6 @@ async function main(): Promise<void> {
   const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
   const { awaitKnowledgeReady } = await import('../src/services/knowledge/awaitReady');
-  const stuffedContext = await getChatContext();
 
   const ready = await awaitKnowledgeReady({
     baseUrl: process.env.KNOWLEDGE_URL ?? '',
@@ -98,26 +91,17 @@ async function main(): Promise<void> {
     );
   }
 
-  // The judge's reference: the stuffed context plus every knowledge document.
-  const ownerKey = process.env.KNOWLEDGE_OWNER_KEY?.trim();
-  const reference = await buildJudgeReference({
-    stuffedContext,
-    documents: ownerKey
-      ? createKnowledgeDocumentClient({
-          baseUrl: process.env.KNOWLEDGE_URL ?? '',
-          ownerKey,
-          timeoutMs: REFERENCE_TIMEOUT_MS,
-        })
-      : null,
-  });
-  if (reference.stuffedOnlyReason) {
-    process.stderr.write(
-      `\nWARNING: the judge's reference is the stuffed context only (${reference.stuffedOnlyReason}).\n` +
-        'Answers citing facts found only in the knowledge documents (such as the resume PDF) may be scored as invented.\n\n',
-    );
-  }
+  // The whole corpus: the stuffed side's context and the judge's reference.
+  const reference = await buildCorpusContext(
+    createKnowledgeDocumentClient({
+      baseUrl: process.env.KNOWLEDGE_URL ?? '',
+      ownerKey: process.env.KNOWLEDGE_OWNER_KEY?.trim() ?? '',
+      timeoutMs: REFERENCE_TIMEOUT_MS,
+    }),
+  );
+  const stuffedContext = reference.text;
   process.stderr.write(
-    `Judge reference: ${reference.sources.map((s) => `${s.label} (${s.chars} chars)`).join('; ')}\n`,
+    `Corpus: ${reference.sources.map((s) => `${s.label} (${s.chars} chars)`).join('; ')}\n`,
   );
   if (reference.skipped.length > 0) {
     process.stderr.write(`Left out (no extracted text): ${reference.skipped.join('; ')}\n`);

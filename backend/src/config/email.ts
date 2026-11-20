@@ -69,3 +69,14 @@ export function getEmailConfig(): EmailConfig {
 export function resetEmailConfig(): void {
   cached = null;
 }
+
+/**
+ * Where contact form messages go: `CONTACT_TO_EMAIL`. Null when it is unset or
+ * not an email address, which turns the form off (503) rather than breaking it.
+ */
+export function getContactRecipient(
+  env: Record<string, string | undefined> = process.env,
+): string | null {
+  const parsed = z.email().safeParse(env.CONTACT_TO_EMAIL?.trim());
+  return parsed.success ? parsed.data : null;
+}

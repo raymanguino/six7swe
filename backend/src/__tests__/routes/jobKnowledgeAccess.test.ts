@@ -51,7 +51,7 @@ function makeSource(): jest.Mocked<JobKnowledgeSource> {
   return {
     getVersion: jest.fn().mockResolvedValue(5),
     retrieve: jest.fn(),
-    getProfileSummary: jest.fn(),
+    getBackgroundSummary: jest.fn(),
     getSummary: jest.fn().mockResolvedValue({ documentCount: 4, updatedAt: null }),
   };
 }

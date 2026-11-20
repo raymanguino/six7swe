@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
 import { getKnowledgeRetrievalConfig } from '../config/knowledgeRetrieval';
-import { getDefaultProfileClient, type KnowledgeProfileClient } from './knowledge/profileClient';
+import { getDefaultResumeClient, type KnowledgeResumeClient } from './knowledge/resumeClient';
 import { KnowledgeBodyTooLargeError } from './knowledge/transport';
 import { createHttpRetrievalClient, type RetrievalClient } from './knowledgeRetrieval';
 
@@ -10,7 +10,7 @@ export type ResumeDownload = { found: true; body: Buffer; etag: string } | { fou
 
 export interface ResumeSources {
   /** Null when the knowledge service is not configured. */
-  getProfileClient(): KnowledgeProfileClient | null;
+  getResumeClient(): KnowledgeResumeClient | null;
   /** Null when the knowledge service is not configured. */
   getVersionClient(): Pick<RetrievalClient, 'getVersion'> | null;
 }
@@ -107,7 +107,7 @@ export function createResumeDownloader(
     return versionInflight;
   }
 
-  async function downloadPdf(client: KnowledgeProfileClient): Promise<Buffer | null> {
+  async function downloadPdf(client: KnowledgeResumeClient): Promise<Buffer | null> {
     let pdf: Buffer | null;
     try {
       pdf = await client.getResumePdf(maxPdfBytes);
@@ -125,7 +125,7 @@ export function createResumeDownloader(
     return pdf;
   }
 
-  function download(client: KnowledgeProfileClient, version: number): Promise<Buffer | null> {
+  function download(client: KnowledgeResumeClient, version: number): Promise<Buffer | null> {
     if (badResume && badResume.version === version && now() - badResume.at < versionTtlMs) {
       return Promise.reject(badResume.error);
     }
@@ -146,9 +146,9 @@ export function createResumeDownloader(
 
   return {
     async get(log: Logger): Promise<ResumeDownload> {
-      const profile = sources.getProfileClient();
+      const resumes = sources.getResumeClient();
       const versions = sources.getVersionClient();
-      if (!profile || !versions) {
+      if (!resumes || !versions) {
         log.warn('Resume unavailable: the knowledge service is not configured');
         return { found: false };
       }
@@ -175,11 +175,14 @@ export function createResumeDownloader(
       // Any other version (older too: the knowledge database may have been reset) is a change.
       let pdf: Buffer | null;
       try {
-        pdf = await download(profile, version);
+        pdf = await download(resumes, version);
       } catch (error) {
         const stale = staleUsable();
         if (!stale) throw error;
-        log.warn({ err: error }, 'Could not download the new primary resume; serving the cached one');
+        log.warn(
+          { err: error },
+          'Could not download the new primary resume; serving the cached one',
+        );
         return toDownload(stale);
       }
 
@@ -196,7 +199,7 @@ export function createResumeDownloader(
 let defaultVersionClient: Pick<RetrievalClient, 'getVersion'> | null | undefined;
 
 const defaultDownloader = createResumeDownloader({
-  getProfileClient: getDefaultProfileClient,
+  getResumeClient: getDefaultResumeClient,
   getVersionClient() {
     if (defaultVersionClient === undefined) {
       const config = getKnowledgeRetrievalConfig();

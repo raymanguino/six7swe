@@ -43,6 +43,11 @@ export const REVIEW_PROMPT_VERSIONS = [
     since: 'PR #133 (2026-11-14)',
     change: 'frontend stack versions corrected',
   },
+  {
+    version: 5,
+    since: 'issue #213 (2026-11-20)',
+    change: 'the portfolioService layering exception removed with the service',
+  },
 ] as const satisfies readonly PromptVersionInfo[];
 
 /** The version of the prompt the agent runs with now: the last one in the history. */

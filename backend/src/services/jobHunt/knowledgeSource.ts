@@ -1,27 +1,39 @@
-import { MAX_RETRIEVE_QUERY_CHARS, type RetrieveResponse } from '@six7swe/knowledge-types';
+import type { RetrievedChunkDto, RetrieveResponse } from '@six7swe/knowledge-types';
 import { loadKnowledgeConfig } from '../../config/knowledge';
 import { getKnowledgeRetrievalConfig } from '../../config/knowledgeRetrieval';
 import type { KnowledgeDocumentSource } from '../../domain/chatEval';
-import { createHttpRetrievalClient, type RetrievalClient } from '../knowledgeRetrieval';
+import {
+  createHttpRetrievalClient,
+  toRetrieveQuery,
+  type RetrievalClient,
+} from '../knowledgeRetrieval';
 import { createKnowledgeDocumentClient } from '../knowledge/documentsClient';
 import { isKnowledgeOwner } from '../knowledge/ownerGate';
-import {
-  createKnowledgeProfileClient,
-  type KnowledgeProfileClient,
-} from '../knowledge/profileClient';
+import { createVersionKeyedCache } from '../knowledge/versionKeyedCache';
 
 /**
  * The job hunter's view of the knowledge service: the owner's background that
  * every match is scored against.
  *
- * It is built from the existing knowledge clients (retrieval, published
- * profile, documents) rather than a client of its own. Retrieval goes
- * uncached: each job description is its own query, so a cache would only
- * ever miss.
+ * It is built from the existing knowledge clients (retrieval, documents)
+ * rather than a client of its own. Per-job retrieval goes uncached: each job
+ * description is its own query, so a cache would only ever miss. The overall
+ * background (one fixed query) is the same for every job, so it is cached by
+ * corpus version.
  */
 
 /** Chunks retrieved per job description. */
 export const JOB_MATCH_RETRIEVE_K = 8;
+
+/**
+ * The one fixed retrieval for the candidate's overall background, sent with
+ * every job: who they are, what they do now, and their core skills. Per-job
+ * retrieval finds what a posting asks about; this keeps the basics in view
+ * when a posting's wording matches none of them.
+ */
+export const BACKGROUND_SUMMARY_QUERY = 'Professional summary, current role and core skills';
+/** Chunks in the overall background. */
+export const BACKGROUND_SUMMARY_K = 4;
 
 /**
  * Job matching runs in the background, so it can wait longer than chat for a
@@ -42,41 +54,39 @@ export interface JobKnowledgeSource {
   /** The chunks most relevant to a job description, and the version they came from. */
   retrieve(jobText: string): Promise<RetrieveResponse>;
   /**
-   * The published profile rendered as a short summary, or null when the
-   * owner has not published one.
+   * The overall background (`BACKGROUND_SUMMARY_QUERY`) at `version`, the
+   * corpus version the caller just read. Cached by version: retrieved once
+   * per corpus change, however many jobs and profiles are scored. Empty when
+   * nothing matched; throws when the service does not answer.
    */
-  getProfileSummary(): Promise<string | null>;
+  getBackgroundSummary(version: number): Promise<readonly RetrievedChunkDto[]>;
   /** Document count and freshness; null when the owner key is not configured. */
   getSummary(): Promise<KnowledgeSummary | null>;
 }
 
 /** Long postings are cut to the service's query limit; the opening says what the role is. */
-export function toRetrieveQuery(jobText: string): string {
-  return jobText.trim().slice(0, MAX_RETRIEVE_QUERY_CHARS);
-}
+export { toRetrieveQuery };
 
 export function createJobKnowledgeSource(clients: {
   retrieval: RetrievalClient;
-  profile: KnowledgeProfileClient;
   documents: KnowledgeDocumentSource | null;
   k?: number;
 }): JobKnowledgeSource {
   const k = clients.k ?? JOB_MATCH_RETRIEVE_K;
+  const backgroundSummary = createVersionKeyedCache(async () => {
+    const { version, chunks } = await clients.retrieval.retrieve(
+      BACKGROUND_SUMMARY_QUERY,
+      BACKGROUND_SUMMARY_K,
+    );
+    return { version, value: chunks };
+  });
 
   return {
     getVersion: () => clients.retrieval.getVersion(),
 
     retrieve: (jobText) => clients.retrieval.retrieve(toRetrieveQuery(jobText), k),
 
-    async getProfileSummary() {
-      const { profile } = await clients.profile.getPublished();
-      if (!profile) return null;
-      const { data } = profile;
-      const lines = [`${data.name}, ${data.title}`];
-      if (data.summary) lines.push(data.summary);
-      if (data.skills.length > 0) lines.push(`Skills: ${data.skills.join(', ')}`);
-      return lines.join('\n');
-    },
+    getBackgroundSummary: (version) => backgroundSummary.get(version),
 
     async getSummary() {
       if (!clients.documents) return null;
@@ -146,11 +156,6 @@ export function getDefaultJobKnowledgeSource(): JobKnowledgeSource | null {
       const owner = loadKnowledgeConfig().target;
       defaultSource = createJobKnowledgeSource({
         retrieval: createHttpRetrievalClient({ ...config, timeoutMs }),
-        profile: createKnowledgeProfileClient({
-          baseUrl: config.baseUrl,
-          key: config.serviceKey,
-          timeoutMs,
-        }),
         documents: owner
           ? createKnowledgeDocumentClient({
               baseUrl: owner.url,

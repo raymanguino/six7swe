@@ -1,40 +1,15 @@
 import type { RetrievedChunkDto } from '@six7swe/knowledge-types';
 import {
-  buildProfileSummary,
   buildRetrievalQuery,
+  getFitcheckContext,
   getKnowledgeChatContext,
   recordFor,
+  NO_MATCH_NOTE,
+  UNAVAILABLE_NOTE,
   type KnowledgeChatContext,
 } from '../../data/chatContext';
 import type { RetrievalOutcome } from '../../domain/chatEval';
-import { getPortfolioData } from '../../services/portfolioService';
 import { KnowledgeRetrievalError, type CachedRetriever } from '../../services/knowledgeRetrieval';
-import type { PortfolioData } from '../../types/portfolio';
-
-jest.mock('../../services/portfolioService', () => ({ getPortfolioData: jest.fn() }));
-const mockedGetPortfolioData = jest.mocked(getPortfolioData);
-
-const portfolio: PortfolioData = {
-  profile: {
-    id: 1,
-    name: 'Ray Manguino',
-    title: 'Software Engineer',
-    email: 'ray@example.com',
-    phone: null,
-    location: 'Toronto',
-    linkedinUrl: null,
-    githubUrl: null,
-    summary: 'Backend engineer focused on distributed systems.',
-    skills: ['TypeScript', 'Postgres'],
-    experience: [
-      { title: 'Senior Engineer', company: 'Acme', period: '2021-2024', description: 'Long text' },
-    ],
-    projects: [],
-    fullResumeText: 'FULL RESUME TEXT THAT MUST NOT BE STUFFED',
-    resumeFilename: null,
-  },
-  contentSections: [{ id: 1, filename: 'hobbies', content: 'SECTION TEXT', sortOrder: 0 }],
-};
 
 const chunk: RetrievedChunkDto = {
   chunkId: '00000000-0000-4000-8000-000000000001',
@@ -50,24 +25,18 @@ const retrieverReturning = (impl: CachedRetriever['retrieve']): CachedRetriever 
 });
 
 describe('getKnowledgeChatContext', () => {
-  beforeEach(() => {
-    mockedGetPortfolioData.mockResolvedValue(portfolio);
-  });
-
-  it('is the profile summary plus the retrieved chunks, not the stuffed resume', async () => {
+  it('is the retrieved chunks', async () => {
     const retriever = retrieverReturning(async () => [chunk]);
 
     const result = await getKnowledgeChatContext({ message: 'Kafka?', retriever });
 
     expect(result.mode).toBe('retrieved');
     expect(result.chunkCount).toBe(1);
-    expect(result.context).toContain('Name: Ray Manguino');
+    expect(result.context).toContain('Relevant excerpts from my background documents');
     expect(result.context).toContain('[1] resume.md > Acme\nBuilt the Kafka ingestion pipeline.');
-    expect(result.context).not.toContain('FULL RESUME TEXT');
-    expect(result.context).not.toContain('SECTION TEXT');
   });
 
-  it('falls back to the profile only when retrieval fails, and logs it', async () => {
+  it('says the background is unavailable when retrieval fails, and logs it', async () => {
     const retriever = retrieverReturning(async () => {
       throw new Error('connect ECONNREFUSED');
     });
@@ -79,11 +48,12 @@ describe('getKnowledgeChatContext', () => {
       log: { warn },
     });
 
-    expect(result).toMatchObject({ mode: 'profile-only', reason: 'unavailable', chunkCount: 0 });
-    expect(result.context).toContain('Profile summary:');
-    expect(result.context).toContain('Skills: TypeScript, Postgres');
-    expect(result.context).toContain('Detailed background documents are unavailable right now.');
-    expect(result.context).not.toContain('Relevant excerpts');
+    expect(result).toMatchObject({
+      mode: 'no-background',
+      reason: 'unavailable',
+      chunkCount: 0,
+      context: UNAVAILABLE_NOTE,
+    });
     expect(warn).toHaveBeenCalledWith(
       { source: 'knowledge', error: { message: 'connect ECONNREFUSED' } },
       expect.stringContaining('Knowledge retrieval failed'),
@@ -110,7 +80,7 @@ describe('getKnowledgeChatContext', () => {
     );
   });
 
-  it('falls back to the profile only when the service is not configured', async () => {
+  it('says the background is unavailable when the service is not configured', async () => {
     const warn = jest.fn();
     const result = await getKnowledgeChatContext({
       message: 'Kafka?',
@@ -118,8 +88,8 @@ describe('getKnowledgeChatContext', () => {
       log: { warn },
     });
 
-    expect(result).toMatchObject({ mode: 'profile-only', reason: 'unavailable' });
-    expect(result.context).toContain('Detailed background documents are unavailable right now.');
+    expect(result).toMatchObject({ mode: 'no-background', reason: 'unavailable' });
+    expect(result.context).toBe(UNAVAILABLE_NOTE);
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
@@ -131,8 +101,8 @@ describe('getKnowledgeChatContext', () => {
       log: { warn },
     });
 
-    expect(result).toMatchObject({ mode: 'profile-only', reason: 'no-match' });
-    expect(result.context).toContain('No background documents matched this question.');
+    expect(result).toMatchObject({ mode: 'no-background', reason: 'no-match' });
+    expect(result.context).toBe(NO_MATCH_NOTE);
     expect(warn).not.toHaveBeenCalled();
   });
 
@@ -194,15 +164,33 @@ describe('buildRetrievalQuery', () => {
   });
 });
 
-describe('buildProfileSummary', () => {
-  it('lists one line per role without descriptions', () => {
-    const summary = buildProfileSummary(portfolio.profile);
-    expect(summary).toContain('- Senior Engineer, Acme (2021-2024)');
-    expect(summary).not.toContain('Long text');
+describe('getFitcheckContext', () => {
+  it('retrieves with the job description as the query, never recorded', async () => {
+    const retriever = retrieverReturning(async () => [chunk]);
+    const result = await getFitcheckContext({
+      jobDescription: '  Senior engineer, Kafka and Postgres  ',
+      retriever,
+    });
+    expect(retriever.retrieve).toHaveBeenCalledWith('Senior engineer, Kafka and Postgres');
+    expect(result).toMatchObject({ mode: 'retrieved', chunkCount: 1 });
+    expect(result.context).toContain('most relevant to this job');
+    expect(result.context).toContain('[1] resume.md > Acme');
   });
 
-  it('handles a missing profile', () => {
-    expect(buildProfileSummary(null)).toContain('(No profile data available.)');
+  it('cuts a long posting to the service query limit', async () => {
+    const retriever = retrieverReturning(async () => [chunk]);
+    await getFitcheckContext({ jobDescription: 'x'.repeat(5000), retriever });
+    expect(jest.mocked(retriever.retrieve).mock.calls[0]?.[0]).toHaveLength(2000);
+  });
+
+  it('reports an outage as unavailable, without throwing', async () => {
+    const result = await getFitcheckContext({
+      jobDescription: 'Engineer',
+      retriever: retrieverReturning(async () => {
+        throw new Error('down');
+      }),
+    });
+    expect(result).toMatchObject({ mode: 'no-background', reason: 'unavailable' });
   });
 });
 

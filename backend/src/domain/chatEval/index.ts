@@ -3,10 +3,11 @@ import { z } from 'zod';
 
 /**
  * The chat eval: canned questions answered twice, once with the stuffed
- * context (whole resume plus every content section) and once with the
- * retrieved context (profile summary plus top-k chunks), then compared by a
- * blind judge. No IO of its own: the knowledge documents for the judge's
- * reference come through an injected source. `scripts/chat-eval.ts` runs it.
+ * context (the extracted text of every ready knowledge document) and once
+ * with the retrieved context (the top-k chunks, as chat answers), then
+ * compared by a blind judge that sees the whole corpus as its reference. No
+ * IO of its own: the knowledge documents come through an injected source.
+ * `scripts/chat-eval.ts` runs it.
  *
  * The seed set is where the evolving eval set of the epic (#80) starts; real
  * visitor questions get promoted into it later.
@@ -72,27 +73,19 @@ export interface KnowledgeDocumentSource {
   getDocumentText(documentId: string): Promise<string | null>;
 }
 
-export const STUFFED_CONTEXT_LABEL = 'Stuffed context';
-
 export interface ReferenceSourceSummary {
   label: string;
   chars: number;
 }
 
-/** What the judge was given as the reference, and what the report says about it. */
-export interface JudgeReferenceSummary {
+/** What the corpus held, and what the report says about it. */
+export interface CorpusSummary {
   sources: ReferenceSourceSummary[];
-  /**
-   * Why the reference holds the stuffed context only, or null when it also
-   * holds the knowledge documents. A stuffed-only reference does not include
-   * the resume PDF, so the judge may score real resume facts as invented.
-   */
-  stuffedOnlyReason: string | null;
   /** Ready documents left out because they have no extracted text. */
   skipped: string[];
 }
 
-export interface JudgeReference extends JudgeReferenceSummary {
+export interface CorpusContext extends CorpusSummary {
   text: string;
 }
 
@@ -100,60 +93,31 @@ export function knowledgeDocumentLabel(doc: Pick<DocumentDto, 'filename' | 'kind
   return `Knowledge document: ${doc.filename} (${doc.kind})`;
 }
 
-const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
-
 /**
- * The judge's reference: the stuffed context plus the extracted text of every
- * ready knowledge document, each under its own label. The stuffed context
- * (the portfolio tables) does not hold the resume PDF, so judging against it
- * alone scores real resume facts as invented.
+ * The whole corpus: the extracted text of every ready knowledge document,
+ * each under its own label. It is both the stuffed side's context and the
+ * judge's reference, so the judge sees everything either side could cite.
  *
- * Without a document source, or if any fetch fails, the reference falls back
- * to the stuffed context alone and `stuffedOnlyReason` says why. A partial set
- * of documents is never used: it would bias the judge without saying so.
+ * Throws when the documents cannot be read or none has text: a partial
+ * corpus would bias both the stuffed side and the judge without saying so.
  */
-export async function buildJudgeReference(input: {
-  stuffedContext: string;
-  /** Null when the owner key is not configured. */
-  documents: KnowledgeDocumentSource | null;
-}): Promise<JudgeReference> {
-  const stuffed = { label: STUFFED_CONTEXT_LABEL, text: input.stuffedContext.trim() };
-  const stuffedOnly = (reason: string, skipped: string[] = []): JudgeReference => ({
-    text: renderReference([stuffed]),
-    sources: [{ label: stuffed.label, chars: stuffed.text.length }],
-    stuffedOnlyReason: reason,
-    skipped,
-  });
-
-  if (!input.documents) {
-    return stuffedOnly('no knowledge-service owner key (KNOWLEDGE_OWNER_KEY) is configured');
-  }
-  const source = input.documents;
-
-  let documents: Array<{ label: string; text: string }>;
-  try {
-    const ready = (await source.listDocuments()).filter((doc) => doc.status === 'ready');
-    documents = await Promise.all(
-      ready.map(async (doc) => ({
-        label: knowledgeDocumentLabel(doc),
-        text: ((await source.getDocumentText(doc.id)) ?? '').trim(),
-      })),
-    );
-  } catch (error) {
-    return stuffedOnly(`fetching the knowledge documents failed: ${errorMessage(error)}`);
-  }
+export async function buildCorpusContext(source: KnowledgeDocumentSource): Promise<CorpusContext> {
+  const ready = (await source.listDocuments()).filter((doc) => doc.status === 'ready');
+  const documents = await Promise.all(
+    ready.map(async (doc) => ({
+      label: knowledgeDocumentLabel(doc),
+      text: ((await source.getDocumentText(doc.id)) ?? '').trim(),
+    })),
+  );
 
   const withText = documents.filter((doc) => doc.text.length > 0);
   const skipped = documents.filter((doc) => doc.text.length === 0).map((doc) => doc.label);
   if (withText.length === 0) {
-    return stuffedOnly('the knowledge service has no ready documents with extracted text', skipped);
+    throw new Error('the knowledge service has no ready documents with extracted text');
   }
-
-  const all = [stuffed, ...withText];
   return {
-    text: renderReference(all),
-    sources: all.map((s) => ({ label: s.label, chars: s.text.length })),
-    stuffedOnlyReason: null,
+    text: renderReference(withText),
+    sources: withText.map((s) => ({ label: s.label, chars: s.text.length })),
     skipped,
   };
 }
@@ -184,7 +148,7 @@ export function buildJudgeMessages(input: {
       content: [
         'You grade answers from a portfolio chat assistant that speaks as Ray, a software engineer.',
         'The reference material below is the complete, authoritative record of his background.',
-        'It is made of several labeled sources (such as the stuffed context and knowledge documents like his resume). All of them are authoritative: a claim supported by any one source is supported, and sources may overlap or word things differently.',
+        'It is made of several labeled sources (knowledge documents such as his resume and notes). All of them are authoritative: a claim supported by any one source is supported, and sources may overlap or word things differently.',
         'Score each answer from 1 to 5:',
         '- accuracy: every claim is supported by the reference; invented or wrong facts score low.',
         '- completeness: it covers what the reference says that matters for the question, at a sensible length (2-4 sentences is the target).',
@@ -217,8 +181,7 @@ export type Side = 'stuffed' | 'retrieved';
  * the domain defines its own shape so it depends on nothing outside itself.
  */
 export type RetrievalOutcome =
-  | { mode: 'retrieved' }
-  | { mode: 'profile-only'; reason: 'unavailable' | 'no-match' };
+  { mode: 'retrieved' } | { mode: 'no-background'; reason: 'unavailable' | 'no-match' };
 
 export interface EvalRow {
   question: EvalQuestion;
@@ -237,17 +200,17 @@ export interface EvalRow {
 }
 
 /**
- * The retrieved side fell back to the profile because the service failed. Its
+ * The retrieved side had no background because the service failed. Its
  * answer measures an outage, not retrieval, so it is not scored as retrieved.
  */
 export function retrievalUnavailable(row: Pick<EvalRow, 'retrieved'>): boolean {
   const outcome = row.retrieved.outcome;
-  return outcome?.mode === 'profile-only' && outcome.reason === 'unavailable';
+  return outcome?.mode === 'no-background' && outcome.reason === 'unavailable';
 }
 
 function describeOutcome(outcome: RetrievalOutcome | null): string {
   if (!outcome) return 'n/a';
-  return outcome.mode === 'retrieved' ? 'retrieved' : `profile-only, ${outcome.reason}`;
+  return outcome.mode === 'retrieved' ? 'retrieved' : `no background, ${outcome.reason}`;
 }
 
 /** The judge's scores mapped back from answer 1 / answer 2 to the two sides. */
@@ -320,7 +283,7 @@ export function summarizeEval(rows: EvalRow[]): EvalSummary {
 /** A Markdown report to attach to the PR. */
 export function renderEvalReport(
   rows: EvalRow[],
-  meta: { generatedAt: string; model: string; reference: JudgeReferenceSummary },
+  meta: { generatedAt: string; model: string; reference: CorpusSummary },
 ): string {
   const summary = summarizeEval(rows);
   const { reference } = meta;
@@ -331,24 +294,18 @@ export function renderEvalReport(
     `Generated ${meta.generatedAt} with ${meta.model}. Scores are accuracy + completeness (2-10), from a blind judge that saw the reference below.`,
     '',
   ];
-  if (reference.stuffedOnlyReason) {
-    lines.push(
-      `> **Warning: the judge's reference is the stuffed context only** (${reference.stuffedOnlyReason}). It does not include the knowledge documents, such as the resume PDF, so answers that cite facts found only there may be scored as invented.`,
-      '',
-    );
-  }
   lines.push(
-    `- Judge reference (${reference.sources.length} source(s), ${referenceChars} chars): ${reference.sources
+    `- Corpus, the stuffed context and the judge's reference (${reference.sources.length} source(s), ${referenceChars} chars): ${reference.sources
       .map((s) => `${s.label} (${s.chars} chars)`)
       .join('; ')}`,
   );
   if (reference.skipped.length > 0) {
-    lines.push(`- Left out of the reference (no extracted text): ${reference.skipped.join('; ')}`);
+    lines.push(`- Left out of the corpus (no extracted text): ${reference.skipped.join('; ')}`);
   }
   lines.push(`- Judged: ${summary.judged} of ${rows.length}`);
   if (summary.unavailable > 0) {
     lines.push(
-      `- **Knowledge service unavailable for ${summary.unavailable} question(s):** those answers fell back to the profile only and are excluded from the scores below.`,
+      `- **Knowledge service unavailable for ${summary.unavailable} question(s):** those answers had no background and are excluded from the scores below.`,
     );
   }
   if (summary.failed > 0) {
@@ -390,7 +347,7 @@ export function renderEvalReport(
     }
     if (retrievalUnavailable(row)) {
       lines.push(
-        '_The knowledge service was unavailable; the retrieved answer used the profile only._',
+        '_The knowledge service was unavailable; the retrieved answer had no background._',
         '',
       );
     }

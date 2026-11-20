@@ -6,8 +6,8 @@ import type { Job, MatchEvidence, Profile } from '../../db/schema/jobHunt';
  *
  * The matcher is profile-source agnostic: it accepts a context string and
  * knows nothing about where it came from. Here it is the search profile's own
- * fields, the owner's published profile summary, and the knowledge chunks
- * retrieved with the job description as the query.
+ * fields, the owner's overall background (one fixed retrieval), and the
+ * knowledge chunks retrieved with the job description as the query.
  */
 
 /**
@@ -31,15 +31,25 @@ export function untrusted(tag: string, text: string): string {
 }
 
 export interface CandidateBackground {
-  /** The published profile summary; null when none is published. */
-  profileSummary: string | null;
+  /**
+   * The overall background: summary, current role and skills
+   * (`BACKGROUND_SUMMARY_QUERY`). Empty when it could not be read.
+   */
+  summary: readonly RetrievedChunkDto[];
   /** Chunks retrieved for this job, most relevant first. */
   chunks: readonly RetrievedChunkDto[];
 }
 
+function renderChunks(chunks: readonly RetrievedChunkDto[], lines: string[]): void {
+  chunks.forEach((chunk, index) => {
+    const heading = chunk.heading ? ` - ${chunk.heading}` : '';
+    lines.push(`[${index + 1}] ${chunk.filename}${heading}`, chunk.content.trim(), '');
+  });
+}
+
 export function buildSearchProfileContext(
   profile: Pick<Profile, 'keywords' | 'location' | 'additionalContext'>,
-  background: CandidateBackground = { profileSummary: null, chunks: [] },
+  background: CandidateBackground = { summary: [], chunks: [] },
 ): string {
   const lines = [
     `- Keywords: ${(profile.keywords ?? []).join(', ') || 'Not specified'}`,
@@ -51,17 +61,18 @@ export function buildSearchProfileContext(
   }
 
   const backgroundLines: string[] = [];
-  if (background.profileSummary) {
-    backgroundLines.push('Profile Summary:', background.profileSummary, '');
+  // A summary chunk the job retrieval also found is shown once, with the job's.
+  const jobChunkIds = new Set(background.chunks.map((chunk) => chunk.chunkId));
+  const summary = background.summary.filter((chunk) => !jobChunkIds.has(chunk.chunkId));
+  if (summary.length > 0) {
+    backgroundLines.push('Overview of the candidate (summary, current role and skills):');
+    renderChunks(summary, backgroundLines);
   }
   backgroundLines.push("Excerpts from the candidate's documents, most relevant first:");
   if (background.chunks.length === 0) {
     backgroundLines.push('No background documents are available.');
   } else {
-    background.chunks.forEach((chunk, index) => {
-      const heading = chunk.heading ? ` - ${chunk.heading}` : '';
-      backgroundLines.push(`[${index + 1}] ${chunk.filename}${heading}`, chunk.content.trim(), '');
-    });
+    renderChunks(background.chunks, backgroundLines);
   }
 
   lines.push('', 'Background:', untrusted(BACKGROUND_TAG, backgroundLines.join('\n').trimEnd()));

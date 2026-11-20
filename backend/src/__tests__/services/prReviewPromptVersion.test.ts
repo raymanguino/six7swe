@@ -11,7 +11,7 @@ import { hashData } from '../../util/hash';
  * on) and record the new hash here.
  */
 const PROMPT_HASHES: Record<number, string> = {
-  4: 'df3fce19cde44c0073d2376bf996bc7fd389f8681e52b3c6e9b08e8df98f39ee',
+  5: 'a51628d97b5d8193065001589e0366f9c9005f7c565c382cb5aeb2dfe76180a9',
 };
 
 describe('the review prompt version', () => {

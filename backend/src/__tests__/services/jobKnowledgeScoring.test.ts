@@ -105,7 +105,9 @@ function makeKnowledge(
         ],
       },
     ),
-    getProfileSummary: jest.fn().mockResolvedValue('Ray, Staff Engineer\nBuilds platforms'),
+    getBackgroundSummary: jest
+      .fn()
+      .mockResolvedValue([chunk(DOC_A, 'resume.pdf', 'Staff engineer. Builds platforms')]),
     getSummary: jest.fn().mockResolvedValue({ documentCount: 2, updatedAt: null }),
   };
 }
@@ -298,7 +300,7 @@ describe('owner-only knowledge', () => {
 
     expect(knowledge.getVersion).not.toHaveBeenCalled();
     expect(knowledge.retrieve).not.toHaveBeenCalled();
-    expect(knowledge.getProfileSummary).not.toHaveBeenCalled();
+    expect(knowledge.getBackgroundSummary).not.toHaveBeenCalled();
     expect(inserted).toEqual([]);
   });
 
@@ -337,9 +339,9 @@ describe('owner-only knowledge', () => {
 });
 
 describe('degraded runs and failed status writes', () => {
-  it('stores no knowledge version when the profile summary cannot be read', async () => {
+  it('stores no knowledge version when the overall background cannot be read', async () => {
     const knowledge = makeKnowledge(6);
-    knowledge.getProfileSummary.mockRejectedValue(new Error('/profile/published answered 500'));
+    knowledge.getBackgroundSummary.mockRejectedValue(new Error('/retrieve answered 500'));
     const { service, inserted, done } = build({ knowledge, fetched: [makeJob(1, 'h1')] });
 
     await service.start({ profileId: 1 });
