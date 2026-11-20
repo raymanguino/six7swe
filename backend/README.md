@@ -243,7 +243,8 @@ Tests cover:
 - `GET /resume` - The knowledge service's primary resume PDF (404 when there is none)
 
 ### AI (public)
-- `POST /chat` - Conversational assistant grounded in the chunks retrieved for each question
+- `POST /chat` - Conversational assistant grounded in the chunks retrieved for each question. `example: true` marks a clicked example question: on an exact example text the click is counted in the eval set instead of the question being recorded
+- `POST /mcp/public` - Public MCP server (stateless streamable HTTP, no auth): `search_background { query, k? }` (k 6 by default, at most 8) and `get_resume_pdf`. Rate limited per client (`PUBLIC_MCP_RATE_LIMIT_MAX` per `PUBLIC_MCP_RATE_LIMIT_WINDOW_MS`, default 20 per 10 minutes) and searches capped per UTC day (`PUBLIC_MCP_DAILY_SEARCH_CAP`, default 500, counted per process). `GET`/`DELETE` answer 405. Add it with `claude mcp add --transport http six7swe https://<backend-host>/mcp/public`
 - `POST /fitcheck` - Fit assessment for a role, grounded in the chunks retrieved for the job description (503 when the knowledge service is unreachable)
 - `POST /contact` - Contact form submission to `CONTACT_TO_EMAIL` (delivered via Resend; 503 without it)
 
@@ -410,6 +411,11 @@ curl -OJ http://localhost:3000/resume
 curl -X POST http://localhost:3000/chat \
   -H "Content-Type: application/json" \
   -d '{"message": "What are Ray'"'"'s main skills?"}'
+```
+
+### Public MCP
+```bash
+curl -X POST http://localhost:3000/mcp/public   -H "Content-Type: application/json"   -H "Accept: application/json, text/event-stream"   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_background","arguments":{"query":"distributed systems","k":3}}}'
 ```
 
 ### Contact form
