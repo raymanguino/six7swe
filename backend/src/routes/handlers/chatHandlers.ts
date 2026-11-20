@@ -3,6 +3,7 @@ import { FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { INPUT_LIMITS } from '../../constants';
 import { chatWithContext } from '../../services/ai';
+import { countExampleClick } from '../../services/knowledge/exampleClicks';
 import { MiniMaxApiError } from '../../services/minimaxService';
 
 const MESSAGE_REQUIRED = 'Message is required';
@@ -44,6 +45,13 @@ export const ChatRequestSchema = z.object({
    * missing or malformed one only means the question is not recorded.
    */
   sessionId: SessionIdSchema.optional().catch(undefined),
+  /**
+   * The visitor clicked one of the widget's example questions (#205). When
+   * `message` is exactly an example, the click is counted on that example's
+   * eval question and the message is not recorded as a typed question; any
+   * other message is treated as typed, whatever this says.
+   */
+  example: z.boolean().optional().catch(undefined),
 });
 
 function firstError(error: z.ZodError): string {
@@ -59,7 +67,10 @@ export async function chatHandler(request: FastifyRequest, reply: FastifyReply) 
     if (!parsed.success) {
       return reply.code(400).send({ error: firstError(parsed.error) });
     }
-    const { message, history, sessionId } = parsed.data;
+    const { message, history, example } = parsed.data;
+    // A clicked example is counted apart and never recorded as a typed question.
+    const clicked = example === true && countExampleClick(message, request.log);
+    const sessionId = clicked ? undefined : parsed.data.sessionId;
 
     const response = await chatWithContext({ message, history, sessionId, log: request.log });
 
