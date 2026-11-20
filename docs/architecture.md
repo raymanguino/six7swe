@@ -356,3 +356,10 @@ imports:
 - **Refreshes** — schedule `pnpm jobs:refresh -- --profile <id>` as a Railway
   Cron so a refresh survives a process restart. The HTTP trigger remains
   available for manual runs.
+
+## QA agent
+
+Every pull request is reviewed by an LLM-based QA agent (`.github/workflows/qa-review.yml`,
+`backend/src/domain/qa/`). It is in phase 1, comment-only. Its status, what is left
+before it becomes a blocking gate, and how its findings are judged are in
+[QA agent](./qa-agent.md).
