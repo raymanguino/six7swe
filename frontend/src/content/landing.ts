@@ -31,7 +31,7 @@ export const ABOUT_STRENGTH_COLUMNS: StrengthColumn[] = [
     title: 'Currently Building',
     icon: 'tools',
     iconClass: 'text-primary-600 dark:text-primary-400',
-    items: ['Review Agent Calibration', 'Kubernetes (CKAD)', 'Azure AI Engineering'],
+    items: ['Review Agent Calibration', 'Kubernetes (CKAD)', 'Amazon Web Services (SAA)'],
   },
 ];
 
@@ -56,7 +56,7 @@ export const EXPERIENCE: Array<{
       {
         summary: 'Built a RAG knowledge service on pgvector that serves this site\'s chat and a job-matching engine, validated by a blind-judged A/B: higher accuracy (9.2 vs 8.5/10) with ~40% less context per question.',
         accordion: {
-          situation: 'The portfolio chat stuffed hand-seeded tables into every prompt, and an earlier MCP integration had never worked end to end. Answers went stale whenever my background changed, and the job matcher had no shared source of truth.',
+          situation: 'The portfolio chat stuffed hand-seeded tables into every prompt. Answers went stale whenever my background changed, and the job matcher had no shared source of truth.',
           approach: 'Built one separate, private-network service that both consumers read from, and measured before switching: an A/B eval with a blind LLM judge compared stuffed and retrieved context on the same questions, prompt and model.',
           technicalWork: 'Fastify, Drizzle and Zod over Postgres with pgvector (HNSW). Heading-aware chunking, crash-safe ingestion with status in the database, and a corpus version counter that keys chat caches and triggers job-match rescoring. Fixed an HNSW post-filter recall bug with pgvector 0.8 iterative scans. An evolving eval set re-runs on every corpus change and flags knowledge gaps, and a stateless MCP endpoint exposes the same retrieval to Claude clients.',
           lessonsLearned: 'The bigger risk was stale context, not missed retrieval. Every large win for retrieval came from information the stuffed prompt didn\'t have, so freshness deserved as much design attention as ranking.',
