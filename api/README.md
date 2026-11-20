@@ -5,8 +5,8 @@ route of the two HTTP services:
 
 | Collection | Service | Default URL | Requests |
 | --- | --- | --- | --- |
-| [`backend/`](./backend) | Backend (portfolio, job hunter, knowledge owner proxy) | `http://127.0.0.1:3000` | 40 |
-| [`knowledge/`](./knowledge) | Knowledge service (private network only in production) | `http://127.0.0.1:3100` | 25 |
+| [`backend/`](./backend) | Backend (portfolio, job hunter, knowledge owner proxy) | `http://127.0.0.1:3000` | 34 |
+| [`knowledge/`](./knowledge) | Knowledge service (private network only in production) | `http://127.0.0.1:3100` | 19 |
 
 Each collection stands alone. Open one folder in Bruno (**Open Collection**), or run it
 headlessly. Use `127.0.0.1`, not `localhost`: Windows resolves `localhost` to `::1` first,
@@ -54,8 +54,8 @@ There is no bypass here. Each route accepts only its own key, and the wrong one 
 | Route group | Credential | Service setting |
 | --- | --- | --- |
 | `/health` | none | |
-| Service: `/retrieve`, `/version`, `/profile/published`, `/resume.pdf` | `x-knowledge-key: {{serviceKey}}` | `KNOWLEDGE_SERVICE_KEY` |
-| Owner: `/documents`, `/search`, `/profile`, `/eval` | `x-knowledge-key: {{ownerKey}}` | `KNOWLEDGE_OWNER_KEY` |
+| Service: `/retrieve`, `/version`, `/resume.pdf` | `x-knowledge-key: {{serviceKey}}` | `KNOWLEDGE_SERVICE_KEY` |
+| Owner: `/documents`, `/search`, `/eval` | `x-knowledge-key: {{ownerKey}}` | `KNOWLEDGE_OWNER_KEY` |
 | `/mcp` | `Authorization: Bearer {{mcpKey}}` | `KNOWLEDGE_MCP_KEY` |
 
 The backend's `KNOWLEDGE_OWNER_KEY` must equal the service's, and the backend's
@@ -66,13 +66,12 @@ key is configured.
 
 Requests that cost money, send email, call a model, or change the owner's data are **skipped**
 unless the `allowSideEffects` environment variable is `true`. Those are `/chat`, `/fitcheck`,
-`/contact`, starting a refresh or rescore, document upload, set-primary and delete, saving,
-publishing, discarding and redrafting the profile, and the eval set: reading it, running it,
-and the question actions.
+`/contact`, starting a refresh or rescore, document upload, set-primary and delete, and the
+eval set: reading it, running it, and the question actions.
 
 The default run is read-only apart from creating and deleting a throwaway job profile.
-Turn the variable on only against a database you are happy to change. Publishing
-changes what the public portfolio shows.
+Turn the variable on only against a database you are happy to change. Uploads and deletes
+change what chat, the fit check and the job matcher answer from.
 
 `GET /eval` is on that list even though it is a GET. The service seeds the owner's canned
 questions the first time the eval set is read, and it purges stale candidates and retired
@@ -92,8 +91,8 @@ npx @usebruno/cli run "03 Knowledge Proxy (owner)" --env Local
 Pass secrets with `--env-var accessToken=...`; do not write them into a file.
 
 Some requests accept more than one status because it depends on setup: `/resume` and
-`/resume.pdf` are 404 until a resume is ready, redraft is 409 while `PROFILE_DRAFTER=none`,
-and set-primary is 409 for a supporting document.
+`/resume.pdf` are 404 until a resume is ready, `/fitcheck` is 503 while the knowledge service
+is unreachable, and set-primary is 409 for a supporting document.
 
 A few requests are skipped when the id they need was never produced, rather than being
 sent with an empty one: the job lookup needs a job, and the document requests need the

@@ -32,7 +32,7 @@ assert {
 tests {
   test("lists the four tools", function () {
     const names = res.body.result.tools.map((t) => t.name);
-    expect(names).to.have.members(["search_background", "get_profile", "list_documents", "get_resume_pdf"]);
+    expect(names).to.have.members(["search_background", "list_documents", "get_resume_pdf"]);
   });
 }
 
