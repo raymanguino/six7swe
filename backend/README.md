@@ -57,7 +57,6 @@ This backend lives in the `backend/` directory of the Six7SWE monorepo. See the 
 6. Test the API:
    ```bash
    curl http://localhost:3000/
-   curl http://localhost:3000/portfolio
    ```
 
 > **Prerequisites:** Node.js (LTS), `pnpm`, the [Supabase CLI](https://supabase.com/docs/guides/cli), and Docker Desktop (the Supabase CLI starts Postgres in a container).
@@ -259,7 +258,6 @@ Tests cover:
 - `GET /` - Health check. Returns `status` plus an allowlisted subset of non-sensitive env values. Never returns secrets.
 
 ### Portfolio (public)
-- `GET /portfolio` - Portfolio contact/profile metadata (email, phone, social links, resume filename)
 - `GET /resume` - Resume PDF download
 
 ### AI (public)
@@ -440,7 +438,7 @@ curl http://localhost:3000/
 
 ### Portfolio
 ```bash
-curl http://localhost:3000/portfolio
+curl -OJ http://localhost:3000/resume
 ```
 
 ### Chat

@@ -3,8 +3,7 @@ import type { PortfolioData, PortfolioProfileData } from '../../types/portfolio'
 
 /**
  * Maps the knowledge service's published profile (#86) to the backend's
- * `PortfolioData`, the shape `/portfolio`, chat, fitcheck and the contact
- * form already read, so none of them (nor `Landing.tsx`) changes.
+ * `PortfolioData`, the shape chat, fitcheck and the contact form read.
  *
  * - `fullResumeText` is the primary resume's extracted text (fitcheck and the
  *   stuffed chat context read it); empty when there is none.

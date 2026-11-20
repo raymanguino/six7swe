@@ -1,238 +1,21 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { apiRequest } from '../utils/api';
+import { apiRequest, apiUrl } from '../utils/api';
+import { useResumeAvailable } from '../hooks/useResumeAvailable';
 import { INPUT_LIMITS } from '../constants';
-import { usePortfolio } from '../hooks/usePortfolio';
+import { CONTACT } from '../content/contact';
+import {
+  ABOUT_STRENGTH_COLUMNS,
+  EXPERIENCE,
+  PROJECT_TILES,
+  SKILL_LEVEL_CONFIG,
+  SKILLS_GROUPS,
+  HOBBIES,
+  type AccordionContent,
+  type ProjectTile,
+} from '../content/landing';
 
 export type SectionId = 'home' | 'about' | 'projects' | 'skills' | 'hobbies' | 'fitcheck' | 'contacts';
 
-const ABOUT_STRENGTH_COLUMNS = [
-  {
-    title: 'Strong',
-    icon: 'check',
-    iconClass: 'text-green-500',
-    items: [
-      'Platform & Infrastructure',
-      'API Design & Versioning',
-      'Technical Strategy',
-      'Developer Experience',
-      'Cross-functional Leadership',
-      'Technical Debt Cleanup',
-    ],
-  },
-  {
-    title: 'Moderate',
-    icon: 'circle',
-    iconClass: 'border-yellow-500',
-    items: ['AI & MCP Architectures', 'Security & Compliance', 'Team Building'],
-  },
-  {
-    title: 'Currently Building',
-    icon: 'tools',
-    iconClass: 'text-primary-600 dark:text-primary-400',
-    items: ['RAG Systems', 'Eval Pipelines', 'Edge AI Deployment'],
-  },
-];
-
-type AccordionContent = {
-  situation: string;
-  approach: string;
-  technicalWork: string;
-  lessonsLearned: string;
-};
-
-const EXPERIENCE: Array<{
-  title: string;
-  company: string;
-  period: string;
-  points: Array<{ summary: string; accordion: AccordionContent }>;
-}> = [
-  {
-    title: 'Senior Software Engineer',
-    company: 'Tanium',
-    period: '2024 - 2025',
-    points: [
-      {
-        summary: 'Designed and delivered new GraphQL APIs adopted by 1,500 customers, replacing fragmented REST calls and cutting troubleshooting time from ~1 hour to minutes.',
-        accordion: {
-          situation: 'Customers using legacy APIs mounting complaints about instability and state inconsistencies/errors in workflows even though modern APIs exist, leading to increased support call volumes and degraded user experiences.',
-          approach: 'Worked directly with support teams and customers using the APIs to fully understand intent and areas of concern with current workflows. Discovered technical limitations preventing customers from migrating to the modern APIs and root causes.',
-          technicalWork: 'Updated modern APIs with extended filtering capabilities that would unblock customers from migrating to them. Created detailed migration plans to guide customers to the modern APIs with minimum friction. Updated documentation to clearly communicate API usage and migration plans.',
-          lessonsLearned: 'Sometimes technical problems are disguised as communication problems. Maintaining clear and up to date documentation gives customers the best chance at resolving issues on their own and not have to rely on costly engineering resources.',
-        },
-      },
-      {
-        summary: 'Built and optimized monitoring and alerting systems, cutting response times by 50% and reducing noise volume by 70%.',
-        accordion: {
-          situation: 'Support and operations were dealing with slow incident response and alert fatigue—too much noise made it hard to focus on real issues, and delayed response times impacted customer-facing stability.',
-          approach: 'Analyzed alert sources and response workflows to identify root causes of latency and noise. Drove cross-functional alignment on long-term API strategy, documentation standards, schema governance, and monitoring.',
-          technicalWork: 'Built and optimized monitoring and alerting systems: 50% faster response and 70% reduction in noise volume. Aligned with stakeholders on monitoring standards and ensured observability was part of the API and deployment strategy.',
-          lessonsLearned: 'Investing in observability pays off in both incident response and team focus; reducing noise means real issues get attention and customers benefit from faster resolution.',
-        },
-      },
-    ],
-  },
-  {
-    title: 'Senior Software Engineer',
-    company: 'Nacelle',
-    period: '2022 - 2023',
-    points: [
-      {
-        summary: 'Architected and delivered API layer services to provide dynamically generated GraphQL endpoints for improved user experiences.',
-        accordion: {
-          situation: 'Customers needed dynamically generated, customer-specific GraphQL APIs to scale without dedicated engineering support; existing APIs and data infrastructure were inconsistent and did not support that model.',
-          approach: 'Defined technical direction for the GraphQL schema registry. Evaluated sync vs. async design based on data and delivery constraints; coordinated delivery across backend and QA teams.',
-          technicalWork: 'Architected and led delivery of the distributed GraphQL schema registry for customer-specific dynamic APIs. Implemented high-throughput schema ingestion pipeline and API generation. Shipped synchronous design first with monitoring to scale later; used data to show the simpler design was sufficient, with follow-up tickets for future scaling.',
-          lessonsLearned: 'Not every system needs Kafka from day one. Implementing monitoring and using data to validate the simpler sync design avoided over-engineering and accelerated delivery while keeping a path to scale.',
-        },
-      },
-      {
-        summary: 'Created internal developer tooling that cut environment setup time from hours to seconds.',
-        accordion: {
-          situation: 'Environment setup took hours, slowing onboarding and day-to-day iteration for engineers; local database and dependency setup was a major bottleneck.',
-          approach: 'Focused on local developer experience and identified the critical path: getting a consistent local DB and dependencies in place so engineers could run and test the stack quickly.',
-          technicalWork: 'Built a CLI for local database setup that was adopted across teams. Cut environment setup time from hours to minutes (and in practice to seconds for repeat runs). Improved reliability and consistency of local dev environments.',
-          lessonsLearned: 'Developer tooling multiplies team velocity. Investing in local experience and reducing setup time pays off in faster iteration and easier onboarding.',
-        },
-      },
-    ],
-  },
-  {
-    title: 'Senior Software Engineer',
-    company: 'Capital One',
-    period: '2017 - 2021',
-    points: [
-      {
-        summary: 'Onboarded Canada to a new customer acquisitions platform, securing $20M/year in lost revenue.',
-        accordion: {
-          situation: 'Capital One needed to launch a new credit card for the Canadian business by inner-sourcing into a U.S.-owned system under strict regulatory deadlines. Missing the deadline would have meant inability to offer a card accounting for approximately $20 million in annual revenue. The system was owned by U.S. teams who were fully allocated to a major migration; Canada was low priority.',
-          approach: 'Took ownership on the Canadian side: built relationships with U.S. leadership and engineering, gained access to their codebase and processes, and led a team of three engineers and two process managers through planning and delivery. Joined U.S. scrums and aligned on executive and inner-sourcing approval.',
-          technicalWork: 'Architected the pathway to onboard Canadian credit card solicitations onto the existing U.S. platform. Modernized solicitation workflows, implemented Golang backend logic to map Canadian business intent to customer profiles, and led development of the React front-end component library (a hackathon POC became the production UI). Delivered CI/CD, observability, and testing. The platform launched on time, met compliance deadlines, and unlocked around $20 million in annual revenue.',
-          lessonsLearned: 'Delivering under regulatory and cross-team constraints requires both strong technical execution and relationship-building; inner-sourcing and cross-country alignment are as critical as the code.',
-        },
-      },
-      {
-        summary: 'Led cloud migrations for capitalone.ca from on-prem to AWS platform.',
-        accordion: {
-          situation: 'capitalone.ca ran on-prem; the business needed to move to the cloud-based platform for consistency, scalability, and reliability while keeping customer-facing systems stable.',
-          approach: 'Led the migration initiative with a focus on CI/CD, observability, and testing so that customer-facing systems remained reliable during and after the move to AWS.',
-          technicalWork: 'Led cloud migrations for capitalone.ca from on-prem to the AWS platform. Built and maintained CI/CD pipelines, observability, and testing for customer-facing systems so that the migration could be executed without degrading reliability.',
-          lessonsLearned: 'Cloud migrations succeed when CI/CD and observability are in place from the start; they are not afterthoughts but prerequisites for a safe transition.',
-        },
-      },
-    ],
-  },
-];
-
-type ProjectTile = {
-  id: string;
-  title: string;
-  briefDescription?: string;
-  techLabels: string[];
-  overview: string;
-  keyChallenges: string[];
-  liveSiteUrl: string | null;
-  liveSiteDisabled?: boolean;
-};
-
-const PROJECT_TILES: ProjectTile[] = [
-  {
-    id: 'mission-control',
-    title: 'Mission Control',
-    briefDescription:
-      'Agent orchestration platform that coordinates specialized AI workers for software project delivery, from approval to deployment, with integrated task workflows and quality control.',
-    techLabels: ['MCP', 'Webhooks', 'TypeScript', 'Node.js', 'AI Agents'],
-    overview:
-      'Mission Control is a tailnet-native API platform that creates, manages, and coordinates multi-agent workflows for software development. It standardizes webhook events and a unified MCP tool interface. The system provides automated project decomposition, task routing, and progress tracking while maintaining a consistent agent communication architecture.',
-    keyChallenges: [
-      'Building reliable webhooks across different agent runtimes while maintaining proper event sequencing.',
-      'Designing workflows that handle async task completion without losing project context.',
-      'Creating an MCP interface that enables agent collaboration while enforcing quality gates.',
-    ],
-    liveSiteUrl: '#',
-    liveSiteDisabled: true,
-  },
-  {
-    id: 'portfolio',
-    title: 'Portfolio',
-    briefDescription:
-      'A portfolio site that loads profile, projects, skills, and resume content from a custom MCP service, serves resume assets, and includes a floating chat assistant that answers using that portfolio and resume context.',
-    techLabels: ['React', 'TypeScript', 'Vite', 'Fastify', 'MCP', 'PostgreSQL'],
-    overview:
-      'A full-stack TypeScript portfolio app: the React/Vite SPA loads profile, projects, skills, experience, and contact from a Fastify API backed by a custom MCP service, with resume PDFs and extra content sections served from the backend. A built-in chat widget calls the API so visitors can ask questions about your work using an assistant grounded on stored portfolio and resume context.',
-    keyChallenges: [
-      'The portfolio API must serve the same shape from PostgreSQL or optional MCP without pushing that complexity into the frontend.',
-      'The chat assistant needs enough resume and portfolio context to answer well, without oversized prompts or leaking internal-only details.',
-      'Resume and asset URLs must stay correct and fresh across static files, storage, and caching so downloads don\'t break or go stale after updates.',
-    ],
-    liveSiteUrl: '#',
-    liveSiteDisabled: true,
-  },
-];
-
-type SkillLevel = 'expert' | 'advanced' | 'intermediate';
-
-const SKILL_LEVEL_CONFIG: Record<SkillLevel, { label: string; dotClass: string }> = {
-  expert: { label: 'Expert', dotClass: 'bg-green-500' },
-  advanced: { label: 'Proficient', dotClass: 'bg-yellow-500' },
-  intermediate: { label: 'Familiar', dotClass: 'bg-orange-500' },
-};
-
-const SKILLS_GROUPS = [
-  {
-    name: 'Backend',
-    items: [
-      { name: 'Node.js', percent: 95, level: 'expert' as SkillLevel },
-      { name: 'PostgreSQL', percent: 88, level: 'advanced' as SkillLevel },
-      { name: 'Go', percent: 83, level: 'advanced' as SkillLevel },
-      { name: 'Python', percent: 70, level: 'intermediate' as SkillLevel },
-    ],
-  },
-  {
-    name: 'Frontend',
-    items: [
-      { name: 'JavaScript/ES6', percent: 95, level: 'expert' as SkillLevel },
-      { name: 'TypeScript', percent: 90, level: 'expert' as SkillLevel },
-      { name: 'React', percent: 80, level: 'advanced' as SkillLevel },
-      { name: 'CSS/SCSS', percent: 70, level: 'intermediate' as SkillLevel },
-    ],
-  },
-  {
-    name: 'DevOps & Cloud',
-    items: [
-      { name: 'AWS', percent: 92, level: 'expert' as SkillLevel },
-      { name: 'Docker', percent: 88, level: 'expert' as SkillLevel },
-      { name: 'CI/CD', percent: 85, level: 'advanced' as SkillLevel },
-      { name: 'Terraform', percent: 75, level: 'advanced' as SkillLevel },
-    ],
-  },
-  {
-    name: 'AI',
-    items: [
-      { name: 'Prompt Craft', percent: 80, level: 'advanced' as SkillLevel },
-      { name: 'Context/Intent/Spec Engineering', percent: 70, level: 'intermediate' as SkillLevel },
-      { name: 'MiniMax Agents SDK', percent: 70, level: 'intermediate' as SkillLevel },
-      { name: 'OpenClaw', percent: 70, level: 'intermediate' as SkillLevel },
-    ],
-  },
-];
-
-const HOBBIES = [
-  {
-    title: 'Car Enthusiast',
-    summary: 'High-performance automotive engineering inspires my approach to software optimization - precision, speed, and cutting-edge innovation.',
-    detail: 'Tuning my car and refining my driving skills require research, experimentation, and iterative improvement, shaping how I approach problem-solving in fast-moving environments.',
-  },
-  {
-    title: 'Food Lover',
-    summary: 'Ingredients planning and logistics combined with strategic cooking techniques to deliver dishes that meet the demands of various palates and dietary needs.',
-    detail: 'Planning meals under real-world constraints—cost, time, and whether either kid will actually eat it—strengthens my system-level design skills.',
-  },
-  {
-    title: 'DIY Champion',
-    summary: 'Building rather than buying ready-made solutions unlocks new capabilities and skills that pay dividends in the long-run. Plus, it\'s cheaper!',
-    detail: 'Hands-on problem solving builds transferable skills I apply to software development, balancing short-term needs with long-term results.',
-  },
-];
 
 function ProgressBar({ percent }: { percent: number | null }) {
   if (percent == null) return <span className="text-sm text-gray-500 dark:text-gray-400">—</span>;
@@ -332,6 +115,16 @@ function ProjectTileCard({
       {project.briefDescription && (
         <p className="text-gray-600 dark:text-gray-400 text-sm mb-4">{project.briefDescription}</p>
       )}
+      {project.repoUrl && (
+        <a
+          href={project.repoUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-block text-sm font-medium text-primary-600 dark:text-primary-400 hover:underline mb-4"
+        >
+          View code on GitHub ↗
+        </a>
+      )}
       <div className="flex flex-col gap-2">
         <button
           type="button"
@@ -390,13 +183,13 @@ export default function Landing({ onSectionChange }: LandingProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitStatus, setSubmitStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [expandedAccordion, setExpandedAccordion] = useState<string | null>(null);
+  const resumeAvailable = useResumeAvailable();
   const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
   const [fitcheckJobDescription, setFitcheckJobDescription] = useState('');
   const [fitcheckLoading, setFitcheckLoading] = useState(false);
   const [fitcheckResult, setFitcheckResult] = useState<FitCheckResult | null>(null);
   const [fitcheckError, setFitcheckError] = useState<string | null>(null);
 
-  const { portfolio } = usePortfolio();
   const sectionRefs = useRef<Record<SectionId, HTMLElement | null>>({
     home: null,
     about: null,
@@ -441,12 +234,10 @@ export default function Landing({ onSectionChange }: LandingProps) {
     setIsSubmitting(true);
     setSubmitStatus('idle');
     try {
-      const response = await fetch('/api/contact', {
+      await apiRequest('/contact', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...formData, company: '' }),
       });
-      if (!response.ok) throw new Error('Failed to send message');
       setSubmitStatus('success');
       setFormData({ name: '', email: '', message: '' });
     } catch {
@@ -508,7 +299,7 @@ export default function Landing({ onSectionChange }: LandingProps) {
           </p>
           <div className="max-w-3xl mx-auto">
             <p className="text-lg text-gray-700 dark:text-gray-300 leading-relaxed">
-              I design and build the API and infrastructure layer for AI-powered systems — agentic workflows, RAG pipelines, multi-channel agent gateways, and the production tooling that makes LLM features reliable at scale. Ten years of backend and distributed systems experience, now applied to the hardest problems in production AI.
+              I design and build the API and infrastructure layer for AI-powered systems — RAG pipelines, LLM evals, MCP tooling, and the guardrails that make LLM features reliable in production. Fifteen years of backend and distributed systems experience, now applied to production AI, including the knowledge service behind this site's chat and the agent that reviews every change to it.
             </p>
           </div>
         </div>
@@ -529,7 +320,7 @@ export default function Landing({ onSectionChange }: LandingProps) {
             I'm a backend engineer specializing in the API and infrastructure layer for AI systems. My work sits at the intersection of distributed systems engineering and applied AI — designing the service architecture, data pipelines, and tool interfaces that make LLM-powered products production-ready.
           </p>
           <p>
-            I've spent ten years building at companies like Capital One, Nacelle, and Tanium — distributed GraphQL systems, high-throughput ingestion pipelines, cloud migrations, and the monitoring infrastructure that keeps them running. For the past year I've been focused on AI: shipping agentic workflows with MCP and the MiniMax Agents SDK, running a self-hosted multi-channel AI agent gateway, and building RAG systems with hybrid vector search.
+            I've spent fifteen years building software, most recently at Capital One, Nacelle, and Tanium — distributed GraphQL systems, high-throughput ingestion pipelines, cloud migrations, and the monitoring infrastructure that keeps them running. Since 2025 I've focused on AI through six7swe, my own production platform: a RAG knowledge service on pgvector with an evolving eval set, an LLM agent that reviews every pull request with prompt-injection defences enforced in code, and a Claude Code workflow of subagents that takes a GitHub epic to reviewed pull requests.
           </p>
           <p>
             I'm looking for a senior AI API engineering role where I can own the full stack from prompt to API response — building AI features that are reliable, observable, and actually usable by the teams and customers they serve.
@@ -554,13 +345,6 @@ export default function Landing({ onSectionChange }: LandingProps) {
                     )}
                     {col.icon === 'circle' && (
                       <span className={`flex-shrink-0 w-5 h-5 rounded-full border-2 bg-transparent ${col.iconClass}`} aria-hidden />
-                    )}
-                    {col.icon === 'x' && (
-                      <span className={`flex-shrink-0 ${col.iconClass}`} aria-hidden>
-                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                        </svg>
-                      </span>
                     )}
                     {col.icon === 'tools' && (
                       <span className={`flex-shrink-0 ${col.iconClass}`} aria-hidden>
@@ -826,46 +610,46 @@ export default function Landing({ onSectionChange }: LandingProps) {
           <div className="space-y-6">
             <div className="card">
               <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Get In Touch</h3>
-              {portfolio?.email && (
+              {CONTACT.email && (
                 <p className="text-gray-700 dark:text-gray-300 flex items-center gap-2">
                   <svg className="w-5 h-5 shrink-0 text-primary-600 dark:text-primary-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                   </svg>
-                  <a href={`mailto:${portfolio.email}`} className="text-primary-600 dark:text-primary-400 hover:underline">{portfolio.email}</a>
+                  <a href={`mailto:${CONTACT.email}`} className="text-primary-600 dark:text-primary-400 hover:underline">{CONTACT.email}</a>
                 </p>
               )}
-              {portfolio?.phone && (
+              {CONTACT.phone && (
                 <p className="text-gray-700 dark:text-gray-300 mt-2 flex items-center gap-2">
                   <svg className="w-5 h-5 shrink-0 text-primary-600 dark:text-primary-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
                   </svg>
-                  {portfolio.phone}
+                  {CONTACT.phone}
                 </p>
               )}
-              {portfolio?.location && (
+              {CONTACT.location && (
                 <p className="text-gray-700 dark:text-gray-300 mt-2 flex items-center gap-2">
                   <svg className="w-5 h-5 shrink-0 text-primary-600 dark:text-primary-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
                   </svg>
-                  {portfolio.location}
+                  {CONTACT.location}
                 </p>
               )}
             </div>
-            {(portfolio?.githubUrl || portfolio?.linkedinUrl) && (
+            {(CONTACT.githubUrl || CONTACT.linkedinUrl) && (
               <div className="card">
                 <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Social Links</h3>
                 <div className="flex flex-col gap-2">
-                  {portfolio.githubUrl && (
-                    <a href={portfolio.githubUrl} target="_blank" rel="noopener noreferrer" className="text-primary-600 dark:text-primary-400 hover:underline inline-flex items-center gap-2">
+                  {CONTACT.githubUrl && (
+                    <a href={CONTACT.githubUrl} target="_blank" rel="noopener noreferrer" className="text-primary-600 dark:text-primary-400 hover:underline inline-flex items-center gap-2">
                       <svg className="w-5 h-5 shrink-0" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
                         <path fillRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clipRule="evenodd" />
                       </svg>
                       Github
                     </a>
                   )}
-                  {portfolio.linkedinUrl && (
-                    <a href={portfolio.linkedinUrl} target="_blank" rel="noopener noreferrer" className="text-primary-600 dark:text-primary-400 hover:underline inline-flex items-center gap-2">
+                  {CONTACT.linkedinUrl && (
+                    <a href={CONTACT.linkedinUrl} target="_blank" rel="noopener noreferrer" className="text-primary-600 dark:text-primary-400 hover:underline inline-flex items-center gap-2">
                       <svg className="w-5 h-5 shrink-0" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
                         <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
                       </svg>
@@ -875,12 +659,12 @@ export default function Landing({ onSectionChange }: LandingProps) {
                 </div>
               </div>
             )}
-            {portfolio?.resumeAvailable && (
+            {resumeAvailable && (
             <div className="card">
               <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Resume</h3>
               <a
-                href={`${import.meta.env.VITE_API_URL || '/api'}/resume`}
-                download={portfolio.resumeFilename || 'resume.pdf'}
+                href={apiUrl('/resume')}
+                download="resume.pdf"
                 className="text-primary-600 dark:text-primary-400 hover:underline inline-flex items-center gap-2"
               >
                 <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>

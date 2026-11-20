@@ -37,7 +37,7 @@ files, so they are not committed. Never paste a real key into an environment fil
 
 | Route group | Credential |
 | --- | --- |
-| Portfolio (`/`, `/portfolio`, `/resume`, `/chat`, `/fitcheck`, `/contact`) | none |
+| Portfolio (`/`, `/resume`, `/chat`, `/fitcheck`, `/contact`) | none |
 | Job hunter (`/job-hunt/*`) | `Authorization: Bearer {{accessToken}}`, a Supabase JWT |
 | Knowledge proxy (`/knowledge/*`) | the same JWT; owner routes also need `sub === OWNER_AUTH_ID` (403 otherwise) |
 

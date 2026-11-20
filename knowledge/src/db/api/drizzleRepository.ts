@@ -276,6 +276,8 @@ export function createDrizzleRepository(db: KnowledgeDb): KnowledgeRepository {
           .set({ isPrimaryResume: true })
           .where(eq(documents.id, id))
           .returning(documentColumns);
+        // The primary resume is served by version (the backend caches it), so a change moves it.
+        if (updated) await bumpVersion(tx, ownerId);
         return updated ?? null;
       });
     },
@@ -337,7 +339,7 @@ export function createDrizzleRepository(db: KnowledgeDb): KnowledgeRepository {
           .returning(documentColumns);
         if (!deleted) return null;
 
-        if (deleted.status === 'ready' && deleted.chunkCount > 0) {
+        if ((deleted.status === 'ready' && deleted.chunkCount > 0) || deleted.isPrimaryResume) {
           await bumpVersion(tx, ownerId);
         }
         if (deleted.isPrimaryResume) await refreshPrimaryResume(tx, ownerId);
