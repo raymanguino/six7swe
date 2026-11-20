@@ -1,0 +1,50 @@
+name: Update "Recently shipped"
+
+on:
+  schedule:
+    - cron: "17 9 * * *" # daily at 09:17 UTC
+  workflow_dispatch: # adds a "Run workflow" button for manual runs
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch recent merged PRs from six7swe
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr list --repo raymanguino/six7swe --state merged --limit 40 \
+            --json title,url,mergedAt \
+            --jq '[.[] | select(.title | test("^(chore|build|ci|deps|test)\\b|bump|dependabot"; "i") | not)]
+                  | sort_by(.mergedAt) | reverse | .[:5][]
+                  | "- [\(.title)](\(.url)) <sub>\(.mergedAt[:10])</sub>"' > shipped.md
+          cat shipped.md
+
+      - name: Replace the section between the markers
+        run: |
+          python3 - <<'EOF'
+          import re, pathlib
+          readme = pathlib.Path("README.md")
+          items = pathlib.Path("shipped.md").read_text().strip()
+          if not items:
+              raise SystemExit("No PRs found; leaving README unchanged")
+          text = readme.read_text()
+          new = re.sub(r"(<!-- SHIPPED:START -->).*?(<!-- SHIPPED:END -->)",
+                       lambda m: f"{m.group(1)}\n{items}\n{m.group(2)}",
+                       text, flags=re.S)
+          readme.write_text(new)
+          EOF
+          rm shipped.md
+
+      - name: Commit if anything changed
+        run: |
+          if git diff --quiet; then echo "No changes"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore: update recently shipped"
+          git push
