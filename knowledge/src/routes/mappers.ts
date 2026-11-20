@@ -2,39 +2,13 @@ import type {
   DocumentDto,
   EvalQuestionDto,
   EvalRunDto,
-  PrimaryResumeDto,
-  ProfileDto,
   RetrievedChunkDto,
   RetrieveResponse,
 } from '../contract.js';
 import type { EvalQuestionRecord, EvalRunWithResults } from '../db/api/evalRepository.js';
-import type { ProfileRecord } from '../db/api/profileRepository.js';
 import { diffRuns } from '../services/evalSet/diff.js';
-import { isPdf } from '../services/profile/profiles.js';
 import type { DocumentRecord, RetrievedChunk } from '../db/api/repository.js';
 import type { RetrievalResult } from '../services/retrieval.js';
-
-export function toProfileDto(profile: ProfileRecord): ProfileDto {
-  return {
-    stage: profile.stage,
-    data: profile.data,
-    sourceDocumentId: profile.sourceDocumentId,
-    version: profile.version,
-    createdAt: profile.createdAt.toISOString(),
-    updatedAt: profile.updatedAt.toISOString(),
-  };
-}
-
-export function toPrimaryResumeDto(doc: DocumentRecord, text: string | null): PrimaryResumeDto {
-  return {
-    documentId: doc.id,
-    filename: doc.filename,
-    mimeType: doc.mimeType,
-    isPdf: isPdf(doc),
-    text,
-    updatedAt: doc.updatedAt.toISOString(),
-  };
-}
 
 /** Storage keys and owner ids are internal and never leave the service. */
 export function toDocumentDto(doc: DocumentRecord): DocumentDto {

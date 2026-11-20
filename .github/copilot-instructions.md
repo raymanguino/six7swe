@@ -5,7 +5,6 @@ Rules:
 - Services orchestrate use cases and own the side effects
 - Database queries live in `backend/src/db/api/`
 - Plugins (`backend/src/plugins/`) wire services and `db/api` modules into Fastify as decorators; no business logic
-- Known exception: `backend/src/services/portfolioService.ts` still queries Drizzle directly until #88; not a finding
 
 ---
 

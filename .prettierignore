@@ -9,10 +9,6 @@ coverage/
 # Lockfile
 pnpm-lock.yaml
 
-# Generated / gitignored local data
-backend/content/
-backend/scripts/portfolio-data.json
-
 # Written by `qa:verdicts --sync` (JSON.stringify, 2 spaces); a test pins the format
 backend/qa/verdicts.json
 

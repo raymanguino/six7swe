@@ -36,7 +36,6 @@ import {
   utf8,
 } from './support/fixtures.js';
 import { createMemoryEvalRepository } from './support/memoryEvalRepository.js';
-import { createMemoryProfileRepository } from './support/memoryProfileRepository.js';
 import { createMemoryRepository } from './support/memoryRepository.js';
 
 /** A fictional note with a phone number and a salary figure. */
@@ -454,7 +453,6 @@ async function setup(riskScanner: RiskScanner | null) {
   const repo = createMemoryRepository();
   const built = await buildApp({
     deps: { repo, files: createMemoryFileStore(), embedder: createHashingEmbedder(256) },
-    profile: { repo: createMemoryProfileRepository(), drafter: null },
     evaluation: { repo: createMemoryEvalRepository(), answerer: null },
     serviceKey: KEY,
     ownerKey: OWNER_KEY,
@@ -602,18 +600,16 @@ describe('the review gate', () => {
     expect((await retrieve('kafka billing')).map((c) => c.documentId)).toContain(id);
   });
 
-  it('runs the post-approval hooks once, even for two approvals at the same time', async () => {
+  it('runs the post-approval hook once, even for two approvals at the same time', async () => {
     const { repo, upload } = await setup(null);
     const id = await upload('resume.md', `${RESUME_MD}\nPhone: 416-555-0199\n`, 'resume');
-    const onResumeReady = vi.fn();
     const onCorpusChanged = vi.fn();
-    const deps = { repo, log: silentLogger, onResumeReady, onCorpusChanged };
+    const deps = { repo, log: silentLogger, onCorpusChanged };
     const results = await Promise.allSettled([
       approveDocument(deps, 'owner', id),
       approveDocument(deps, 'owner', id),
     ]);
     expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
-    expect(onResumeReady).toHaveBeenCalledOnce();
     expect(onCorpusChanged).toHaveBeenCalledOnce();
   });
 

@@ -28,8 +28,6 @@ export interface KnowledgeRoutesOptions {
   config?: KnowledgeConfig;
   /** Overrides the HTTP client, for tests. */
   fetch?: FetchLike;
-  /** Called after the owner publishes a profile, to bust the portfolio cache. */
-  onProfilePublished?: () => void;
 }
 
 /**
@@ -42,11 +40,7 @@ export async function registerKnowledgeRoutes(
 ): Promise<void> {
   // Read once at boot: a malformed value fails the start, not a request.
   const config = options.config ?? loadKnowledgeConfig();
-  const handlers = knowledgeHandlers({
-    config,
-    fetch: options.fetch,
-    onProfilePublished: options.onProfilePublished,
-  });
+  const handlers = knowledgeHandlers({ config, fetch: options.fetch });
 
   await app.register(async (scope) => {
     // Any signed-in user may ask whether they are the owner; the answer only
@@ -85,12 +79,6 @@ export async function registerKnowledgeRoutes(
       owner.put('/knowledge/documents/:id/primary', PRIVATE_ROUTE, handlers.setPrimaryResume);
       owner.delete('/knowledge/documents/:id', PRIVATE_ROUTE, handlers.deleteDocument);
       owner.post('/knowledge/search', PRIVATE_ROUTE, handlers.search);
-      // The structured profile (#86): review the draft, edit it, publish it.
-      owner.get('/knowledge/profile', PRIVATE_ROUTE, handlers.getProfile);
-      owner.put('/knowledge/profile/draft', PRIVATE_ROUTE, handlers.saveProfileDraft);
-      owner.post('/knowledge/profile/draft', PRIVATE_ROUTE, handlers.redraftProfile);
-      owner.delete('/knowledge/profile/draft', PRIVATE_ROUTE, handlers.discardProfileDraft);
-      owner.post('/knowledge/profile/publish', PRIVATE_ROUTE, handlers.publishProfile);
       // The evolving chat eval set (#85): questions, runs and the owner's controls.
       owner.get('/knowledge/eval', PRIVATE_ROUTE, handlers.getEvalSet);
       owner.post('/knowledge/eval/runs', PRIVATE_ROUTE, handlers.runEval);

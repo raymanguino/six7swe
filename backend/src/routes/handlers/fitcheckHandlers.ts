@@ -1,6 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { INPUT_LIMITS } from '../../constants';
-import { getChatContext } from '../../data/chatContext';
+import { getFitcheckContext } from '../../data/chatContext';
 import { fitCheckWithContext } from '../../services/ai';
 import { MiniMaxApiError } from '../../services/minimaxService';
 
@@ -13,12 +13,23 @@ export async function fitcheckHandler(request: FastifyRequest, reply: FastifyRep
     }
     const trimmed = jobDescription.trim();
     if (trimmed.length > INPUT_LIMITS.jobDescription) {
-      return reply.code(400).send({ error: `Job description must be at most ${INPUT_LIMITS.jobDescription} characters` });
+      return reply
+        .code(400)
+        .send({
+          error: `Job description must be at most ${INPUT_LIMITS.jobDescription} characters`,
+        });
     }
 
-    const rayContext = await getChatContext();
+    // Retrieval with the job description as the query, as job matching does.
+    const background = await getFitcheckContext({ jobDescription: trimmed, log: request.log });
+    if (background.mode === 'no-background' && background.reason === 'unavailable') {
+      // A verdict with no background would only be a guess.
+      return reply
+        .code(503)
+        .send({ error: 'The fit check is unavailable right now. Please try again later.' });
+    }
 
-    const output = await fitCheckWithContext(trimmed, rayContext);
+    const output = await fitCheckWithContext(trimmed, background.context);
 
     return reply.code(200).send({
       snarkyPreamble: output.snarky_preamble,
@@ -32,8 +43,12 @@ export async function fitcheckHandler(request: FastifyRequest, reply: FastifyRep
   } catch (error) {
     request.log.error({ err: error }, 'Error in FitCheck handler');
     if (error instanceof MiniMaxApiError) {
-      return reply.code(502).send({ error: 'The AI service is temporarily unavailable. Please try again.' });
+      return reply
+        .code(502)
+        .send({ error: 'The AI service is temporarily unavailable. Please try again.' });
     }
-    return reply.code(500).send({ error: 'Something went wrong while analyzing this job fit. Please try again.' });
+    return reply
+      .code(500)
+      .send({ error: 'Something went wrong while analyzing this job fit. Please try again.' });
   }
 }

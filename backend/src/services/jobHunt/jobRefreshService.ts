@@ -1,3 +1,4 @@
+import type { RetrievedChunkDto } from '@six7swe/knowledge-types';
 import type { FastifyBaseLogger } from 'fastify';
 import type { JobService, JobInput } from '../../db/api/job';
 import type { ProfileJobService, InsertProfileJobInput } from '../../db/api/profileJob';
@@ -126,9 +127,10 @@ interface RunBackground {
   source: JobKnowledgeSource | null;
   /** The corpus version when the run started; null without the knowledge service. */
   version: number | null;
-  profileSummary: string | null;
+  /** The overall background chunks; empty when they could not be read (`degraded`). */
+  summary: readonly RetrievedChunkDto[];
   /**
-   * The published profile could not be read. Rows scored without it get no
+   * The overall background could not be read. Rows scored without it get no
    * knowledge version, so they stay stale and are rescored once the service
    * answers again.
    */
@@ -306,20 +308,21 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
   /**
    * Reads what a run scores against. When the service is configured the
    * corpus version is required: without it the run could not tell which
-   * scores are stale, so the run fails. The profile summary is optional, but
-   * a failure to read it marks the run as degraded.
+   * scores are stale, so the run fails. The overall background is optional,
+   * but a failure to read it marks the run as degraded. It is cached by the
+   * version read here, so it is retrieved once per corpus change.
    */
   async function loadBackground(source: JobKnowledgeSource | null): Promise<RunBackground> {
     if (!source) {
-      return { source: null, version: null, profileSummary: null, degraded: false };
+      return { source: null, version: null, summary: [], degraded: false };
     }
     const version = await source.getVersion();
     try {
-      const profileSummary = await source.getProfileSummary();
-      return { source, version, profileSummary, degraded: false };
+      const summary = await source.getBackgroundSummary(version);
+      return { source, version, summary, degraded: false };
     } catch (error) {
-      logger.warn({ err: error }, 'Could not read the published profile; scoring without it');
-      return { source, version, profileSummary: null, degraded: true };
+      logger.warn({ err: error }, 'Could not read the overall background; scoring without it');
+      return { source, version, summary: [], degraded: true };
     }
   }
 
@@ -454,7 +457,7 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
           const result = await matchJob({
             jobDescription: buildJobDescription(job),
             profileContext: buildSearchProfileContext(profile, {
-              profileSummary: background.profileSummary,
+              summary: background.summary,
               chunks,
             }),
           });

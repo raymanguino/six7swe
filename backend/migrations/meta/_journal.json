@@ -15,6 +15,13 @@
       "when": 1794693308132,
       "tag": "0001_deep_ultimatum",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795197979413,
+      "tag": "0002_drop_portfolio",
+      "breakpoints": true
     }
   ]
 }

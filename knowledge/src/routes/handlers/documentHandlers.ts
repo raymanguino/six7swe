@@ -17,7 +17,6 @@ import {
   setPrimaryResume,
   uploadDocument,
 } from '../../services/documents.js';
-import type { DocumentRecord } from '../../db/api/repository.js';
 import type { KnowledgeContext } from '../context.js';
 import { toDocumentDto } from '../mappers.js';
 
@@ -28,8 +27,6 @@ export function documentHandlers(ctx: KnowledgeContext) {
     queue: ctx.queue,
     log: req.log,
     onCorpusChanged: (ownerId: string) => ctx.evalRunner.corpusChanged(ownerId),
-    // An approved resume that became searchable may now be primary (#212).
-    onResumeReady: (doc: DocumentRecord) => ctx.drafting.resumeIngested(doc),
   });
 
   return {

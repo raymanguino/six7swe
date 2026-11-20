@@ -3,8 +3,6 @@
  * that belong to them.
  *
  * This is development data, not personal data, so it is tracked in git.
- * The portfolio seed (personal details and resume text) is separate and
- * lives in scripts/seed-portfolio.ts, which is gitignored.
  *
  * Idempotent: running it again updates the existing rows rather than
  * failing on the unique constraints.

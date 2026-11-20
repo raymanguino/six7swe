@@ -3,7 +3,6 @@ import { Navigate, useOutletContext } from 'react-router-dom';
 import type { HunterOutletContext } from '../HunterLayout';
 import DocumentTable from './DocumentTable';
 import EvalSetPanel from './EvalSetPanel';
-import ProfileReview from './ProfileReview';
 import RiskReview from './RiskReview';
 import { useBusyRows, useReplacePicker } from './rowActions';
 import SearchPlayground from './SearchPlayground';
@@ -11,12 +10,12 @@ import TextPreview from './TextPreview';
 import UploadDropzone from './UploadDropzone';
 import { useEvalSet } from './useEvalSet';
 import { useKnowledgeDocuments } from './useKnowledgeDocuments';
-import { useKnowledgeProfile } from './useKnowledgeProfile';
 
 /**
- * The owner's knowledge base: upload, the risk scan's review (#212), the document table with live status,
- * the extracted-text preview, the landing profile's review and publish, the
- * "ask as a visitor" playground, and the chat eval set (#85).
+ * The owner's knowledge base: upload, the risk scan's review (#212), the
+ * document table with live status, the extracted-text preview, the "ask as a
+ * visitor" playground, and the chat eval set (#85). Chat, fitcheck and the job
+ * matcher all answer from retrieval over these documents.
  *
  * Owner only. Anyone the backend says is not the owner is sent back to the
  * profiles; the backend answers 403 to their requests regardless.
@@ -24,13 +23,6 @@ import { useKnowledgeProfile } from './useKnowledgeProfile';
 export default function KnowledgePage() {
   const { knowledgeOwner } = useOutletContext<HunterOutletContext>();
   const knowledge = useKnowledgeDocuments(knowledgeOwner.isOwner === true);
-  // A resume that has just become primary starts a new draft, so the profile is
-  // re-read whenever the primary resume changes or finishes ingesting.
-  const primary = knowledge.documents.find((d) => d.isPrimaryResume);
-  const profile = useKnowledgeProfile(
-    knowledgeOwner.isOwner === true,
-    primary ? `${primary.id}:${primary.updatedAt}` : null,
-  );
   // Any change to the ready documents may start an eval run, so the set is
   // re-read when one does.
   const readyKey = knowledge.documents
@@ -64,10 +56,11 @@ export default function KnowledgePage() {
       <section>
         <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Knowledge</h2>
         <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
-          The documents the portfolio chat and the job matcher answer from. Every upload is scanned
-          for anything risky to make public; a flagged document waits for your review before it is
-          searchable. When a resume finishes processing, the newest ready resume becomes primary.
-          &ldquo;Make primary&rdquo; picks another one until the next resume finishes processing.
+          The documents the portfolio chat, the fit check and the job matcher answer from. Every
+          upload is scanned for anything risky to make public; a flagged document waits for your
+          review before it is searchable. When a resume finishes processing, the newest ready resume
+          becomes primary. &ldquo;Make primary&rdquo; picks another one until the next resume
+          finishes processing.
         </p>
       </section>
 
@@ -121,8 +114,6 @@ export default function KnowledgePage() {
       </section>
 
       {previewed && <TextPreview doc={previewed} onClose={() => setPreviewId(null)} />}
-
-      <ProfileReview profile={profile} />
 
       <SearchPlayground />
 

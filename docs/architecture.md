@@ -1,7 +1,8 @@
 # System Architecture
 
-Six7SWE contains **two products** that share one backend process, one PostgreSQL
-database and one AI client, but are kept apart by an explicit boundary.
+Six7SWE contains **two products** that share one backend process and one AI
+client, but are kept apart by an explicit boundary. Only the job hunter has
+PostgreSQL tables; the portfolio's background comes from the knowledge service.
 
 - **Portfolio** — the public personal site and its AI assistant. Read-only for
   visitors, no authentication.
@@ -32,7 +33,7 @@ flowchart TB
   subgraph Portfolio["Portfolio product"]
     PRoutes["routes/portfolio.ts"]
     PSvc["services/ai/\nchat, fitcheck, jobMatch"]
-    PService["services/portfolioService.ts"]
+    PContext["data/chatContext.ts\nretrieval"]
   end
 
   subgraph Hunter["Job Hunter product"]
@@ -51,17 +52,20 @@ flowchart TB
     MiniMax["MiniMax client\nservices/minimaxService.ts"]
   end
 
+  Knowledge["Knowledge service\nretrieval, /version, resume PDF"]
+
   UI --> Fastify
   Chat --> Fastify
   Hunter --> Fastify
   Fastify --> Auth --> Guard --> Routes
   Routes --> Portfolio
   Routes --> Hunter
-  PRoutes --> PSvc --> PService --> Drizzle --> DB
+  PRoutes --> PSvc --> PContext --> Knowledge
   PSvc --> MiniMax
   HService --> HDomain
   HService --> HFetcher
   HService --> PSvc
+  HService --> Knowledge
   HService --> Drizzle --> DB
 ```
 
@@ -72,13 +76,13 @@ by the compiler.
 
 | Boundary | Where |
 |---|---|
-| Database tables | `backend/src/db/schema/portfolio.ts` and `backend/src/db/schema/jobHunt.ts` |
+| Database tables | `backend/src/db/schema/jobHunt.ts` only; the portfolio has none |
 | HTTP surface | `/job-hunt/*` vs the public portfolio paths |
 | Services | `backend/src/services/ai/` (shared) vs `backend/src/services/jobHunt/` and `backend/src/services/jobFetchers/` |
 | Frontend | `/` (public) vs `/hunter/*` (signed in) |
 
-There is no query that joins the two table families, and no service that both
-products call except the AI client.
+The portfolio never touches the database, and no service is shared by both
+products except the AI client and the knowledge-service clients.
 
 ## Authentication & Authorization
 
@@ -134,7 +138,7 @@ user, so a caller cannot reach another user's profile by guessing an id.
 | `/hunter/profiles` | Search profile list and creation |
 | `/hunter/profiles/:id` | Refresh controls and scored matches |
 | `/hunter/profiles/:id/edit` | Profile editor |
-| `/hunter/knowledge` | Knowledge base (owner only): upload, documents, text preview, "ask as a visitor" playground |
+| `/hunter/knowledge` | Knowledge base (owner only): upload, risk review, documents, text preview, "ask as a visitor" playground, eval set |
 
 **API communication**
 
@@ -158,7 +162,7 @@ auth context has registered one.
 
 | Module | Routes |
 |---|---|
-| `routes/portfolio.ts` | `GET /resume` (the knowledge service primary resume, cached by corpus version), `POST /chat`, `POST /fitcheck`, `POST /contact` |
+| `routes/portfolio.ts` | `GET /resume` (the knowledge service primary resume, cached by corpus version), `POST /chat`, `POST /fitcheck`, `POST /contact` (to `CONTACT_TO_EMAIL`) |
 | `routes/jobHunt.ts` | `/job-hunt/jobs`, `/job-hunt/profiles` (CRUD), `/job-hunt/profiles/:id/jobs`, `/job-hunt/profiles/:id/jobs/refresh[/:refreshId]`, `/job-hunt/users` |
 | `routes/knowledge.ts` | `GET /knowledge/access`; owner only: `/knowledge/documents` (list, upload, get, text, primary, delete), `POST /knowledge/search` |
 
@@ -166,8 +170,8 @@ auth context has registered one.
 
 | Module | Purpose |
 |---|---|
-| `chat.ts` | Chat assistant, grounded in the portfolio |
-| `fitcheck.ts` | First-person fit assessment |
+| `chat.ts` | Chat assistant, grounded in the chunks retrieved for each question |
+| `fitcheck.ts` | First-person fit assessment, grounded in the chunks retrieved for the job description |
 | `jobMatch.ts` | **The canonical matcher.** Profile-source agnostic. |
 
 Prompts live in `backend/src/services/ai/prompts/`. `minimaxService.ts` is
@@ -177,52 +181,64 @@ fabricated result.
 
 ## Data Layer
 
-**Schema** — split by product:
+**Schema** — the job hunter's only:
 
 | File | Tables |
 |---|---|
-| `db/schema/portfolio.ts` | `portfolio_profile` (singleton), `content_sections` |
 | `db/schema/jobHunt.ts` | `users`, `profiles`, `jobs`, `profile_jobs`, `refresh_status` |
 
 Enums: `job_source`, `refresh_update_status`, `refresh_update_status_step`,
 `match_band`.
 
-**Portfolio service & caching** — `backend/src/services/portfolioService.ts`
-reads `portfolio_profile` and `content_sections` through Drizzle and caches the
-result in memory for `PORTFOLIO_CACHE_TTL_MS` (default 10 minutes).
+Migration `0002_drop_portfolio` dropped the former portfolio tables
+(`portfolio_profile`, `content_sections`) when retrieval became the only
+background source (#213).
+
+**Background caches** — every cache of the owner's background is keyed to the
+knowledge corpus version (`/version`), which any upload, delete or primary-resume
+change moves. No cache is busted in process, so every backend replica picks a
+change up on its own, within a stated bound:
+
+| Cache | Key | Staleness bound |
+|---|---|---|
+| Chat and fitcheck retrieval (`services/knowledgeRetrieval.ts`) | `(corpus version, normalized query)` | 30 s: the version is re-read at most that often |
+| `/resume` PDF (`services/resumeDownload.ts`) | corpus version | 30 s, likewise |
+| Job hunter overall background (`services/jobHunt/knowledgeSource.ts`) | corpus version | none: each run reads the version first |
 
 ## Knowledge Service
 
 `knowledge/` is a separate deployable: Fastify, Drizzle and pgvector. It holds
 the owner's professional background (resumes and supporting pdf, md and txt
-files) as embedded chunks. It is replacing both the portfolio tables above and
-the never-wired `PORTFOLIO_DATA_SOURCE=mcp` path. Full details are in
+files) as embedded chunks, and it is the only source of that background: there
+are no portfolio tables and no published profile. Full details are in
 `knowledge/README.md`.
 
-- **Chat retrieval.** With `PORTFOLIO_DATA_SOURCE=knowledge`, the backend's chat
-  context is a compact profile summary (from `portfolio_profile`) plus the top-k
-  chunks the service retrieves for the current question and the last user turn
+- **Chat retrieval.** The backend's chat context is the top-k chunks the service
+  retrieves for the current question and the last user turn
   (`backend/src/data/chatContext.ts`). Retrievals are cached in memory by
   `(corpus_version, normalized question)`
   (`backend/src/services/knowledgeRetrieval.ts`); the version is re-read at most
   every 30 s. Chunks per question default to 6 (`KNOWLEDGE_RETRIEVE_K`); production sets 10
-  (`.railway/railway.ts`). The backend refuses to start if the flag is set without
+  (`.railway/railway.ts`). In production the backend refuses to start without
   `KNOWLEDGE_URL` and `KNOWLEDGE_SERVICE_KEY`. If the service fails, chat
-  answers from the profile summary alone, and for the next 15 s uncached
-  questions skip the service instead of waiting on it again (cached questions
-  are still served). The landing page is static (`frontend/src/content/`) and the resume comes from the service; fitcheck still reads
-  the portfolio tables. `pnpm --filter @six7swe/backend chat:eval` compares the
-  two contexts on the seed eval questions (`backend/src/domain/chatEval/`). Its
-  judge's reference is the stuffed context plus the extracted text of every
-  knowledge document (read with `KNOWLEDGE_OWNER_KEY`); without that key it is
-  the stuffed context only, and the report says so.
+  answers with a note that the background is unavailable, and for the next 15 s
+  uncached questions skip the service instead of waiting on it again (cached
+  questions are still served).
+- **Fitcheck retrieval.** Fitcheck retrieves with the job description as the
+  query (cut to the service's 2000-character limit), through the same cached
+  retriever. When the service is unavailable it answers 503 rather than guess.
+- **Chat eval.** `pnpm --filter @six7swe/backend chat:eval` compares the stuffed
+  context (the extracted text of every ready knowledge document, read with
+  `KNOWLEDGE_OWNER_KEY`) with the retrieved one on the seed eval questions
+  (`backend/src/domain/chatEval/`); the judge's reference is the same corpus.
 - **Shared contract.** The wire contract is the `@six7swe/knowledge-types`
   package (`packages/knowledge-types`), compiled to CommonJS so both the ESM
   service and the CommonJS backend load it. The backend and service builds
   compile it first, and so do their `test` scripts, the backend's `chat:eval`, and the root
   `lint` and `dev` scripts. `pnpm install` does not build it.
 - **Schemas.** The service owns the `knowledge` schema, with `documents`,
-  `chunks` and `corpus_state`, and keeps its own migration ledger in
+  `chunks`, `corpus_state` and the eval set's tables (migration
+  `0008_drop_profiles` dropped the retired `profiles` table), and keeps its own migration ledger in
   `knowledge_migrations`. Its `schemaFilter`, and the backend's `db:reset`
   dropping only `public` and `drizzle`, keep the two products from managing
   each other's tables.
@@ -257,7 +273,7 @@ sequenceDiagram
   participant D as PostgreSQL
 
   C->>S: start(profileId)
-  S->>K: /version, /profile/published
+  S->>K: /version, then the overall background (cached by version)
   S->>D: create refresh_status row (PENDING)
   S->>D: check for an existing active refresh
   S-->>C: refreshStatusId (202)
@@ -297,17 +313,18 @@ Migration `0001_deep_ultimatum` adds `knowledge_version` and `evidence` and
 **irreversibly drops `profiles.resume`**: pasted resume text is deleted when
 it runs.
 
-For the owner, each job is scored against the knowledge base: the published profile
-summary plus the top-k chunks retrieved with the job description as the query
-(`services/jobHunt/profileContext.ts`). The match row records the corpus
+For the owner, each job is scored against the knowledge base: an overall
+background (one fixed retrieval for "Professional summary, current role and
+core skills", cached by corpus version so it runs once per corpus change) plus
+the top-k chunks retrieved with the job description as the query
+(`services/jobHunt/knowledgeSource.ts`, `services/jobHunt/profileContext.ts`). The match row records the corpus
 version the chunks came from (`profile_jobs.knowledge_version`) and the
 documents they belong to (`evidence`). When the current `corpus_version`
 differs, the match is stale (`isScoreStale` in `domain/jobHunt/filtering.ts`):
 the next refresh rescores it, and `POST /job-hunt/profiles/:id/jobs/rescore`
 rescores every stale match without fetching postings (204 when none is stale).
-A run that could not read the published profile stores no version on its rows,
-so they stay stale. Publishing the profile does not bump `corpus_version`, so
-it does not by itself mark matches stale. Without
+A run that could not read the overall background stores no version on its
+rows, so they stay stale. Without
 `KNOWLEDGE_URL` / `KNOWLEDGE_SERVICE_KEY` jobs are scored on the profile's
 fields alone and nothing is stale.
 
@@ -328,19 +345,20 @@ imports:
 
 | Variable | Scope | Purpose |
 |---|---|---|
-| `DATABASE_URL` | backend | PostgreSQL connection string |
+| `DATABASE_URL` | backend | PostgreSQL connection string (the job hunter's tables) |
 | `MINIMAX_API_KEY` | backend | AI provider key |
 | `RESEND_API_KEY` | backend | Contact form delivery |
 | `RESEND_FROM_EMAIL` | backend | Sender address for outbound mail |
 | `RESEND_FROM_NAME` | backend | Display name for the sender (optional) |
-| `PORTFOLIO_CACHE_TTL_MS` | backend | Portfolio cache TTL (default 600000) |
+| `CONTACT_TO_EMAIL` | backend | Where contact form messages go (the form answers 503 without it) |
 | `SUPABASE_URL` | backend | Auth provider; derives the JWKS endpoint |
 | `SUPABASE_JWKS_URL` | backend | Explicit JWKS endpoint (optional) |
 | `SUPABASE_JWT_SECRET` | backend | Legacy HS256 mode (optional) |
 | `AUTH_DEV_BYPASS` | backend | Dev-only user impersonation |
 | `JOB_REFRESH_STALE_MINUTES` | backend | Abandoned refresh threshold (default 30) |
 | `OWNER_AUTH_ID` | backend, knowledge | Supabase subject that owns the knowledge base |
-| `KNOWLEDGE_URL` | backend | Knowledge service base URL, used by chat retrieval and the owner proxy (private network on Railway) |
+| `KNOWLEDGE_URL` | backend | Knowledge service base URL, used by retrieval (chat, fitcheck, `/resume`, job hunter) and the owner proxy (private network on Railway); required in production |
+| `KNOWLEDGE_SERVICE_KEY` | backend, knowledge | Service credential for retrieval, `/version` and `/resume.pdf`; required in production |
 | `KNOWLEDGE_OWNER_KEY` | backend, knowledge | Owner credential the backend proxy sends to the service |
 | `VITE_API_URL` | frontend | Backend base URL |
 | `VITE_SUPABASE_URL` | frontend | Supabase project URL |

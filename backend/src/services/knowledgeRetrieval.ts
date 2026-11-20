@@ -1,4 +1,5 @@
 import {
+  MAX_RETRIEVE_QUERY_CHARS,
   RetrieveResponseSchema,
   VersionResponseSchema,
   type RetrieveResponse,
@@ -16,8 +17,8 @@ import {
 } from '../config/knowledgeRetrieval';
 
 /**
- * Chat-side retrieval from the knowledge service: an HTTP client for
- * `/version` and `/retrieve`, and a cache keyed by
+ * Retrieval from the knowledge service, for chat and fitcheck: an HTTP client
+ * for `/version` and `/retrieve`, and a cache keyed by
  * `(corpus_version, normalized question)`.
  *
  * The corpus version is part of the key, so an upload or delete in the
@@ -99,6 +100,11 @@ export function createHttpRetrievalClient(
       );
     },
   };
+}
+
+/** Long texts (a job posting) are cut to the service's query limit; the opening says what it is. */
+export function toRetrieveQuery(text: string): string {
+  return text.trim().slice(0, MAX_RETRIEVE_QUERY_CHARS);
 }
 
 /**
@@ -294,7 +300,7 @@ export function createCachedRetriever(
 let defaultRetriever: CachedRetriever | null | undefined;
 let retrievalLogger: RetrievalLogger | undefined;
 
-/** The server hands over its logger at startup, like `setPortfolioLogger`. */
+/** The server hands over its logger at startup; until then failures are not logged. */
 export function setRetrievalLogger(logger: RetrievalLogger): void {
   retrievalLogger = logger;
 }

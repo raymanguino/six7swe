@@ -1,10 +1,9 @@
 import { DEFAULT_RETRIEVE_K, MAX_RETRIEVE_K } from '@six7swe/knowledge-types';
 import { normalizeKnowledgeUrl } from './knowledgeUrl';
-import { getPortfolioDataSource } from './portfolioMcp';
 
 /**
- * How the portfolio chat reaches the knowledge service when
- * `PORTFOLIO_DATA_SOURCE=knowledge`.
+ * How chat, fitcheck, `/resume` and the job hunter reach the knowledge
+ * service, the only source of the owner's background.
  *
  * `KNOWLEDGE_URL` is the service's base URL, the same variable the owner proxy
  * uses (on Railway, the private address `http://six7sweknowledge.railway.internal:3100`).
@@ -31,7 +30,11 @@ export interface KnowledgeRetrievalConfig {
 }
 
 const DEFAULT_TIMEOUT_MS = 3_000;
-const DEFAULT_VERSION_TTL_MS = 30_000;
+/**
+ * The staleness bound of every version-keyed chat and fitcheck cache: a corpus change
+ * (upload, delete) reaches each backend replica within this long, with no cache bust (#130).
+ */
+export const DEFAULT_VERSION_TTL_MS = 30_000;
 const DEFAULT_FAILURE_COOLDOWN_MS = 15_000;
 const DEFAULT_CACHE_ENTRIES = 200;
 
@@ -65,21 +68,25 @@ export function getKnowledgeRetrievalConfig(
 }
 
 /**
- * Called at startup. `PORTFOLIO_DATA_SOURCE=knowledge` without the URL or key
- * is a deploy mistake, so the server refuses to start rather than quietly
- * answering every chat from the profile alone. Outages are handled per
- * request instead.
+ * Called at startup. In production the knowledge service is the only source of
+ * background for chat, fitcheck and `/resume`, so a missing or malformed
+ * `KNOWLEDGE_URL` or `KNOWLEDGE_SERVICE_KEY` is a deploy mistake and the server
+ * refuses to start rather than quietly answering without background. Elsewhere
+ * they are optional: chat then says the background is unavailable. Outages are
+ * handled per request.
  */
-export function assertKnowledgeRetrievalConfigured(): void {
-  if (getPortfolioDataSource() !== 'knowledge') return;
+export function assertKnowledgeRetrievalConfigured(
+  env: Record<string, string | undefined> = process.env,
+): void {
+  if (env.NODE_ENV !== 'production') return;
   // Name what is wrong, never the value: the URL may carry credentials.
-  const url = process.env.KNOWLEDGE_URL;
+  const url = env.KNOWLEDGE_URL;
   if (!url || normalizeKnowledgeUrl(url) === null) {
     throw new Error(
-      'PORTFOLIO_DATA_SOURCE=knowledge requires KNOWLEDGE_URL to be set to a valid http(s) URL without credentials, query or fragment',
+      'KNOWLEDGE_URL must be set to a valid http(s) URL without credentials, query or fragment',
     );
   }
-  if (!process.env.KNOWLEDGE_SERVICE_KEY?.trim()) {
-    throw new Error('PORTFOLIO_DATA_SOURCE=knowledge requires KNOWLEDGE_SERVICE_KEY');
+  if (!env.KNOWLEDGE_SERVICE_KEY?.trim()) {
+    throw new Error('KNOWLEDGE_SERVICE_KEY is required in production');
   }
 }

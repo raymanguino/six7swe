@@ -33,7 +33,7 @@ invalidate a value that has already been disclosed.
 | 3 | `SUPABASE_SECRET_KEY` | Supabase project | Project → Settings → API Keys | Railway backend variables (if still set) |
 | 4 | `DATABASE_URL` (password) | Supabase project | Project → Settings → Database → reset password | `backend/.env`, Railway backend variables |
 | 5 | Second Supabase project password | Supabase project (us-west-2) | Project → Settings → Database → reset password | `backend/.env` (remove if unused) |
-| 6 | MCP `x-brain-key` | MCP edge function | Open-brain MCP server → key management | `backend/.env` (`MCP_PORTFOLIO_HEADERS_JSON`, `MCP_PORTFOLIO_ARGS_JSON`) |
+| 6 | ~~MCP `x-brain-key`~~ (retired) | MCP edge function | Open-brain MCP server → key management: **revoke** it | Nothing reads it since #213 removed the open-brain MCP client and every `MCP_PORTFOLIO_*` variable. Revoke the key, and delete any `MCP_*` line left in `backend/.env` or Railway |
 
 > Only one `DATABASE_URL` may be active in `backend/.env`. `dotenv` resolves
 > duplicates by **last occurrence wins**, so a stale line silently overrides
@@ -100,7 +100,9 @@ The frontend ships `VITE_SUPABASE_ANON_KEY` in the JavaScript bundle, and
 was that anyone with the anon key could read `portfolio_profile` (the full
 resume, the email address and the phone number) and read, insert, update or
 delete rows in `users`, `profiles`, `jobs`, `profile_jobs` and
-`refresh_status`, without authenticating.
+`refresh_status`, without authenticating. (`portfolio_profile` and
+`content_sections` were dropped in #213; the background now lives in the
+knowledge service's private `knowledge` schema.)
 
 ### The fix
 
@@ -137,11 +139,11 @@ which runs `db:migrate` followed by `db:secure`.
 ### Verifying it
 
 ```bash
-curl "https://<project-ref>.supabase.co/rest/v1/portfolio_profile?select=email" \
+curl "https://<project-ref>.supabase.co/rest/v1/users?select=email" \
   -H "apikey: <anon-key>"
 ```
 
-A closed table returns `permission denied for table portfolio_profile`.
+A closed table returns `permission denied for table users`.
 
 The regression test is `backend/src/__tests__/db/security.test.ts`.
 

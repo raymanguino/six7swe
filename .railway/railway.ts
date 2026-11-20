@@ -94,18 +94,17 @@ export default defineRailway(() => {
       RESEND_FROM_EMAIL: preserve(),
       RESEND_FROM_NAME: preserve(),
       SUPABASE_URL: preserve(),
-      PORTFOLIO_CACHE_TTL_MS: preserve(),
+      // Where contact form messages go (#213: it was the portfolio profile's email). Unset, the
+      // form answers 503. Set it in Railway before the first apply of this file.
+      CONTACT_TO_EMAIL: preserve(),
       // Comma-separated browser origins allowed by CORS (the frontend domains declared above; not
       // secret, so a literal rather than preserve()). Required in production: the backend
       // refuses to start without it.
       CORS_ORIGINS: 'https://ray-manguino.dev,https://six7swe.up.railway.app',
-      // #120 took this out of the file, so an apply would delete the value set by hand in
-      // Railway. preserve() keeps it, and lets the owner switch chat to `knowledge` in Railway
-      // without this file doing it.
-      PORTFOLIO_DATA_SOURCE: preserve(),
-      // The knowledge service's private address, one variable for both clients: chat retrieval
-      // (PORTFOLIO_DATA_SOURCE=knowledge) and the owner proxy below. The retrieval key is the
-      // knowledge service's KNOWLEDGE_SERVICE_KEY, set to the same value on both services.
+      // The knowledge service's private address, one variable for both clients: retrieval (chat,
+      // fitcheck, /resume and the job hunter, the only source of background) and the owner proxy
+      // below. The retrieval key is the knowledge service's KNOWLEDGE_SERVICE_KEY, set to the
+      // same value on both services. The backend refuses to start in production without both.
       KNOWLEDGE_URL: 'http://six7sweknowledge.railway.internal:3100',
       KNOWLEDGE_SERVICE_KEY: preserve(),
       // Chunks retrieved per chat question. Chosen from the #84 chat eval (10 seed questions:
@@ -172,14 +171,10 @@ export default defineRailway(() => {
       // Bearer token for the /mcp adapter; unset disables /mcp.
       KNOWLEDGE_MCP_KEY: preserve(),
       OWNER_AUTH_ID: preserve(),
-      // Embeddings only (EMBEDDER defaults to openai). Profile drafting uses MiniMax below.
+      // Embeddings only (EMBEDDER defaults to openai). The risk scan and eval use MiniMax below.
       OPENAI_API_KEY: preserve(),
       SUPABASE_URL: preserve(),
       SUPABASE_SECRET_KEY: preserve(),
-      // The model that drafts the landing profile from the primary resume (#86): MiniMax, the
-      // app's LLM provider. Its default, `none`, turns drafting off, so production names it. The
-      // model defaults to MiniMax-M3 (PROFILE_DRAFT_MODEL).
-      PROFILE_DRAFTER: 'minimax',
       // The model that answers each chat eval question in a run (#85), from the retrieved
       // chunks. `none` records retrieval only. A run is the 10 active questions, once per corpus
       // change or on the owner's request. Uses the same MiniMax keys.
@@ -189,7 +184,7 @@ export default defineRailway(() => {
       // `none`; named here so the choice is explicit. RISK_SCAN_MODEL overrides MiniMax-M3.
       RISK_SCANNER: 'minimax',
       // Set these on the knowledge service in Railway (the same values as the backend's).
-      // The service refuses to boot with PROFILE_DRAFTER=minimax and no MINIMAX_API_KEY. The
+      // The service refuses to boot with RISK_SCANNER=minimax and no MINIMAX_API_KEY. The
       // secondary key is optional: it is tried once when MiniMax answers 429.
       MINIMAX_API_KEY: preserve(),
       MINIMAX_API_KEY_SECONDARY: preserve(),

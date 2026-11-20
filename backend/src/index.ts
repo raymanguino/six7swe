@@ -13,7 +13,6 @@ import authPlugin from './plugins/auth';
 import routes from './routes';
 import { PUBLIC_ROUTE } from './routes/access';
 import { reapStaleRefreshes } from './services/jobHunt/standalone';
-import { setPortfolioLogger } from './services/portfolioService';
 import { setRetrievalLogger } from './services/knowledgeRetrieval';
 import Fastify from 'fastify';
 import path from 'path';
@@ -108,7 +107,6 @@ const start = async () => {
     // options above evaluate the same function again when it loads.
     getCorsOrigin();
     assertKnowledgeRetrievalConfigured();
-    setPortfolioLogger(fastify.log.child({ module: 'portfolio' }));
     setRetrievalLogger(fastify.log.child({ module: 'knowledge' }));
 
     // Refreshes abandoned by a previous process would otherwise stay

@@ -17,7 +17,7 @@ The backend uses a Dockerfile because the job scraper launches Chrome, which nee
 libraries at runtime (see [Chrome for the job scraper](#chrome-for-the-job-scraper)). The frontend
 is a static SPA: Railpack builds it and serves `frontend/dist` with Caddy.
 
-Before deploying, complete the local setup steps in `SETUP.md` (install dependencies, configure environment variables, and seed your portfolio/resume data).
+Before deploying, complete the local setup steps in `SETUP.md` (install dependencies and configure environment variables). The owner's background (resume and supporting documents) is uploaded on the Knowledge page once the knowledge service is deployed.
 
 ## Node Version
 
@@ -83,7 +83,7 @@ policy and the watch paths.
 3. Set environment variables on the service. `.railway/railway.ts` lists each secret as
    `preserve()`, which keeps the value set in Railway, so a new variable has to be added there as
    well or the next apply deletes it:
-   - `DATABASE_URL` - PostgreSQL connection string
+   - `DATABASE_URL` - PostgreSQL connection string (the job hunter's tables)
    - `PORT` - Port (Railway sets this automatically)
    - `NODE_ENV` - Set to `production`
    - `MINIMAX_API_KEY` - MiniMax API key
@@ -91,12 +91,14 @@ policy and the watch paths.
    - `RESEND_API_KEY` - Resend API key (contact form)
    - `RESEND_FROM_EMAIL` - Sender address for outbound mail. Must be on a domain verified in Resend, e.g. `no-reply@auth.your-domain.dev`
    - `RESEND_FROM_NAME` - Optional display name shown next to the sender address
+   - `CONTACT_TO_EMAIL` - Where contact form messages are delivered. Unset, `/contact` answers 503. Listed as `preserve()` in `railway.ts`, so set it in Railway before the apply that adds it
    - `CORS_ORIGINS` - **Required in production.** Comma-separated browser origins allowed to call the API, e.g. `https://ray-manguino.dev,https://six7swe.up.railway.app` (scheme and host, no path). The literal lives in `.railway/railway.ts`, so an apply sets it. Unset or invalid makes the server refuse to start rather than allow every origin. Only `NODE_ENV=development` or `test` allows every origin
    - `SUPABASE_URL` - Supabase project URL; the JWKS endpoint is derived from it. Required for the job-hunter routes
    - `SUPABASE_JWKS_URL` - Optional explicit JWKS endpoint
    - `JOB_REFRESH_STALE_MINUTES` - Optional; how long a refresh may run before it is considered abandoned (default 30)
    - `OWNER_AUTH_ID` - The knowledge base owner's Supabase auth user id; the same value as on the knowledge service. Only this user gets the Knowledge page (`/hunter/knowledge`); everyone else gets 403 on `/knowledge/*`
-   - `KNOWLEDGE_URL` - Written in `railway.ts` as `http://six7sweknowledge.railway.internal:3100`, the knowledge service's private address
+   - `KNOWLEDGE_URL` - Written in `railway.ts` as `http://six7sweknowledge.railway.internal:3100`, the knowledge service's private address. **Required in production** with `KNOWLEDGE_SERVICE_KEY`: chat, the fit check, `/resume` and the job hunter all retrieve from the knowledge service, and the server refuses to start without them
+   - `KNOWLEDGE_SERVICE_KEY` - The knowledge service's `KNOWLEDGE_SERVICE_KEY` (same value); opens retrieval, `/version` and `/resume.pdf`
    - `KNOWLEDGE_OWNER_KEY` - The knowledge service's `KNOWLEDGE_OWNER_KEY` (same value). The backend sends it to the service only after checking the caller is the owner
 
 > `AUTH_DEV_BYPASS` must **not** be set in production. The server refuses to
@@ -194,9 +196,8 @@ pnpm run db:reset -- --remote --seed   # hosted database, with dev data
 pnpm run db:reset -- --seed             # local database, with dev data
 ```
 
-The portfolio is never seeded by the reset: its data lives in gitignored files, so apply it
-separately with `pnpm run db:seed-portfolio -- --remote`. Without it the public site renders
-without a profile.
+The database holds only the job hunter's tables. The portfolio's background lives in the
+knowledge service, which keeps its own schemas and is not touched by the reset.
 
 > Take a backup first (`pg_dump "$DATABASE_URL" -Fc -f backup.dump`) if the hosted database holds
 > anything you want to keep.
@@ -240,10 +241,10 @@ The frontend downloads the resume from the backend via `GET /resume`, and shows 
 
 > Supabase Storage is **not** currently read by the backend — `@supabase/supabase-js` is not a dependency and no code path reads `SUPABASE_URL` or `SUPABASE_SECRET_KEY`. Serving the resume from Storage requires implementing that path first.
 
-### 5. Update Resume / Portfolio Data
+### 5. Update the Background and Contact Details
 
-1. Copy `backend/scripts/portfolio-data.example.json` to `backend/scripts/portfolio-data.json`, fill in your data, then run `pnpm run db:seed-portfolio -- --remote` from `backend/`—or update `portfolio_profile` directly in the database
-2. Contact info is served from the portfolio API; no frontend edits needed
+1. Upload the resume and supporting documents on the owner's Knowledge page (`/hunter/knowledge`). Chat, the fit check and the job matcher answer from them through retrieval; an upload or delete reaches every backend replica within about 30 s (the caches are keyed to the corpus `/version`), with no restart
+2. The landing page's content and contact details are static: edit `frontend/src/content/`. The contact form delivers to `CONTACT_TO_EMAIL`
 
 ### 6. Job Refreshes (optional)
 
@@ -311,8 +312,8 @@ Build from the repository root, which is the build context Railway uses:
 docker build -f backend/Dockerfile -t six7-backend .
 ```
 
-`.dockerignore` keeps `node_modules`, `.env` files, build output, the Chrome cache and the
-private portfolio data out of the build context. Railway builds from git, so gitignored files
+`.dockerignore` keeps `node_modules`, `.env` files, build output, the Chrome cache and any
+leftover local copy of the retired portfolio seed data out of the build context. Railway builds from git, so gitignored files
 never reach its build either.
 
 Check that the image runs as `node`, owns `/app`, and that pnpm and tsx (used by the pre-deploy
@@ -395,16 +396,15 @@ of the other side, and its PR says what breaks while the services are mismatched
 check that the knowledge deploy and its pre-deploy migration succeeded. If they failed, the backend
 and frontend stay mismatched until the knowledge service is fixed and redeployed.
 
-The profile `version` change (#184) is one of these:
+The removal of the published profile (#213) is one of these:
 
-- The public portfolio works in any order. `ProfileDtoSchema.version` is optional for one release
-  so that a new backend still parses the old service's published profile.
-- If the backend or frontend goes live before the knowledge service, the owner's Knowledge page
-  cannot publish until the service is deployed. The page shows "Unexpected profile response from
-  the server" (the old service sends no `version`), or the publish fails with a 400 (the old
-  service rejects `draftVersion`).
-- If the frontend goes live last, a Knowledge page loaded before its deploy fails to publish with
-  a 400 (the backend rejects the old `draftUpdatedAt` body). Reloading the page fixes it.
+- The backend no longer calls `/profile/published`, so it works against either knowledge release.
+  Its migration `0002_drop_portfolio` drops the portfolio tables on deploy; take a backup first if
+  you want to keep them.
+- The knowledge service's migration `0008_drop_profiles` drops `knowledge.profiles`. A backend or
+  frontend still on the previous release loses only the profile review on the Knowledge page
+  (its `/knowledge/profile*` calls answer 404) until it is deployed too.
+- Set `CONTACT_TO_EMAIL` on the backend before it goes live, or the contact form answers 503.
 
 ## Changing Railway config
 

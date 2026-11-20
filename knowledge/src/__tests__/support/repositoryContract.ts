@@ -218,7 +218,7 @@ export function describeRepositoryContract(
       // Deleting the primary moves it, even when it has no chunks.
       const { document: empty } = await repo.createDocument(newDoc(owner, { kind: 'resume' }));
       await repo.markProcessing(empty.id);
-      await repo.completeIngestion(empty.id, '', []);
+      await repo.completeIngestion(empty.id, '', [], []);
       expect(await repo.getPrimaryResume(owner)).toMatchObject({ id: empty.id });
       const beforeDelete = await repo.getVersion(owner);
       await repo.deleteDocument(owner, empty.id);

@@ -42,6 +42,6 @@ tests {
 }
 
 docs {
-  Calls a tool. The others are get_profile, list_documents and get_resume_pdf (a base64 PDF resource, capped at 5 MB), all read-only.
+  Calls a tool. The others are list_documents and get_resume_pdf (a base64 PDF resource, capped at 5 MB), all read-only.
   MCP key as Authorization: Bearer. Any query string is a 401, so the key can never end up in a URL. With no KNOWLEDGE_MCP_KEY configured, /mcp is closed.
 }

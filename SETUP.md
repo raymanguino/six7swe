@@ -41,7 +41,7 @@ Required environment variables:
 
 | Variable | Purpose |
 |---|---|
-| `DATABASE_URL` | PostgreSQL connection string (local Supabase by default) |
+| `DATABASE_URL` | PostgreSQL connection string (local Supabase by default); the job hunter's tables |
 | `MINIMAX_API_KEY` | AI endpoints (`/chat`, `/fitcheck`) |
 | `RESEND_API_KEY` | Contact form delivery |
 | `SUPABASE_URL` | Auth provider for the job-hunter (`/job-hunt/*` routes) |
@@ -50,7 +50,7 @@ For local development point `SUPABASE_URL` at the local stack
 (`http://127.0.0.1:54321`) so the API verifies tokens issued by the local Auth
 service. It must match the frontend's `VITE_SUPABASE_URL`.
 
-Optional variables (`PORT`, `PORTFOLIO_DATA_SOURCE`, `PORTFOLIO_CACHE_TTL_MS`, `MCP_*`, `SUPABASE_JWKS_URL`, `AUTH_DEV_BYPASS`, `JOB_REFRESH_STALE_MINUTES`, and `OWNER_AUTH_ID` / `KNOWLEDGE_URL` / `KNOWLEDGE_OWNER_KEY` for the Knowledge page) are documented in [`backend/.env.example`](backend/.env.example).
+Optional variables (`PORT`, `CONTACT_TO_EMAIL`, `SUPABASE_JWKS_URL`, `AUTH_DEV_BYPASS`, `JOB_REFRESH_STALE_MINUTES`, `KNOWLEDGE_URL` / `KNOWLEDGE_SERVICE_KEY` for retrieval, and `OWNER_AUTH_ID` / `KNOWLEDGE_OWNER_KEY` for the Knowledge page) are documented in [`backend/.env.example`](backend/.env.example).
 
 Set `MINIMAX_API_KEY_SECONDARY` optionally to retry once with a second key when the primary request receives HTTP 429.
 
@@ -87,12 +87,14 @@ The frontend will automatically proxy API requests to the backend in development
 Vite reads `VITE_*` variables once at startup, so restart `pnpm dev:frontend`
 after creating or editing `frontend/.env`.
 
-### 6. Portfolio / Resume
+### 6. Background and Resume
 
-1. Copy `backend/scripts/portfolio-data.example.json` to `backend/scripts/portfolio-data.json`
-2. Edit `portfolio-data.json` with your profile data (name, email, resume text, etc.)
-3. Run `pnpm run db:seed-portfolio` from `backend/`
-4. Copy your resume PDF to `backend/public/` (e.g. `resume.pdf`), or set `PORTFOLIO_DATA_SOURCE=mcp` and configure MCP in `backend/.env` so portfolio and resume are served from your MCP server (see `backend/.env.example`).
+Chat, the fit check, `/resume` and the job matcher all answer from the knowledge service
+(`knowledge/README.md`): run it with `pnpm dev:knowledge` (`EMBEDDER=hashing` and
+`FILE_STORE=local` run it offline), set `KNOWLEDGE_URL=http://127.0.0.1:3100` and the service's
+`KNOWLEDGE_SERVICE_KEY` in `backend/.env`, then upload the resume and supporting documents on the
+Knowledge page (`/hunter/knowledge`). Without the service, chat says the background is
+unavailable, the fit check answers 503 and `/resume` answers 404.
 
 ### 7. Job Hunter (optional)
 
@@ -238,19 +240,17 @@ schema and replay the migrations:
 cd backend
 pnpm run db:reset                # local
 pnpm run db:reset -- --remote    # hosted
-pnpm run db:seed-portfolio       # portfolio profile and content sections
 ```
 
 The Supabase-managed schemas (`auth`, `storage`, `graphql_public`) are left alone, so Supabase
 Auth users survive a reset.
 
-## Updating Resume/Portfolio Data
+## Updating the Background
 
-Update the `portfolio_profile` table in the database, or edit `backend/scripts/portfolio-data.json` (copy from `portfolio-data.example.json` if needed) and re-run `pnpm run db:seed-portfolio` from `backend/`. The AI chat assistant uses `full_resume_text` to answer questions.
-
-> The portfolio payload is cached in memory for `PORTFOLIO_CACHE_TTL_MS`
-> (default 10 minutes), so chat may keep serving the previous text until the
-> cache expires.
+Upload, replace or delete documents on the Knowledge page. The backend's caches are keyed to the
+knowledge corpus version, which every change moves, so chat, the fit check and `/resume` pick a
+change up within about 30 s and the job hunter on its next run, with no restart. The landing
+page's content is static: edit `frontend/src/content/`.
 
 ## Deployment
 

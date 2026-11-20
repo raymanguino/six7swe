@@ -57,7 +57,6 @@ async function buildServer(options: {
   user: ContextUser;
   config?: KnowledgeConfig;
   fetch: FetchLike;
-  onProfilePublished?: () => void;
 }): Promise<FastifyInstance> {
   const app = Fastify();
   await app.register(fastifyRequestContext, { defaultStoreValues: { user: UnauthenticatedUser } });
@@ -75,7 +74,6 @@ async function buildServer(options: {
     registerKnowledgeRoutes(scope, {
       config: options.config ?? configured,
       fetch: options.fetch,
-      onProfilePublished: options.onProfilePublished,
     }),
   );
   await app.ready();
@@ -422,158 +420,23 @@ describe('forwardToKnowledge', () => {
   });
 });
 
-describe('knowledge owner proxy: profile routes (#86)', () => {
-  let app: FastifyInstance | undefined;
-
-  afterEach(async () => {
-    await app?.close();
-    app = undefined;
-  });
-
-  const profile = {
-    name: 'Jordan Example',
-    title: 'Engineer',
-    location: null,
-    summary: 'Builds things.',
-    skills: ['TypeScript'],
-    experience: [],
-    projects: [],
-    links: { email: null, phone: null, linkedin: null, github: null, website: null },
-  };
-  const DRAFT_VERSION = 42;
-
-  it('refuses a non-owner on every profile route, never calling the service', async () => {
+describe('knowledge owner proxy: retired profile routes', () => {
+  it('has no profile routes any more', async () => {
     const service = fakeService(() => jsonResponse(200, {}));
-    app = await buildServer({ user: stranger, fetch: service.fetch });
-    const routes: Array<{ method: 'GET' | 'POST' | 'PUT' | 'DELETE'; url: string }> = [
-      { method: 'GET', url: '/knowledge/profile' },
-      { method: 'PUT', url: '/knowledge/profile/draft' },
-      { method: 'POST', url: '/knowledge/profile/draft' },
-      { method: 'DELETE', url: '/knowledge/profile/draft' },
-      { method: 'POST', url: '/knowledge/profile/publish' },
-    ];
-    for (const route of routes) {
-      const res = await app.inject(route);
-      expect({ ...route, status: res.statusCode }).toEqual({ ...route, status: 403 });
+    const app = await buildServer({ user: owner, fetch: service.fetch });
+    try {
+      for (const route of [
+        { method: 'GET', url: '/knowledge/profile' },
+        { method: 'PUT', url: '/knowledge/profile/draft' },
+        { method: 'POST', url: '/knowledge/profile/publish' },
+      ] as const) {
+        const res = await app.inject(route);
+        expect({ ...route, status: res.statusCode }).toEqual({ ...route, status: 404 });
+      }
+      expect(service.calls).toHaveLength(0);
+    } finally {
+      await app.close();
     }
-    expect(service.calls).toHaveLength(0);
-  });
-
-  it('forwards the profile routes with the owner key', async () => {
-    const service = fakeService(({ init }) =>
-      init.method === 'DELETE' ? jsonResponse(204) : jsonResponse(200, { ok: true }),
-    );
-    app = await buildServer({ user: owner, fetch: service.fetch });
-
-    expect((await app.inject({ method: 'GET', url: '/knowledge/profile' })).statusCode).toBe(200);
-    const save = await app.inject({
-      method: 'PUT',
-      url: '/knowledge/profile/draft',
-      payload: { data: profile },
-    });
-    expect(save.statusCode).toBe(200);
-    expect((await app.inject({ method: 'POST', url: '/knowledge/profile/draft' })).statusCode).toBe(
-      200,
-    );
-    expect(
-      (await app.inject({ method: 'DELETE', url: '/knowledge/profile/draft' })).statusCode,
-    ).toBe(204);
-
-    expect(service.calls.map((c) => `${c.init.method} ${c.url}`)).toEqual([
-      `GET ${SERVICE_URL}/profile`,
-      `PUT ${SERVICE_URL}/profile/draft`,
-      `POST ${SERVICE_URL}/profile/draft`,
-      `DELETE ${SERVICE_URL}/profile/draft`,
-    ]);
-    for (const call of service.calls) {
-      expect((call.init.headers as Record<string, string>)[SERVICE_KEY_HEADER]).toBe(OWNER_KEY);
-    }
-    expect(JSON.parse(String(service.calls[1]?.init.body))).toEqual({ data: profile });
-  });
-
-  it('validates a draft before forwarding it', async () => {
-    const service = fakeService(() => jsonResponse(200, {}));
-    app = await buildServer({ user: owner, fetch: service.fetch });
-    const res = await app.inject({
-      method: 'PUT',
-      url: '/knowledge/profile/draft',
-      payload: {
-        data: { ...profile, links: { ...profile.links, github: 'javascript:alert(1)' } },
-      },
-    });
-    expect(res.statusCode).toBe(400);
-    expect(service.calls).toHaveLength(0);
-  });
-
-  // #186: the draft the owner opened goes through, and a stale save's 409 comes back intact.
-  it('forwards the expected draft version and relays a stale save', async () => {
-    const current = {
-      stage: 'draft',
-      data: { ...profile, title: 'Redrafted' },
-      sourceDocumentId: DOC_ID,
-      version: DRAFT_VERSION + 1,
-      createdAt: '2026-01-01T00:00:00.000Z',
-      updatedAt: '2026-01-02T00:00:00.000Z',
-    };
-    const conflict = { error: 'The draft has changed since you opened it.', draft: current };
-    const service = fakeService(() => jsonResponse(409, conflict));
-    const server = await buildServer({ user: owner, fetch: service.fetch });
-    app = server;
-
-    const save = (expectedVersion: unknown) =>
-      server.inject({
-        method: 'PUT',
-        url: '/knowledge/profile/draft',
-        payload: { data: profile, expectedVersion },
-      });
-    const stale = await save(DRAFT_VERSION);
-    expect(stale.statusCode).toBe(409);
-    expect(stale.json()).toEqual(conflict);
-    expect((await save(null)).statusCode).toBe(409);
-    expect(service.calls.map((c) => JSON.parse(String(c.init.body)))).toEqual([
-      { data: profile, expectedVersion: DRAFT_VERSION },
-      { data: profile, expectedVersion: null },
-    ]);
-
-    expect((await save('latest')).statusCode).toBe(400);
-    expect((await save(0)).statusCode).toBe(400);
-    expect(service.calls).toHaveLength(2);
-  });
-
-  it('busts the portfolio cache after a publish succeeds, and only then', async () => {
-    let status = 409;
-    const service = fakeService(() => jsonResponse(status, { error: 'stale' }));
-    const published = jest.fn();
-    const server = await buildServer({
-      user: owner,
-      fetch: service.fetch,
-      onProfilePublished: published,
-    });
-    app = server;
-    const publish = () =>
-      server.inject({
-        method: 'POST',
-        url: '/knowledge/profile/publish',
-        payload: { draftVersion: DRAFT_VERSION },
-      });
-
-    expect((await publish()).statusCode).toBe(409);
-    expect(published).not.toHaveBeenCalled();
-
-    status = 200;
-    expect((await publish()).statusCode).toBe(200);
-    expect(published).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(String(service.calls[1]?.init.body))).toEqual({
-      draftVersion: DRAFT_VERSION,
-    });
-
-    const invalid = await server.inject({
-      method: 'POST',
-      url: '/knowledge/profile/publish',
-      payload: { draftVersion: 'yesterday' },
-    });
-    expect(invalid.statusCode).toBe(400);
-    expect(service.calls).toHaveLength(2);
   });
 });
 

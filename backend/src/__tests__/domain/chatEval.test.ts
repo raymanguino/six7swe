@@ -2,26 +2,25 @@ import type { DocumentDto } from '@six7swe/knowledge-types';
 import {
   JudgeVerdictSchema,
   SEED_EVAL_QUESTIONS,
+  buildCorpusContext,
   buildJudgeMessages,
-  buildJudgeReference,
   renderEvalReport,
   scoresBySide,
   summarizeEval,
+  type CorpusSummary,
   type EvalRow,
-  type JudgeReferenceSummary,
   type JudgeVerdict,
   type KnowledgeDocumentSource,
 } from '../../domain/chatEval';
 
-const fullReference: JudgeReferenceSummary = {
+const fullReference: CorpusSummary = {
   sources: [
-    { label: 'Stuffed context', chars: 1000 },
-    { label: 'Knowledge document: resume.pdf (resume)', chars: 500 },
+    { label: 'Knowledge document: resume.pdf (resume)', chars: 1000 },
+    { label: 'Knowledge document: notes.md (supporting)', chars: 500 },
   ],
-  stuffedOnlyReason: null,
   skipped: [],
 };
-const meta = (reference: JudgeReferenceSummary = fullReference) => ({
+const meta = (reference: CorpusSummary = fullReference) => ({
   generatedAt: '2026-11-13T00:00:00Z',
   model: 'test',
   reference,
@@ -133,7 +132,7 @@ describe('chat eval', () => {
         answer: 'R',
         contextChars: 100,
         chunkCount: 0,
-        outcome: { mode: 'profile-only', reason: 'unavailable' },
+        outcome: { mode: 'no-background', reason: 'unavailable' },
       },
     };
     const rows = [row('stuffed', verdict(4, 4, 'tie')), fellBack];
@@ -155,7 +154,7 @@ describe('chat eval', () => {
         answer: 'R',
         contextChars: 100,
         chunkCount: 0,
-        outcome: { mode: 'profile-only', reason: 'no-match' },
+        outcome: { mode: 'no-background', reason: 'no-match' },
       },
     };
     expect(summarizeEval([noMatch])).toMatchObject({ judged: 1, unavailable: 0 });
@@ -203,8 +202,8 @@ describe('chat eval', () => {
   });
 });
 
-describe('buildJudgeReference', () => {
-  it('labels the stuffed context and every ready document with text', async () => {
+describe('buildCorpusContext', () => {
+  it('labels every ready document with text, and fetches only ready ones', async () => {
     const resume = doc({ filename: 'resume.pdf', kind: 'resume' });
     const notes = doc({ filename: 'notes.md' });
     const pending = doc({ filename: 'pending.md', status: 'pending' });
@@ -214,117 +213,70 @@ describe('buildJudgeReference', () => {
       [notes.id]: '  pgvector  ',
     });
 
-    const reference = await buildJudgeReference({ stuffedContext: 'STUFFED', documents: source });
+    const corpus = await buildCorpusContext(source);
 
-    expect(reference.stuffedOnlyReason).toBeNull();
-    expect(reference.skipped).toEqual([]);
-    expect(reference.sources).toEqual([
-      { label: 'Stuffed context', chars: 7 },
+    expect(corpus.skipped).toEqual([]);
+    expect(corpus.sources).toEqual([
       { label: 'Knowledge document: resume.pdf (resume)', chars: 24 },
       { label: 'Knowledge document: notes.md (supporting)', chars: 8 },
     ]);
-    expect(reference.text).toBe(
+    expect(corpus.text).toBe(
       [
-        '===== Stuffed context =====\nSTUFFED',
         '===== Knowledge document: resume.pdf (resume) =====\nTerraform and Kubernetes',
         '===== Knowledge document: notes.md (supporting) =====\npgvector',
       ].join('\n\n'),
     );
-    // Only ready documents are fetched.
     expect(source.getDocumentText.mock.calls.map(([id]) => id)).toEqual([resume.id, notes.id]);
   });
 
   it('lists ready documents without extracted text as skipped', async () => {
     const resume = doc({ filename: 'resume.pdf', kind: 'resume' });
     const empty = doc({ filename: 'empty.md' });
-    const reference = await buildJudgeReference({
-      stuffedContext: 'STUFFED',
-      documents: fakeDocuments([resume, empty], { [resume.id]: 'R', [empty.id]: null }),
-    });
-    expect(reference.stuffedOnlyReason).toBeNull();
-    expect(reference.sources.map((s) => s.label)).toEqual([
-      'Stuffed context',
-      'Knowledge document: resume.pdf (resume)',
-    ]);
-    expect(reference.skipped).toEqual(['Knowledge document: empty.md (supporting)']);
+    const corpus = await buildCorpusContext(
+      fakeDocuments([resume, empty], { [resume.id]: 'R', [empty.id]: null }),
+    );
+    expect(corpus.sources.map((s) => s.label)).toEqual(['Knowledge document: resume.pdf (resume)']);
+    expect(corpus.skipped).toEqual(['Knowledge document: empty.md (supporting)']);
   });
 
-  it('falls back to the stuffed context when no owner key is configured', async () => {
-    const reference = await buildJudgeReference({ stuffedContext: 'STUFFED', documents: null });
-    expect(reference).toEqual({
-      text: '===== Stuffed context =====\nSTUFFED',
-      sources: [{ label: 'Stuffed context', chars: 7 }],
-      stuffedOnlyReason: expect.stringContaining('KNOWLEDGE_OWNER_KEY'),
-      skipped: [],
-    });
-  });
-
-  it('falls back to the stuffed context when listing fails', async () => {
-    const reference = await buildJudgeReference({
-      stuffedContext: 'STUFFED',
-      documents: {
+  it('fails rather than use a partial corpus', async () => {
+    const a = doc();
+    const b = doc();
+    await expect(
+      buildCorpusContext(fakeDocuments([a, b], { [a.id]: 'A', [b.id]: new Error('timed out') })),
+    ).rejects.toThrow('timed out');
+    await expect(
+      buildCorpusContext({
         listDocuments: async () => {
           throw new Error('Knowledge service /documents answered 401');
         },
         getDocumentText: async () => 'never',
-      },
-    });
-    expect(reference.sources).toEqual([{ label: 'Stuffed context', chars: 7 }]);
-    expect(reference.stuffedOnlyReason).toBe(
-      'fetching the knowledge documents failed: Knowledge service /documents answered 401',
-    );
+      }),
+    ).rejects.toThrow('answered 401');
   });
 
-  it('falls back to the stuffed context when any document text fails, never a partial set', async () => {
-    const a = doc();
-    const b = doc();
-    const reference = await buildJudgeReference({
-      stuffedContext: 'STUFFED',
-      documents: fakeDocuments([a, b], { [a.id]: 'A', [b.id]: new Error('timed out') }),
-    });
-    expect(reference.text).toBe('===== Stuffed context =====\nSTUFFED');
-    expect(reference.stuffedOnlyReason).toContain('timed out');
-  });
-
-  it('falls back to the stuffed context when no ready document has text', async () => {
-    const reference = await buildJudgeReference({
-      stuffedContext: 'STUFFED',
-      documents: fakeDocuments([doc({ status: 'processing' })], {}),
-    });
-    expect(reference.stuffedOnlyReason).toBe(
-      'the knowledge service has no ready documents with extracted text',
-    );
+  it('fails when no ready document has text', async () => {
+    await expect(
+      buildCorpusContext(fakeDocuments([doc({ status: 'processing' })], {})),
+    ).rejects.toThrow('the knowledge service has no ready documents with extracted text');
   });
 });
 
-describe('renderEvalReport reference header', () => {
+describe('renderEvalReport corpus header', () => {
   it('states the sources and their character counts', () => {
     const report = renderEvalReport([row('stuffed', verdict(4, 4, 'tie'))], meta());
     expect(report).toContain(
-      '- Judge reference (2 source(s), 1500 chars): Stuffed context (1000 chars); Knowledge document: resume.pdf (resume) (500 chars)',
+      "- Corpus, the stuffed context and the judge's reference (2 source(s), 1500 chars): Knowledge document: resume.pdf (resume) (1000 chars); Knowledge document: notes.md (supporting) (500 chars)",
     );
-    expect(report).not.toContain('Warning');
   });
 
-  it('warns prominently when the reference is the stuffed context only', () => {
+  it('lists documents left out of the corpus', () => {
     const report = renderEvalReport(
       [row('stuffed', verdict(4, 4, 'tie'))],
-      meta({
-        sources: [{ label: 'Stuffed context', chars: 1000 }],
-        stuffedOnlyReason: 'no key',
-        skipped: ['Knowledge document: empty.md (supporting)'],
-      }),
+      meta({ ...fullReference, skipped: ['Knowledge document: empty.md (supporting)'] }),
     );
     expect(report).toContain(
-      "> **Warning: the judge's reference is the stuffed context only** (no key).",
+      '- Left out of the corpus (no extracted text): Knowledge document: empty.md (supporting)',
     );
-    expect(report).toContain(
-      '- Judge reference (1 source(s), 1000 chars): Stuffed context (1000 chars)',
-    );
-    expect(report).toContain(
-      '- Left out of the reference (no extracted text): Knowledge document: empty.md (supporting)',
-    );
-    // The warning comes before the scores.
-    expect(report.indexOf('Warning')).toBeLessThan(report.indexOf('Mean score'));
   });
 });

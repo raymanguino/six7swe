@@ -28,7 +28,6 @@ import {
 import { ModelError } from '../services/llm/minimax.js';
 import { createMemoryFileStore, multipartFile, silentLogger, utf8 } from './support/fixtures.js';
 import { createMemoryEvalRepository } from './support/memoryEvalRepository.js';
-import { createMemoryProfileRepository } from './support/memoryProfileRepository.js';
 import { createMemoryRepository } from './support/memoryRepository.js';
 import { axis, createStubEmbedder } from './support/stubEmbedder.js';
 
@@ -363,7 +362,6 @@ describe('eval set over HTTP', () => {
         files: createMemoryFileStore(),
         embedder: createStubEmbedder(CANNED_VECTORS, 256),
       },
-      profile: { repo: createMemoryProfileRepository(), drafter: null },
       evaluation: { repo: createMemoryEvalRepository(), answerer: createStubEvalAnswerer() },
       serviceKey: KEY,
       ownerKey: OWNER_KEY,

@@ -10,7 +10,7 @@
 import { buildSecurityStatements } from '../../db/security';
 
 describe('the database lockdown', () => {
-  const tables = ['portfolio_profile', 'users'];
+  const tables = ['profiles', 'users'];
   const statements = buildSecurityStatements(tables, ['users_id_seq'], ['search_jobs']);
   const joined = statements.join('\n');
 

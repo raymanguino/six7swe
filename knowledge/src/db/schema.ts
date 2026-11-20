@@ -1,6 +1,5 @@
 import { sql } from 'drizzle-orm';
 import {
-  bigint,
   boolean,
   doublePrecision,
   index,
@@ -22,8 +21,6 @@ import {
   EVAL_QUESTION_STATUSES,
   EVAL_RUN_STATUSES,
   EVAL_RUN_TRIGGERS,
-  PROFILE_STAGES,
-  type ProfileData,
   type RiskFinding,
 } from '../contract.js';
 
@@ -116,59 +113,6 @@ export const chunks = knowledge.table(
     uniqueIndex('chunks_document_ordinal_uq').on(t.documentId, t.ordinal),
     index('chunks_embedding_hnsw_idx').using('hnsw', t.embedding.op('vector_cosine_ops')),
   ],
-);
-
-export const profileStage = knowledge.enum('profile_stage', PROFILE_STAGES);
-
-/** Hands out profile `version`s; see `ProfileDtoSchema.version`. */
-export const profileVersionSeq = knowledge.sequence('profile_version_seq');
-
-/** The next profile `version`: the one expression every write to `profiles` uses. */
-export const nextProfileVersion = () => sql<number>`nextval('knowledge.profile_version_seq')`;
-
-/**
- * The structured profile behind the landing page (#86), at most one row per
- * owner and stage: the `draft` the model wrote (and the owner may have
- * edited), and the `published` one the portfolio serves. Publishing copies the
- * draft over the published row and deletes the draft, so a draft always means
- * unpublished changes.
- *
- * The list fields are jsonb, validated against `ProfileDataSchema` on the way
- * in and on the way out.
- */
-export const profiles = knowledge.table(
-  'profiles',
-  {
-    ownerId: varchar('owner_id', { length: 255 }).notNull(),
-    stage: profileStage('stage').notNull(),
-    name: text('name').notNull(),
-    title: text('title').notNull(),
-    location: text('location'),
-    summary: text('summary').notNull(),
-    skills: jsonb('skills').$type<ProfileData['skills']>().notNull(),
-    experience: jsonb('experience').$type<ProfileData['experience']>().notNull(),
-    projects: jsonb('projects').$type<ProfileData['projects']>().notNull(),
-    links: jsonb('links').$type<ProfileData['links']>().notNull(),
-    /** The resume it was drafted from. Deleting that resume keeps the profile. */
-    sourceDocumentId: uuid('source_document_id').references(() => documents.id, {
-      onDelete: 'set null',
-    }),
-    /**
-     * See `ProfileDtoSchema.version`. `$onUpdate` bumps it on any update that
-     * leaves it out (drizzle applies it to `onConflictDoUpdate` too), but the
-     * repository's writes still set it explicitly through `touched()`.
-     */
-    version: bigint('version', { mode: 'number' })
-      .notNull()
-      .default(nextProfileVersion())
-      .$onUpdate(nextProfileVersion),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true })
-      .notNull()
-      .defaultNow()
-      .$onUpdate(() => sql`now()`),
-  },
-  (t) => [primaryKey({ columns: [t.ownerId, t.stage] })],
 );
 
 /**

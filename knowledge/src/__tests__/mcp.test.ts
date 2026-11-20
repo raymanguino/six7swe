@@ -12,11 +12,9 @@ import {
   makePdf,
   multipartFile,
   RESUME_MD,
-  SAMPLE_PROFILE,
   utf8,
 } from './support/fixtures.js';
 import { createMemoryEvalRepository } from './support/memoryEvalRepository.js';
-import { createMemoryProfileRepository } from './support/memoryProfileRepository.js';
 import { createMemoryRepository } from './support/memoryRepository.js';
 
 const KEY = 'k'.repeat(40);
@@ -56,7 +54,6 @@ async function start(options: StartOptions = {}): Promise<Harness> {
       files: createMemoryFileStore(),
       embedder: createHashingEmbedder(256),
     },
-    profile: { repo: createMemoryProfileRepository(), drafter: null },
     evaluation: { repo: createMemoryEvalRepository(), answerer: null },
     serviceKey: KEY,
     ownerKey: OWNER_KEY,
@@ -163,7 +160,6 @@ describe('MCP adapter tools', () => {
     const client = await connect(await start());
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
-      'get_profile',
       'get_resume_pdf',
       'list_documents',
       'search_background',
@@ -191,34 +187,6 @@ describe('MCP adapter tools', () => {
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain('Input validation error');
     expect(h.logs).toEqual([]);
-  });
-
-  it('get_profile returns the published profile and the resume text', async () => {
-    const h = await start();
-    await upload(h, 'resume.md', utf8(RESUME_MD), 'resume');
-    const saved = await h.app.inject({
-      method: 'PUT',
-      url: '/profile/draft',
-      headers: ownerAuth,
-      payload: { data: SAMPLE_PROFILE },
-    });
-    const draftVersion = saved.json<{ profile: { version: number } }>().profile.version;
-    const published = await h.app.inject({
-      method: 'POST',
-      url: '/profile/publish',
-      headers: ownerAuth,
-      payload: { draftVersion },
-    });
-    expect(published.statusCode).toBe(200);
-
-    const client = await connect(h);
-    const result = await client.callTool({ name: 'get_profile', arguments: {} });
-    const body = JSON.parse(textOf(result)) as {
-      profile: { data: { name: string } };
-      resume: { filename: string };
-    };
-    expect(body.profile.data.name).toBe(SAMPLE_PROFILE.name);
-    expect(body.resume.filename).toBe('resume.md');
   });
 
   it('list_documents lists the uploaded documents', async () => {
