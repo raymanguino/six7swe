@@ -68,7 +68,8 @@ function runnerSetup(
   const repo = createMemoryRepository();
   const evalRepo = createMemoryEvalRepository();
   const embedder = createStubEmbedder(CANNED_VECTORS, DIMS);
-  const evalSet = createEvalSet({ repo: evalRepo, embedder, log: silentLogger });
+  // Canned questions only, so every active question is one this file's corpus is built around.
+  const evalSet = createEvalSet({ repo: evalRepo, embedder, log: silentLogger, examples: [] });
   const runner = createEvalRunner({
     evalRepo,
     repo,

@@ -12,11 +12,14 @@ export interface EvalQuestion {
   id: string;
   question: string;
   status: EvalQuestionStatus;
-  origin: 'canned' | 'visitor';
+  /** `example`: one of the chat widget's example questions, seeded pinned (#205). */
+  origin: 'canned' | 'visitor' | 'example';
   pinned: boolean;
   offTopic: boolean;
   hitCount: number;
   distinctSessions: number;
+  /** Clicks on the chat example (origin `example`); apart from `hitCount`. */
+  exampleClicks: number;
   lastAskedAt: string;
   createdAt: string;
 }
@@ -82,12 +85,16 @@ const isStringArray = (value: unknown): value is string[] =>
 const isOneOf = <T extends string>(allowed: readonly T[], value: unknown): value is T =>
   typeof value === 'string' && (allowed as readonly string[]).includes(value);
 
-const isQuestion = (value: unknown): value is EvalQuestion =>
+/** A question as sent; `exampleClicks` is missing from a knowledge service that predates it. */
+type WireQuestion = Omit<EvalQuestion, 'exampleClicks'> & { exampleClicks?: number };
+
+const isQuestion = (value: unknown): value is WireQuestion =>
   isRecord(value) &&
   typeof value.id === 'string' &&
   typeof value.question === 'string' &&
   isOneOf(['candidate', 'active', 'retired'], value.status) &&
-  isOneOf(['canned', 'visitor'], value.origin) &&
+  isOneOf(['canned', 'visitor', 'example'], value.origin) &&
+  (value.exampleClicks === undefined || typeof value.exampleClicks === 'number') &&
   typeof value.pinned === 'boolean' &&
   typeof value.offTopic === 'boolean' &&
   typeof value.hitCount === 'number' &&
@@ -146,6 +153,11 @@ const isSettings = (value: unknown): value is EvalSettings =>
   typeof value.candidateTtlDays === 'number' &&
   typeof value.answering === 'boolean';
 
+const toQuestion = (q: WireQuestion): EvalQuestion => ({
+  ...q,
+  exampleClicks: q.exampleClicks ?? 0,
+});
+
 function invalid(what: string): never {
   throw new Error(`Unexpected ${what} response from the server`);
 }
@@ -164,7 +176,7 @@ export function parseEvalState(data: unknown): EvalState {
   }
   return {
     settings: data.settings,
-    questions: data.questions,
+    questions: data.questions.map(toQuestion),
     latestRun: data.latestRun,
     running: data.running,
   };
@@ -184,5 +196,5 @@ export function parseEvalQuestionResponse(data: unknown): {
   ) {
     return invalid('eval question');
   }
-  return { question: data.question, evicted: data.evicted };
+  return { question: toQuestion(data.question), evicted: data.evicted.map(toQuestion) };
 }

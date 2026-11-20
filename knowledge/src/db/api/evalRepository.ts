@@ -28,6 +28,8 @@ export interface EvalQuestionRecord {
   offTopic: boolean;
   hitCount: number;
   distinctSessions: number;
+  /** Clicks on the chat widget's example button (origin `example` only). */
+  exampleClicks: number;
   lastAskedAt: Date;
   /** When it last became retired; null while it is not retired. */
   retiredAt: Date | null;
@@ -53,6 +55,15 @@ export interface NewVisitorQuestion {
   now: Date;
   /** After the insert, the owner's least recently asked candidates beyond this are deleted. */
   maxCandidates: number;
+}
+
+export interface AddExamplesOutcome {
+  /** The examples inserted, active and pinned. */
+  added: EvalQuestionRecord[];
+  /** The active, unpinned questions retired to make room for them. */
+  evicted: EvalQuestionRecord[];
+  /** Example texts left out because every other active question is pinned. */
+  skipped: string[];
 }
 
 export type PromoteOutcome =
@@ -112,6 +123,39 @@ export interface EvalRepository {
    * at once seed once.
    */
   seedIfEmpty(ownerId: string, questions: NewCannedQuestion[], now: Date): Promise<boolean>;
+
+  /**
+   * Inserts each example that the owner has no `example` question for yet
+   * (matched by exact text, any status), as active, pinned and of origin
+   * `example`. In the same transaction, retires the active, unpinned
+   * questions asked least recently (as `promote` does) until the active set
+   * has room under `maxActive`. Examples that still do not fit are skipped,
+   * not forced in. An example the owner unpinned or retired is left alone.
+   */
+  addExamples(
+    ownerId: string,
+    examples: NewCannedQuestion[],
+    maxActive: number,
+    now: Date,
+  ): Promise<AddExamplesOutcome>;
+
+  /**
+   * Retires and unpins the owner's active `example` questions whose text is
+   * no longer in `pool` (an example edited or removed from the chat), so
+   * leftovers never hold pinned active slots. Returns the questions retired.
+   */
+  retireStaleExamples(
+    ownerId: string,
+    pool: readonly string[],
+    now: Date,
+  ): Promise<EvalQuestionRecord[]>;
+
+  /**
+   * Bumps `example_clicks` on the owner's `example` question with exactly
+   * this text, whatever its status. Nothing else changes: not `hit_count`,
+   * sessions or `last_asked_at`. Null when there is no such question.
+   */
+  recordExampleClick(ownerId: string, question: string): Promise<EvalQuestionRecord | null>;
 
   /**
    * The owner's candidate or active question closest to the embedding, or
@@ -174,7 +218,7 @@ export interface EvalRepository {
    * Deletes candidates last asked before `before`, and visitor questions
    * retired before `before` (by `retired_at`, so a recently evicted
    * question stays listed for the full TTL however long ago it was asked).
-   * Canned questions and active ones stay. Returns how many.
+   * Canned and example questions, and active ones, stay. Returns how many.
    */
   purgeStale(ownerId: string, before: Date): Promise<number>;
 

@@ -53,6 +53,10 @@ The public site at `/`:
 - Contact page with contact info and a message form
 - AI chat assistant answering questions about professional background from the
   documents retrieved for each question
+- A public MCP server (`POST /mcp/public` on the backend) so anyone's AI client
+  can search the same background and fetch the resume, with no key:
+  `claude mcp add --transport http six7swe https://<backend-host>/mcp/public`
+  (see `docs/architecture.md`)
 
 ## Job Hunter (signed in)
 

@@ -1,7 +1,9 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import {
   EvalQuestionActionRequestSchema,
+  ExampleClickRequestSchema,
   IdParamsSchema,
+  type ExampleClickResponse,
   type EvalQuestionResponse,
   type EvalRunAcceptedResponse,
   type EvalStateResponse,
@@ -37,6 +39,17 @@ export function evalHandlers(ctx: KnowledgeContext) {
       ctx.evalRunner.request(requireOwner(req), 'manual');
       const body: EvalRunAcceptedResponse = { running: true };
       return reply.code(202).send(body);
+    },
+
+    /**
+     * Service: a chat visitor clicked an example question (#205). The backend
+     * forwards only exact example texts; anything else is a 400 here too. It
+     * bumps the example's click count and nothing else.
+     */
+    async exampleClick(req: FastifyRequest): Promise<ExampleClickResponse> {
+      const ownerId = requireOwner(req);
+      const { question } = ExampleClickRequestSchema.parse(req.body);
+      return { counted: await ctx.evalSet.recordExampleClick(ownerId, question) };
     },
 
     /** Pin, unpin, retire, promote, or flag a question off-topic (or clear the flag). */

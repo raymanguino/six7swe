@@ -45,7 +45,8 @@ function setup() {
   const embedder = createStubEmbedder(VECTORS, DIMS);
   let clock = Date.parse('2026-11-01T00:00:00Z');
   const now = () => new Date((clock += 60_000));
-  const evalSet = createEvalSet({ repo, embedder, log: silentLogger, now });
+  // Canned questions only; the examples have their own tests below.
+  const evalSet = createEvalSet({ repo, embedder, log: silentLogger, now, examples: [] });
 
   /** Records `question` as a visitor would ask it, reusing the stub's embedding. */
   async function ask(question: string, sessionId: string, topSimilarity: number | null = 0.5) {

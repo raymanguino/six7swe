@@ -19,7 +19,10 @@
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@six7swe/knowledge-types/chat-examples": [
+        "../packages/knowledge-types/src/chatExamples.ts"
+      ]
     }
   },
   "include": ["src"],
