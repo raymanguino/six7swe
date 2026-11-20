@@ -206,13 +206,20 @@ claude mcp add --transport http six7swe https://<backend-host>/mcp/public
   (default 20 per 10 minutes; an MCP handshake is two or three requests);
   over it, 429 with a JSON-RPC error. And `PUBLIC_MCP_DAILY_SEARCH_CAP`
   `search_background` calls per UTC day across all clients (default 500, since
-  each costs an embedding); over it, the tool answers an error until 00:00 UTC.
-  The daily cap is counted in the process's memory: the backend runs one
-  replica, so it is global, but a restart resets it, and with more replicas it
-  would apply per replica.
-- **Eval set.** Each search is recorded (`record: true`) with a fresh random
-  session id, so the eval set counts an MCP question as asked once, in one
-  session. Chat keeps its per-browser-session counting.
+  each costs an embedding), and `PUBLIC_MCP_CLIENT_DAILY_SEARCH_CAP` per client
+  (default 50), so one client cannot spend everyone's day; over either, the tool
+  answers an error until 00:00 UTC. A search whose retrieval fails is given
+  back. The daily caps are counted in the process's memory: the backend runs
+  one replica, so they are global, but a restart resets them, and with more
+  replicas they would apply per replica.
+- **Eval set.** Only some searches are recorded: `PUBLIC_MCP_DAILY_RECORD_CAP`
+  a day across all clients (default 100) and the first
+  `PUBLIC_MCP_CLIENT_DAILY_RECORD_CAP` per client (default 5). The rest are
+  answered but not recorded, so public searches cannot flood the owner's
+  500-candidate pool. A recorded search uses the client's stable session id (an
+  HMAC of the client key with a per-process random salt), so one client asking
+  the same thing twice counts as one session. Chat keeps its
+  per-browser-session counting.
 - **CORS** is unchanged. MCP clients run server-side and send no `Origin`,
   which CORS does not block; browsers on other origins still get no CORS
   grant.
@@ -412,7 +419,8 @@ imports:
 | `KNOWLEDGE_SERVICE_KEY` | backend, knowledge | Service credential for retrieval, `/version`, `/resume.pdf` and example clicks; required in production |
 | `KNOWLEDGE_OWNER_KEY` | backend, knowledge | Owner credential the backend proxy sends to the service |
 | `PUBLIC_MCP_RATE_LIMIT_MAX`, `PUBLIC_MCP_RATE_LIMIT_WINDOW_MS` | backend | Public MCP requests per client per window (default 20 per 600000 ms) |
-| `PUBLIC_MCP_DAILY_SEARCH_CAP` | backend | Public MCP `search_background` calls per UTC day, all clients (default 500; per process) |
+| `PUBLIC_MCP_DAILY_SEARCH_CAP`, `PUBLIC_MCP_CLIENT_DAILY_SEARCH_CAP` | backend | Public MCP `search_background` calls per UTC day, all clients and per client (default 500 and 50; per process) |
+| `PUBLIC_MCP_DAILY_RECORD_CAP`, `PUBLIC_MCP_CLIENT_DAILY_RECORD_CAP` | backend | Public MCP searches recorded in the eval set per UTC day, all clients and per client (default 100 and 5; per process) |
 | `VITE_API_URL` | frontend | Backend base URL |
 | `VITE_SUPABASE_URL` | frontend | Supabase project URL |
 | `VITE_SUPABASE_ANON_KEY` | frontend | Supabase anon key |

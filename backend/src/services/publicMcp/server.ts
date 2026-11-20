@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { MAX_RETRIEVE_QUERY_CHARS, type RetrievedChunkDto } from '@six7swe/knowledge-types';
@@ -6,7 +6,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { z } from 'zod';
 import type { RetrievalClient } from '../knowledgeRetrieval';
 import type { ResumeDownload } from '../resumeDownload';
-import type { DailyCap } from './dailyCap';
+import type { SearchBudget } from './dailyCap';
 
 /**
  * The public MCP server (#205): anyone's MCP client can search the owner's
@@ -30,6 +30,8 @@ export const PUBLIC_MCP_TOOLS = ['search_background', 'get_resume_pdf'] as const
 export const GENERIC_ERROR = 'Internal error. Try again.';
 export const DAILY_CAP_ERROR =
   'The daily search limit for this server has been reached. Try again after 00:00 UTC.';
+export const CLIENT_DAILY_CAP_ERROR =
+  'You have reached your daily search limit on this server. Try again after 00:00 UTC.';
 export const NO_RESUME_ERROR = 'No PDF resume is available. Use search_background for its content.';
 export const RESUME_TOO_LARGE_ERROR =
   'The resume PDF is too large to return. Use search_background for its content.';
@@ -39,13 +41,26 @@ export interface PublicMcpDeps {
   getRetrievalClient(): Pick<RetrievalClient, 'retrieve'> | null;
   /** The same cached download `/resume` serves. */
   getResume(log: FastifyBaseLogger): Promise<ResumeDownload>;
-  /** The global daily budget of `search_background` calls. */
-  dailySearchCap: DailyCap;
+  /** The daily budgets of `search_background` calls and of recorded ones. */
+  searchBudget: SearchBudget;
+  /** The caller, keyed like the rate limit (`chatClientKey`). */
+  clientKey: string;
   log: FastifyBaseLogger;
-  /** A fresh random eval-set session id per search; tests pin it. */
-  newSessionId?: () => string;
+  /** The eval-set session id of a client; tests pin it. */
+  sessionIdFor?: (clientKey: string) => string;
   maxPdfBytes?: number;
 }
+
+/** Random per process, so a session id cannot be traced back to a client address. */
+const SESSION_SALT = randomBytes(32);
+
+/**
+ * A stable eval-set session id per client: one client asking the same thing
+ * twice counts as one session, so it cannot make its own question look
+ * popular. Matches `SessionIdSchema` (base64url, 32 characters).
+ */
+export const clientSessionId = (clientKey: string): string =>
+  createHmac('sha256', SESSION_SALT).update(clientKey).digest('base64url').slice(0, 32);
 
 const SearchInput = {
   query: z
@@ -101,8 +116,8 @@ const toPublicChunk = (chunk: RetrievedChunkDto) => ({
 
 /** A fresh server for one request; nothing is shared between callers. */
 export function createPublicMcpServer(deps: PublicMcpDeps): McpServer {
-  const { log, dailySearchCap } = deps;
-  const newSessionId = deps.newSessionId ?? randomUUID;
+  const { log, searchBudget, clientKey } = deps;
+  const sessionIdFor = deps.sessionIdFor ?? clientSessionId;
   const maxPdfBytes = deps.maxPdfBytes ?? PUBLIC_MCP_MAX_PDF_BYTES;
   const server = new McpServer({ name: 'six7swe-background', version: '0.1.0' });
 
@@ -119,13 +134,28 @@ export function createPublicMcpServer(deps: PublicMcpDeps): McpServer {
     guarded(log, 'search_background', async ({ query, k }) => {
       const client = deps.getRetrievalClient();
       if (!client) throw new Error('The knowledge service is not configured');
-      if (!dailySearchCap.tryTake()) {
+      const refused = searchBudget.takeSearch(clientKey);
+      if (refused === 'global') {
         log.warn('Public MCP daily search cap reached');
         return failure(DAILY_CAP_ERROR);
       }
-      // Recorded for the eval set as its own session: each MCP question counts once.
-      const result = await client.retrieve(query, k, { sessionId: newSessionId() });
-      return json({ chunks: result.chunks.slice(0, k).map(toPublicChunk) });
+      if (refused === 'client') return failure(CLIENT_DAILY_CAP_ERROR);
+      // Recorded for the eval set only within the record allowance, under the
+      // client's stable session id.
+      const recorded = searchBudget.takeRecord(clientKey);
+      try {
+        const result = await client.retrieve(
+          query,
+          k,
+          recorded ? { sessionId: sessionIdFor(clientKey) } : undefined,
+        );
+        return json({ chunks: result.chunks.slice(0, k).map(toPublicChunk) });
+      } catch (err) {
+        // A failed retrieval costs no embedding we can count on: give it back.
+        searchBudget.refundSearch(clientKey);
+        if (recorded) searchBudget.refundRecord(clientKey);
+        throw err;
+      }
     }),
   );
 

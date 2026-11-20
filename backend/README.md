@@ -244,7 +244,7 @@ Tests cover:
 
 ### AI (public)
 - `POST /chat` - Conversational assistant grounded in the chunks retrieved for each question. `example: true` marks a clicked example question: on an exact example text the click is counted in the eval set instead of the question being recorded
-- `POST /mcp/public` - Public MCP server (stateless streamable HTTP, no auth): `search_background { query, k? }` (k 6 by default, at most 8) and `get_resume_pdf`. Rate limited per client (`PUBLIC_MCP_RATE_LIMIT_MAX` per `PUBLIC_MCP_RATE_LIMIT_WINDOW_MS`, default 20 per 10 minutes) and searches capped per UTC day (`PUBLIC_MCP_DAILY_SEARCH_CAP`, default 500, counted per process). `GET`/`DELETE` answer 405. Add it with `claude mcp add --transport http six7swe https://<backend-host>/mcp/public`
+- `POST /mcp/public` - Public MCP server (stateless streamable HTTP, no auth): `search_background { query, k? }` (k 6 by default, at most 8) and `get_resume_pdf`. Rate limited per client (`PUBLIC_MCP_RATE_LIMIT_MAX` per `PUBLIC_MCP_RATE_LIMIT_WINDOW_MS`, default 20 per 10 minutes) and searches capped per UTC day (`PUBLIC_MCP_DAILY_SEARCH_CAP`, default 500, and `PUBLIC_MCP_CLIENT_DAILY_SEARCH_CAP` per client, default 50; counted per process). Only the first `PUBLIC_MCP_CLIENT_DAILY_RECORD_CAP` searches per client (default 5), up to `PUBLIC_MCP_DAILY_RECORD_CAP` a day (default 100), are recorded in the eval set. `GET`/`DELETE` answer 405. Add it with `claude mcp add --transport http six7swe https://<backend-host>/mcp/public`
 - `POST /fitcheck` - Fit assessment for a role, grounded in the chunks retrieved for the job description (503 when the knowledge service is unreachable)
 - `POST /contact` - Contact form submission to `CONTACT_TO_EMAIL` (delivered via Resend; 503 without it)
 

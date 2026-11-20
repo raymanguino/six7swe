@@ -3,7 +3,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { getPublicMcpConfig, type PublicMcpConfig } from '../config/publicMcp';
 import { getDefaultRetrievalClient } from '../services/knowledgeRetrieval';
-import { createDailyCap } from '../services/publicMcp/dailyCap';
+import { createSearchBudget } from '../services/publicMcp/dailyCap';
 import { createPublicMcpServer, type PublicMcpDeps } from '../services/publicMcp/server';
 import { getResumeDownload } from '../services/resumeDownload';
 import { PUBLIC_ROUTE } from './access';
@@ -26,8 +26,8 @@ const rpcError = (code: number, message: string) =>
 
 export interface PublicMcpRouteOptions {
   config?: PublicMcpConfig;
-  /** Replaces the knowledge clients and the cap; tests use it. */
-  deps?: Partial<Omit<PublicMcpDeps, 'log'>>;
+  /** Replaces the knowledge clients and the budgets; tests use it. */
+  deps?: Partial<Omit<PublicMcpDeps, 'log' | 'clientKey'>>;
 }
 
 export async function registerPublicMcpRoutes(
@@ -35,11 +35,11 @@ export async function registerPublicMcpRoutes(
   options: PublicMcpRouteOptions = {},
 ): Promise<void> {
   const config = options.config ?? getPublicMcpConfig();
-  const deps: Omit<PublicMcpDeps, 'log'> = {
+  const deps: Omit<PublicMcpDeps, 'log' | 'clientKey'> = {
     getRetrievalClient: getDefaultRetrievalClient,
     getResume: getResumeDownload,
-    // Per process: the backend runs one replica, so this is the global cap.
-    dailySearchCap: createDailyCap(config.dailySearchCap),
+    // Per process: the backend runs one replica, so these are the global budgets.
+    searchBudget: createSearchBudget(config),
     ...options.deps,
   };
 
@@ -48,7 +48,7 @@ export async function registerPublicMcpRoutes(
    * ids) is shared between callers.
    */
   async function handle(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-    const server = createPublicMcpServer({ ...deps, log: req.log });
+    const server = createPublicMcpServer({ ...deps, clientKey: chatClientKey(req), log: req.log });
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,

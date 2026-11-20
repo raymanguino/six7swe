@@ -6,8 +6,14 @@ import Fastify, { FastifyInstance } from 'fastify';
 import { DEFAULT_PUBLIC_MCP_CONFIG, getPublicMcpConfig } from '../../config/publicMcp';
 import { PUBLIC_MCP_PATH, registerPublicMcpRoutes } from '../../routes/publicMcp';
 import type { RecordQuestion } from '../../services/knowledgeRetrieval';
-import { createDailyCap } from '../../services/publicMcp/dailyCap';
 import {
+  createDailyCap,
+  createSearchBudget,
+  type SearchBudgetLimits,
+} from '../../services/publicMcp/dailyCap';
+import {
+  CLIENT_DAILY_CAP_ERROR,
+  clientSessionId,
   DAILY_CAP_ERROR,
   GENERIC_ERROR,
   NO_RESUME_ERROR,
@@ -45,7 +51,7 @@ let clients: Client[] = [];
 
 async function start(
   options: {
-    dailySearchCap?: number;
+    limits?: Partial<SearchBudgetLimits>;
     rateLimitMax?: number;
     configured?: boolean;
     cors?: true | string[];
@@ -75,7 +81,13 @@ async function start(
     deps: {
       getRetrievalClient: () => (options.configured === false ? null : { retrieve }),
       getResume,
-      dailySearchCap: createDailyCap(options.dailySearchCap ?? 1000),
+      searchBudget: createSearchBudget({
+        dailySearchCap: 1000,
+        clientDailySearchCap: 1000,
+        dailyRecordCap: 1000,
+        clientDailyRecordCap: 1000,
+        ...options.limits,
+      }),
     },
   });
   const baseUrl = await app.listen({ port: 0, host: '127.0.0.1' });
@@ -119,7 +131,7 @@ describe('public MCP endpoint', () => {
     expect(tools.every((t) => t.annotations?.readOnlyHint === true)).toBe(true);
   });
 
-  it('searches with k 6 by default, recording each call as its own session', async () => {
+  it('searches with k 6 by default, recording a client under one stable session', async () => {
     const h = await start();
     const client = await connect(h);
     const result = await client.callTool({
@@ -144,7 +156,42 @@ describe('public MCP endpoint', () => {
     expect(ids.every((id) => typeof id === 'string' && /^[A-Za-z0-9_-]{8,128}$/.test(id))).toBe(
       true,
     );
-    expect(new Set(ids).size).toBe(2);
+    // Asking twice from one client is one session, so it cannot fake popularity.
+    expect(new Set(ids).size).toBe(1);
+  });
+
+  it('records only within the per-client record allowance', async () => {
+    const h = await start({ limits: { clientDailyRecordCap: 1 } });
+    const client = await connect(h);
+    for (const query of ['rust', 'go']) {
+      const result = await client.callTool({ name: 'search_background', arguments: { query } });
+      expect(isError(result)).toBe(false);
+    }
+    const [first, second] = h.retrieve.mock.calls;
+    expect(first?.[2]?.sessionId).toEqual(expect.any(String));
+    // Answered, but not recorded in the eval set.
+    expect(second?.[2]).toBeUndefined();
+  });
+
+  it('stops one client at its own daily cap without spending the global one', async () => {
+    const h = await start({ limits: { clientDailySearchCap: 1, dailySearchCap: 5 } });
+    const client = await connect(h);
+    const search = () =>
+      client.callTool({ name: 'search_background', arguments: { query: 'rust' } });
+    expect(isError(await search())).toBe(false);
+    const capped = await search();
+    expect(text(capped)).toBe(CLIENT_DAILY_CAP_ERROR);
+    expect(h.retrieve).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives back the budget when the retrieval fails', async () => {
+    const h = await start({ limits: { dailySearchCap: 1 } });
+    h.retrieve.mockRejectedValueOnce(new Error('down'));
+    const client = await connect(h);
+    const search = () =>
+      client.callTool({ name: 'search_background', arguments: { query: 'rust' } });
+    expect(text(await search())).toBe(GENERIC_ERROR);
+    expect(isError(await search())).toBe(false);
   });
 
   it('refuses a k above 8', async () => {
@@ -159,7 +206,7 @@ describe('public MCP endpoint', () => {
   });
 
   it('stops searching at the daily cap until the next UTC day', async () => {
-    const h = await start({ dailySearchCap: 2 });
+    const h = await start({ limits: { dailySearchCap: 2 } });
     const client = await connect(h);
     const search = () =>
       client.callTool({ name: 'search_background', arguments: { query: 'rust' } });
@@ -308,8 +355,24 @@ describe('getPublicMcpConfig', () => {
         PUBLIC_MCP_RATE_LIMIT_MAX: '5',
         PUBLIC_MCP_RATE_LIMIT_WINDOW_MS: '60000',
         PUBLIC_MCP_DAILY_SEARCH_CAP: '0',
+        PUBLIC_MCP_CLIENT_DAILY_RECORD_CAP: '2',
       }),
-    ).toEqual({ rateLimitMax: 5, rateLimitWindowMs: 60_000, dailySearchCap: 500 });
+    ).toEqual({
+      ...DEFAULT_PUBLIC_MCP_CONFIG,
+      rateLimitMax: 5,
+      rateLimitWindowMs: 60_000,
+      clientDailyRecordCap: 2,
+    });
+  });
+});
+
+describe('clientSessionId', () => {
+  it('is stable per client, distinct across clients, and a valid session id', () => {
+    const a = clientSessionId('1.1.1.1');
+    expect(clientSessionId('1.1.1.1')).toBe(a);
+    expect(clientSessionId('2.2.2.2')).not.toBe(a);
+    expect(a).toMatch(/^[A-Za-z0-9_-]{8,128}$/);
+    expect(a).not.toContain('1.1.1.1');
   });
 });
 
@@ -324,5 +387,42 @@ describe('createDailyCap', () => {
     now = Date.parse('2026-11-21T00:00:01Z');
     expect(cap.remaining()).toBe(2);
     expect(cap.tryTake()).toBe(true);
+  });
+
+  it('keeps a budget per key, and refunds', () => {
+    const cap = createDailyCap(1);
+    expect(cap.tryTake('a')).toBe(true);
+    expect(cap.tryTake('a')).toBe(false);
+    expect(cap.tryTake('b')).toBe(true);
+    cap.refund('a');
+    expect(cap.tryTake('a')).toBe(true);
+  });
+});
+
+describe('createSearchBudget', () => {
+  const limits = {
+    dailySearchCap: 2,
+    clientDailySearchCap: 1,
+    dailyRecordCap: 1,
+    clientDailyRecordCap: 1,
+  };
+
+  it('refuses per client first, then globally, spending nothing on a refusal', () => {
+    const budget = createSearchBudget(limits);
+    expect(budget.takeSearch('a')).toBeNull();
+    expect(budget.takeSearch('a')).toBe('client');
+    expect(budget.takeSearch('b')).toBeNull();
+    expect(budget.takeSearch('c')).toBe('global');
+    // 'c' was refused globally, so its own allowance is untouched.
+    budget.refundSearch('b');
+    expect(budget.takeSearch('c')).toBeNull();
+  });
+
+  it('records within both allowances', () => {
+    const budget = createSearchBudget(limits);
+    expect(budget.takeRecord('a')).toBe(true);
+    expect(budget.takeRecord('b')).toBe(false);
+    budget.refundRecord('a');
+    expect(budget.takeRecord('b')).toBe(true);
   });
 });
