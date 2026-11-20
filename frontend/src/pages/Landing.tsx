@@ -289,7 +289,7 @@ export default function Landing({ onSectionChange }: LandingProps) {
           </p>
           <div className="max-w-3xl mx-auto">
             <p className="text-lg text-gray-700 dark:text-gray-300 leading-relaxed">
-              I design and build the API and infrastructure layer for AI-powered systems — agentic workflows, RAG pipelines, multi-channel agent gateways, and the production tooling that makes LLM features reliable at scale. Ten years of backend and distributed systems experience, now applied to the hardest problems in production AI.
+              I design and build the API and infrastructure layer for AI-powered systems — RAG pipelines, LLM evals, MCP tooling, and the guardrails that make LLM features reliable in production. Fifteen years of backend and distributed systems experience, now applied to production AI, including the knowledge service behind this site's chat and the agent that reviews every change to it.
             </p>
           </div>
         </div>
@@ -310,7 +310,7 @@ export default function Landing({ onSectionChange }: LandingProps) {
             I'm a backend engineer specializing in the API and infrastructure layer for AI systems. My work sits at the intersection of distributed systems engineering and applied AI — designing the service architecture, data pipelines, and tool interfaces that make LLM-powered products production-ready.
           </p>
           <p>
-            I've spent ten years building at companies like Capital One, Nacelle, and Tanium — distributed GraphQL systems, high-throughput ingestion pipelines, cloud migrations, and the monitoring infrastructure that keeps them running. For the past year I've been focused on AI: shipping agentic workflows with MCP and the MiniMax Agents SDK, running a self-hosted multi-channel AI agent gateway, and building RAG systems with hybrid vector search.
+            I've spent fifteen years building software, most recently at Capital One, Nacelle, and Tanium — distributed GraphQL systems, high-throughput ingestion pipelines, cloud migrations, and the monitoring infrastructure that keeps them running. Since 2025 I've focused on AI through six7swe, my own production platform: a RAG knowledge service on pgvector with an evolving eval set, an LLM agent that reviews every pull request with prompt-injection defences enforced in code, and a Claude Code workflow of subagents that takes a GitHub epic to reviewed pull requests.
           </p>
           <p>
             I'm looking for a senior AI API engineering role where I can own the full stack from prompt to API response — building AI features that are reliable, observable, and actually usable by the teams and customers they serve.

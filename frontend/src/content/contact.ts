@@ -1,7 +1,5 @@
 /**
  * Contact details for the landing page. A null field hides its row.
- *
- * PLACEHOLDER: fill in the real values by hand; nothing is shown until you do.
  */
 export type Contact = {
   email: string | null;
@@ -12,9 +10,9 @@ export type Contact = {
 };
 
 export const CONTACT: Contact = {
-  email: null,
+  email: 'ray.manguino@gmail.com',
   phone: null,
-  location: null,
-  githubUrl: null,
-  linkedinUrl: null,
+  location: 'Greater Toronto Area, ON, Canada',
+  githubUrl: 'https://github.com/raymanguino',
+  linkedinUrl: 'https://linkedin.com/in/raymanguino',
 };
