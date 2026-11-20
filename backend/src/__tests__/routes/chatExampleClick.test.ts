@@ -67,6 +67,15 @@ describe('POST /chat with a clicked example', () => {
     expect(mockedChat.mock.calls.map((c) => c[0].sessionId)).toEqual([SESSION, SESSION, SESSION]);
   });
 
+  it('does not count the click when the chat turn fails', async () => {
+    mockedChat.mockRejectedValueOnce(new Error('model down'));
+    const res = await post({ message: EXAMPLE, sessionId: SESSION, example: true });
+    expect(res.statusCode).toBe(500);
+    expect(recordClick).not.toHaveBeenCalled();
+    // Still not recorded as a typed question.
+    expect(mockedChat.mock.calls[0]?.[0].sessionId).toBeUndefined();
+  });
+
   it('answers even when counting the click fails', async () => {
     recordClick?.mockRejectedValueOnce(new Error('down'));
     const res = await post({ message: EXAMPLE, sessionId: SESSION, example: true });

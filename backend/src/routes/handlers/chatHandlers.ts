@@ -1,4 +1,4 @@
-import { SessionIdSchema } from '@six7swe/knowledge-types';
+import { isChatExampleQuestion, SessionIdSchema } from '@six7swe/knowledge-types';
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { INPUT_LIMITS } from '../../constants';
@@ -68,11 +68,13 @@ export async function chatHandler(request: FastifyRequest, reply: FastifyReply) 
       return reply.code(400).send({ error: firstError(parsed.error) });
     }
     const { message, history, example } = parsed.data;
-    // A clicked example is counted apart and never recorded as a typed question.
-    const clicked = example === true && countExampleClick(message, request.log);
+    // A clicked example is never recorded as a typed question. Its click is
+    // counted only once the turn has been answered, so a failed turn counts nothing.
+    const clicked = example === true && isChatExampleQuestion(message);
     const sessionId = clicked ? undefined : parsed.data.sessionId;
 
     const response = await chatWithContext({ message, history, sessionId, log: request.log });
+    if (clicked) countExampleClick(message, request.log);
 
     return reply.code(200).send({ response });
   } catch (error) {

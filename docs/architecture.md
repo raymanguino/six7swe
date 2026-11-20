@@ -223,9 +223,9 @@ most 6; the frontend compiles that one dependency-free module from source
 through a Vite alias). The knowledge service seeds each as a pinned active eval
 question. A clicked example is sent to `/chat` with `example: true`; when the
 message is exactly an example, the backend leaves out the session id (so it is
-not recorded as a typed question) and, in the background, has the knowledge
-service bump that example's `example_clicks` (`POST /eval/example-clicks`,
-service key). The click rides on the chat request it starts, so it is public,
+not recorded as a typed question) and, once the turn has been answered, has
+the knowledge service bump that example's `example_clicks` in the background
+(`POST /eval/example-clicks`, service key); a failed turn counts nothing. The click rides on the chat request it starts, so it is public,
 rate-limited by `/chat`'s limit, accepts only exact example texts, and cannot
 be inflated without spending a chat turn.
 
