@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
-import type { DocumentKind } from '../contract.js';
+import type { DocumentKind, RiskFinding } from '../contract.js';
 import type { DocumentRecord } from '../db/api/repository.js';
 import type { KnowledgeDeps } from './deps.js';
 import type { IngestionQueue } from './ingestion/pipeline.js';
 import { detectMimeType, extensionOf } from './ingestion/parse.js';
+import { hasScanFailure } from './risk/scan.js';
 
 export interface DocumentServiceDeps extends Pick<KnowledgeDeps, 'repo' | 'files'> {
   queue: IngestionQueue;
@@ -95,7 +96,11 @@ export async function uploadDocument(
  * could not be recorded, or by a boot with RESUME_INGESTION_ON_BOOT=false).
  * The bytes are stored again first, in case the stored copy was what failed.
  *
- * Only a `failed` document is reset to `pending` here; a stranded
+ * A `needs_review` document is settled too (the same bytes would be flagged
+ * again), unless its scan failed (#212): a `scan_failed` finding tells the
+ * owner to upload the file again to rescan, so that re-upload retries it.
+ *
+ * A `failed` or scan-failed document is reset to `pending` here; a stranded
  * pending/processing one is just enqueued, and the worker's markProcessing
  * moves it on. The queue is checked again after the (slow) store, so a
  * concurrent re-upload that queued it meanwhile is not doubled.
@@ -107,17 +112,41 @@ async function resumeExisting(
 ): Promise<UploadResult> {
   const unchanged = { document: existing, deduplicated: true };
   if (existing.status === 'ready' || deps.queue.has(existing.id)) return unchanged;
+  if (existing.status === 'needs_review' && !(await scanFailed(deps, existing))) {
+    return unchanged;
+  }
 
   await deps.files.put(existing.storagePath, bytes, existing.mimeType);
   if (deps.queue.has(existing.id)) return unchanged;
 
   let retried = existing;
-  if (existing.status === 'failed') {
-    await deps.repo.resetToPending(existing.id);
+  if (existing.status === 'failed' || existing.status === 'needs_review') {
+    // Re-checked under the row lock: an approval, delete or re-ingest since
+    // the read above wins, and the upload is then a plain duplicate.
+    const reset = await deps.repo.resetToPending(existing.id, [existing.status]);
+    if (!reset) {
+      const current = await deps.repo.getDocument(existing.ownerId, existing.id);
+      return { document: current ?? existing, deduplicated: true };
+    }
     retried = { ...existing, status: 'pending', error: null };
   }
   deps.queue.enqueue(retried);
   return { document: retried, deduplicated: true };
+}
+
+/**
+ * Whether the document's last scan could not finish, so a rescan may answer
+ * differently. Stored findings that cannot be read count as no: the upload is
+ * then a plain duplicate, not a 500.
+ */
+async function scanFailed(deps: DocumentServiceDeps, doc: DocumentRecord): Promise<boolean> {
+  try {
+    const found = await deps.repo.getRiskFindings(doc.ownerId, doc.id);
+    return found !== null && hasScanFailure(found.findings);
+  } catch (error) {
+    deps.log.warn({ documentId: doc.id, err: error }, 'Could not read the stored risk findings');
+    return false;
+  }
 }
 
 /** The owner's documents, newest first. */
@@ -159,6 +188,54 @@ export async function setPrimaryResume(
   id: string,
 ): Promise<DocumentRecord | null> {
   return deps.repo.setPrimaryResume(ownerId, id);
+}
+
+/**
+ * The findings of a document's last risk scan (#212). Null when it does not
+ * exist or belongs to someone else.
+ */
+export async function getDocumentFindings(
+  deps: Pick<KnowledgeDeps, 'repo'>,
+  ownerId: string,
+  id: string,
+): Promise<{ document: DocumentRecord; findings: RiskFinding[] } | null> {
+  return deps.repo.getRiskFindings(ownerId, id);
+}
+
+export interface ApproveDeps extends Pick<KnowledgeDeps, 'repo'> {
+  log: FastifyBaseLogger;
+  /** Called when the approval made the document searchable. Must not throw. */
+  onCorpusChanged?: (ownerId: string) => void;
+  /** Called when an approved resume became searchable (profile drafting hooks in here). */
+  onResumeReady?: (doc: DocumentRecord) => void | Promise<void>;
+}
+
+/**
+ * The owner approves a document's findings as they are (#212). A flagged
+ * document becomes ready and searchable; a ready one flagged by the backfill
+ * keeps serving and records the approval. Null when it does not exist;
+ * throws a 409 ConflictError when there is nothing to approve.
+ */
+export async function approveDocument(
+  deps: ApproveDeps,
+  ownerId: string,
+  id: string,
+): Promise<DocumentRecord | null> {
+  const result = await deps.repo.approveDocument(ownerId, id);
+  if (!result) return null;
+  const { document, activated } = result;
+  // Decided under the repository's lock, so a second approval never re-runs these.
+  if (activated) {
+    deps.onCorpusChanged?.(ownerId);
+    if (document.kind === 'resume' && deps.onResumeReady) {
+      try {
+        await deps.onResumeReady(document);
+      } catch (error) {
+        deps.log.warn({ documentId: id, err: error }, 'Post-approval resume hook failed');
+      }
+    }
+  }
+  return document;
 }
 
 /** Deletes the document, its chunks and its file. Returns false when it did not exist. */

@@ -1,4 +1,4 @@
-import type { DocumentKind, DocumentStatus } from '../../contract.js';
+import type { DocumentKind, DocumentStatus, RiskFinding } from '../../contract.js';
 
 /**
  * Persistence boundary for the knowledge service.
@@ -22,6 +22,12 @@ export interface DocumentRecord {
   status: DocumentStatus;
   error: string | null;
   chunkCount: number;
+  /** How many findings the last risk scan stored (#212); 0 when none or not scanned. */
+  findingCount: number;
+  /** When the current extracted text was risk-scanned; null until then. */
+  scannedAt: Date | null;
+  /** When the owner approved the current findings as they are; null otherwise. */
+  approvedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -59,6 +65,20 @@ export interface RetrievedChunk {
   ordinal: number;
   /** Cosine similarity in [-1, 1]; higher is closer. */
   similarity: number;
+}
+
+/**
+ * The rule `resetToPending` applies to the locked row: its status is one of
+ * `from`, and a `needs_review` document is retried only while its last scan
+ * failed (a `scan_failed` finding), since only then can a rescan change it.
+ */
+export function canResetToPending(
+  status: DocumentStatus,
+  findings: readonly RiskFinding[],
+  from: readonly DocumentStatus[],
+): boolean {
+  if (!from.includes(status)) return false;
+  return status !== 'needs_review' || findings.some((f) => f.category === 'scan_failed');
 }
 
 /** A write lost to a uniqueness rule other than the one the caller handles. Maps to 409. */
@@ -122,17 +142,68 @@ export interface KnowledgeRepository {
    */
   setPrimaryResume(ownerId: string, id: string): Promise<DocumentRecord | null>;
 
-  /** Puts a failed or stranded document back to `pending` for another attempt. */
-  resetToPending(id: string): Promise<void>;
+  /**
+   * Puts a document back to `pending` for another attempt, only if its
+   * current status (read under the row lock) is one of `from`; a
+   * `needs_review` one must also still carry a `scan_failed` finding (see
+   * `canResetToPending`). Returns false when nothing changed: an approval,
+   * delete or re-ingest got there first.
+   */
+  resetToPending(id: string, from: readonly DocumentStatus[]): Promise<boolean>;
 
   markProcessing(id: string): Promise<void>;
 
   /**
-   * Replaces the document's chunks, marks it ready and bumps the owner's
-   * corpus version, atomically. For a resume, also re-applies the
-   * primary-resume rule. Returns the new version.
+   * Replaces the document's chunks and stores the risk scan's findings
+   * (#212), atomically. With no findings the document becomes `ready` and the
+   * owner's corpus version is bumped; with any, it becomes `needs_review`,
+   * which retrieval does not serve, and the version is left alone. Either
+   * way the approval of an earlier scan is cleared. For a resume, also
+   * re-applies the primary-resume rule (so a flagged resume is never
+   * primary). Returns the corpus version after the change.
    */
-  completeIngestion(id: string, extractedText: string, chunks: NewChunk[]): Promise<number>;
+  completeIngestion(
+    id: string,
+    extractedText: string,
+    chunks: NewChunk[],
+    findings: RiskFinding[],
+  ): Promise<number>;
+
+  /**
+   * The findings of the document's last risk scan, with the document. Null
+   * when it does not exist or belongs to someone else; `findings` is empty
+   * when the text has not been scanned or nothing was found.
+   */
+  getRiskFindings(
+    ownerId: string,
+    id: string,
+  ): Promise<{ document: DocumentRecord; findings: RiskFinding[] } | null>;
+
+  /**
+   * The owner approves a document's findings as they are, recorded in
+   * `approvedAt`. A `needs_review` document becomes `ready` (bumping the
+   * corpus version, and re-applying the primary-resume rule for a resume); a
+   * `ready` document with unapproved findings (flagged by the backfill) only
+   * records the approval. Returns the updated document and whether this
+   * approval made it searchable (`activated`, decided under the same lock),
+   * or null when it does not exist or belongs to someone else. Throws a
+   * ConflictError for anything else (nothing to approve, or not ingested).
+   */
+  approveDocument(
+    ownerId: string,
+    id: string,
+  ): Promise<{ document: DocumentRecord; activated: boolean } | null>;
+
+  /** Ready documents, of every owner, whose text has never been risk-scanned (the backfill). */
+  listUnscannedReady(): Promise<DocumentRecord[]>;
+
+  /**
+   * Stores a backfill scan's findings on a ready document, leaving its status
+   * alone: it keeps serving until the owner reviews them. Writes only while
+   * the document is still ready and unscanned, so a re-ingest that finished
+   * meanwhile is not overwritten. Returns false when nothing was written.
+   */
+  recordBackfillScan(id: string, findings: RiskFinding[]): Promise<boolean>;
 
   /** Marks the document failed. Its previous chunks are kept but no longer served. */
   failIngestion(id: string, error: string): Promise<void>;

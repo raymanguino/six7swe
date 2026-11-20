@@ -20,6 +20,37 @@ describe('loadEnv', () => {
     });
   });
 
+  it('picks the risk scanner (#212): MiniMax when its key is set, never off in production', () => {
+    const env = { ...base, EMBEDDER: 'hashing', FILE_STORE: 'local' };
+    expect(loadEnv(env).riskScanner).toEqual({ kind: 'none' });
+    expect(loadEnv({ ...env, MINIMAX_API_KEY: 'mm' }).riskScanner).toMatchObject({
+      kind: 'minimax',
+      apiKey: 'mm',
+      model: 'MiniMax-M3',
+    });
+    expect(
+      loadEnv({ ...env, MINIMAX_API_KEY: 'mm', RISK_SCAN_MODEL: 'MiniMax-Flash' }).riskScanner,
+    ).toMatchObject({ model: 'MiniMax-Flash' });
+    expect(loadEnv({ ...env, RISK_SCANNER: 'stub' }).riskScanner).toEqual({ kind: 'stub' });
+    expect(() => loadEnv({ ...env, RISK_SCANNER: 'minimax' })).toThrow(
+      /MINIMAX_API_KEY is required when RISK_SCANNER=minimax/,
+    );
+
+    const production = {
+      ...base,
+      NODE_ENV: 'production',
+      OPENAI_API_KEY: 'sk',
+      FILE_STORE: 'local',
+    };
+    expect(() => loadEnv(production)).toThrow(/RISK_SCANNER=none is for development/);
+    expect(() => loadEnv({ ...production, RISK_SCANNER: 'stub' })).toThrow(
+      /RISK_SCANNER=stub is for development/,
+    );
+    expect(loadEnv({ ...production, MINIMAX_API_KEY: 'mm' }).riskScanner).toMatchObject({
+      kind: 'minimax',
+    });
+  });
+
   it('lists every problem at once', () => {
     expect(() => loadEnv({})).toThrow(
       /DATABASE_URL[\s\S]*KNOWLEDGE_SERVICE_KEY[\s\S]*KNOWLEDGE_OWNER_KEY[\s\S]*OWNER_AUTH_ID/,

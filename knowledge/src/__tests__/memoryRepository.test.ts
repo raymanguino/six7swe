@@ -15,6 +15,11 @@ const evalRepo = createMemoryEvalRepository();
 describeRepositoryContract('memory', () => ({
   repo,
   newOwner: () => `owner-${randomUUID()}`,
+  async forgetScan(id) {
+    const doc = repo.documents.get(id);
+    if (doc) repo.documents.set(id, { ...doc, scannedAt: null, findingCount: 0 });
+    repo.findings.delete(id);
+  },
 }));
 
 describeProfileRepositoryContract('memory', () => ({

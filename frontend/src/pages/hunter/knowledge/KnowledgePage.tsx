@@ -4,6 +4,8 @@ import type { HunterOutletContext } from '../HunterLayout';
 import DocumentTable from './DocumentTable';
 import EvalSetPanel from './EvalSetPanel';
 import ProfileReview from './ProfileReview';
+import RiskReview from './RiskReview';
+import { useBusyRows, useReplacePicker } from './rowActions';
 import SearchPlayground from './SearchPlayground';
 import TextPreview from './TextPreview';
 import UploadDropzone from './UploadDropzone';
@@ -12,7 +14,7 @@ import { useKnowledgeDocuments } from './useKnowledgeDocuments';
 import { useKnowledgeProfile } from './useKnowledgeProfile';
 
 /**
- * The owner's knowledge base: upload, the document table with live status,
+ * The owner's knowledge base: upload, the risk scan's review (#212), the document table with live status,
  * the extracted-text preview, the landing profile's review and publish, the
  * "ask as a visitor" playground, and the chat eval set (#85).
  *
@@ -37,6 +39,9 @@ export default function KnowledgePage() {
     .join(',');
   const evalSet = useEvalSet(knowledgeOwner.isOwner === true, readyKey);
   const [previewId, setPreviewId] = useState<string | null>(null);
+  // Shared by the risk review and the table, so a row busy in one is busy in both.
+  const rows = useBusyRows();
+  const replacePicker = useReplacePicker(knowledge.replace, rows.withBusy);
 
   if (knowledgeOwner.failed) {
     return (
@@ -59,9 +64,10 @@ export default function KnowledgePage() {
       <section>
         <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Knowledge</h2>
         <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
-          The documents the portfolio chat and the job matcher answer from. When a resume finishes
-          processing, the newest ready resume becomes primary. &ldquo;Make primary&rdquo; picks
-          another one until the next resume finishes processing.
+          The documents the portfolio chat and the job matcher answer from. Every upload is scanned
+          for anything risky to make public; a flagged document waits for your review before it is
+          searchable. When a resume finishes processing, the newest ready resume becomes primary.
+          &ldquo;Make primary&rdquo; picks another one until the next resume finishes processing.
         </p>
       </section>
 
@@ -86,6 +92,16 @@ export default function KnowledgePage() {
 
       <UploadDropzone onUploadBatch={knowledge.uploadBatch} />
 
+      {replacePicker.input}
+
+      <RiskReview
+        documents={knowledge.documents}
+        onApprove={knowledge.approve}
+        onPickReplacement={replacePicker.pick}
+        busyIds={rows.busyIds}
+        withBusy={rows.withBusy}
+      />
+
       <section className="space-y-4">
         <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Documents</h3>
         <DocumentTable
@@ -93,7 +109,9 @@ export default function KnowledgePage() {
           loading={knowledge.loading}
           selectedId={previewId}
           onPreview={(doc) => setPreviewId(doc.id)}
-          onReplace={knowledge.replace}
+          onPickReplacement={replacePicker.pick}
+          busyIds={rows.busyIds}
+          withBusy={rows.withBusy}
           onDelete={async (doc) => {
             await knowledge.remove(doc);
             if (doc.id === previewId) setPreviewId(null);

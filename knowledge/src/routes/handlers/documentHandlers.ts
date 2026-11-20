@@ -1,14 +1,23 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { IdParamsSchema, UploadQuerySchema, type DocumentTextResponse } from '../../contract.js';
+import {
+  IdParamsSchema,
+  UploadQuerySchema,
+  type DocumentFindingsResponse,
+  type DocumentResponse,
+  type DocumentTextResponse,
+} from '../../contract.js';
 import { requireOwner } from '../../plugins/serviceAuth.js';
 import {
+  approveDocument,
   deleteDocument,
   getDocument,
+  getDocumentFindings,
   getDocumentText,
   listDocuments,
   setPrimaryResume,
   uploadDocument,
 } from '../../services/documents.js';
+import type { DocumentRecord } from '../../db/api/repository.js';
 import type { KnowledgeContext } from '../context.js';
 import { toDocumentDto } from '../mappers.js';
 
@@ -19,6 +28,8 @@ export function documentHandlers(ctx: KnowledgeContext) {
     queue: ctx.queue,
     log: req.log,
     onCorpusChanged: (ownerId: string) => ctx.evalRunner.corpusChanged(ownerId),
+    // An approved resume that became searchable may now be primary (#212).
+    onResumeReady: (doc: DocumentRecord) => ctx.drafting.resumeIngested(doc),
   });
 
   return {
@@ -70,6 +81,29 @@ export function documentHandlers(ctx: KnowledgeContext) {
       const found = await getDocumentText(ctx, ownerId, id);
       if (!found) return reply.code(404).send({ error: 'Document not found' });
       const body: DocumentTextResponse = { documentId: id, text: found.text };
+      return body;
+    },
+
+    /** The findings of the document's last risk scan (#212), for the owner's review. */
+    async findings(req: FastifyRequest, reply: FastifyReply) {
+      const ownerId = requireOwner(req);
+      const { id } = IdParamsSchema.parse(req.params);
+      const found = await getDocumentFindings(ctx, ownerId, id);
+      if (!found) return reply.code(404).send({ error: 'Document not found' });
+      const body: DocumentFindingsResponse = {
+        document: toDocumentDto(found.document),
+        findings: found.findings,
+      };
+      return body;
+    },
+
+    /** Approves the findings as they are (#212); 409 when there is nothing to approve. */
+    async approve(req: FastifyRequest, reply: FastifyReply) {
+      const ownerId = requireOwner(req);
+      const { id } = IdParamsSchema.parse(req.params);
+      const document = await approveDocument(deps(req), ownerId, id);
+      if (!document) return reply.code(404).send({ error: 'Document not found' });
+      const body: DocumentResponse = { document: toDocumentDto(document) };
       return body;
     },
 

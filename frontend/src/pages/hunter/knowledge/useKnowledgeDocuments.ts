@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { apiRequest } from '../../../utils/api';
+import { ApiError, apiRequest } from '../../../utils/api';
 import { errorMessage } from '../../../utils/errorMessage';
 import {
   parseDocument,
@@ -32,12 +32,19 @@ export interface KnowledgeDocuments {
   /**
    * Uploads `file` as the new version of `previous`, waits until the new
    * document is ready, then deletes `previous`. If the new one fails, the
-   * previous one is kept. Identical bytes resolve to the same document,
-   * which is then kept as it is.
+   * previous one is kept. If the risk scan holds the new one for review, a
+   * searchable previous one is kept until the new one is approved. Identical
+   * bytes resolve to the same document, which is then kept as it is.
    */
   replace: (previous: KnowledgeDocument, file: File) => Promise<void>;
   remove: (doc: KnowledgeDocument) => Promise<void>;
   setPrimary: (doc: KnowledgeDocument) => Promise<void>;
+  /**
+   * Approves the risk scan's findings as they are, making a held document
+   * searchable (#212). Approving a held replacement deletes the version it
+   * replaces.
+   */
+  approve: (doc: KnowledgeDocument) => Promise<void>;
 }
 
 async function uploadFile(file: File, kind: DocumentKind) {
@@ -51,7 +58,7 @@ async function uploadFile(file: File, kind: DocumentKind) {
 /**
  * The owner's documents through the backend's `/knowledge/*` proxy, with
  * live status: while any document is pending or processing, the list is
- * re-read until every one has settled (ready or failed), for at most
+ * re-read until every one has settled (ready, needs_review or failed), for at most
  * `POLL_LIMIT_MS`.
  */
 export function useKnowledgeDocuments(enabled: boolean): KnowledgeDocuments {
@@ -64,6 +71,13 @@ export function useKnowledgeDocuments(enabled: boolean): KnowledgeDocuments {
   const mounted = useRef(true);
   /** Only the newest read's answer is applied; an older one arriving late is dropped. */
   const loadSeq = useRef(0);
+  /**
+   * Replacements the risk scan held for review (#212), by the new document's
+   * id: the searchable version each replaces, deleted once the new one is
+   * approved. Kept for this page visit only; the notice tells the owner to
+   * delete the old version by hand if they approve it later, elsewhere.
+   */
+  const pendingReplacements = useRef(new Map<string, KnowledgeDocument>());
 
   useEffect(() => {
     mounted.current = true;
@@ -151,6 +165,44 @@ export function useKnowledgeDocuments(enabled: boolean): KnowledgeDocuments {
     return null;
   }, []);
 
+  /**
+   * Deletes a version its replacement (`by`) has made redundant, after
+   * checking it is still the same document: gone already, or not the file it
+   * was (another upload or tab changed it), is left alone. Every pending link
+   * to it is dropped either way.
+   */
+  const deleteReplaced = useCallback(
+    async (previous: KnowledgeDocument, by: string) => {
+      for (const [newId, old] of pendingReplacements.current) {
+        if (old.id === previous.id) pendingReplacements.current.delete(newId);
+      }
+      let current: KnowledgeDocument;
+      try {
+        current = parseDocument(await apiRequest(`/knowledge/documents/${previous.id}`));
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return;
+        report(
+          `Replacing ${previous.filename}: ${by} is searchable, but ${previous.filename} could not ` +
+            `be checked (${errorMessage(err, 'request failed')}). Delete it by hand if it is no longer needed.`,
+        );
+        return;
+      }
+      // The client has no content hash; name and upload time identify the file.
+      if (current.filename !== previous.filename || current.createdAt !== previous.createdAt) {
+        return;
+      }
+      try {
+        await apiRequest(`/knowledge/documents/${previous.id}`, { method: 'DELETE' });
+      } catch (err) {
+        report(
+          `Replacing ${previous.filename}: ${by} is searchable, but ${previous.filename} could ` +
+            `not be deleted (${errorMessage(err, 'request failed')}). It remains; delete it by hand.`,
+        );
+      }
+    },
+    [report],
+  );
+
   const replace = useCallback(
     async (previous: KnowledgeDocument, file: File) => {
       const name = previous.filename;
@@ -206,13 +258,41 @@ export function useKnowledgeDocuments(enabled: boolean): KnowledgeDocuments {
           return;
         }
 
+        // `previous` may itself be a held replacement of an older, searchable
+        // version; that link moves to the new document.
+        const older = pendingReplacements.current.get(previous.id);
+        pendingReplacements.current.delete(previous.id);
+
+        if (settled.status === 'needs_review') {
+          // Held for review: the new version is not searchable yet, so the
+          // searchable version it replaces is kept until the owner approves
+          // the new one (`approve` then deletes it). Without this, replacing
+          // the primary resume, which nearly always has contact details,
+          // would leave no primary until the approval.
+          const searchable = older ?? (previous.status === 'ready' ? previous : undefined);
+          if (searchable) {
+            pendingReplacements.current.set(settled.id, searchable);
+            const kept = searchable.filename;
+            report(
+              `Replacing ${name}: the risk scan flagged ${settled.filename}, so ${kept} is kept and ` +
+                `still searchable. Review the new version under "Needs review"; approving it on ` +
+                `this page replaces ${kept} (after a reload, delete ${kept} by hand once it is approved).`,
+            );
+          }
+          // A held `previous` is not searchable, so nothing is lost by deleting it.
+          if (searchable === previous) return;
+        } else if (older) {
+          // Ready: the new version replaces the whole chain.
+          await deleteReplaced(older, settled.filename);
+        }
+
         // Issued even if the page has been left: only the UI updates below
         // (report, the final load) depend on it still being mounted.
         try {
           await apiRequest(`/knowledge/documents/${previous.id}`, { method: 'DELETE' });
         } catch (err) {
           report(
-            `Replacing ${name}: the new version ${settled.filename} is stored and ready, but ` +
+            `Replacing ${name}: the new version ${settled.filename} is stored, but ` +
               `${name} could not be deleted (${errorMessage(err, 'request failed')}). It remains; delete it by hand.`,
           );
         }
@@ -220,7 +300,7 @@ export function useKnowledgeDocuments(enabled: boolean): KnowledgeDocuments {
         if (mounted.current) await load();
       }
     },
-    [load, report, waitUntilSettled],
+    [load, report, waitUntilSettled, deleteReplaced],
   );
 
   const remove = useCallback(
@@ -249,6 +329,31 @@ export function useKnowledgeDocuments(enabled: boolean): KnowledgeDocuments {
     [load, report],
   );
 
+  const approve = useCallback(
+    async (doc: KnowledgeDocument) => {
+      try {
+        let approved: KnowledgeDocument;
+        try {
+          approved = parseDocument(
+            await apiRequest(`/knowledge/documents/${doc.id}/approve`, { method: 'POST' }),
+          );
+        } catch (err) {
+          report(`Approving ${doc.filename}: ${errorMessage(err, 'request failed')}`);
+          return;
+        }
+        // The approved document was a replacement held for review. Only once
+        // it is searchable does the version it replaces go.
+        const previous = pendingReplacements.current.get(doc.id);
+        if (!previous || approved.status !== 'ready') return;
+        pendingReplacements.current.delete(doc.id);
+        await deleteReplaced(previous, approved.filename);
+      } finally {
+        if (mounted.current) await load();
+      }
+    },
+    [load, report, deleteReplaced],
+  );
+
   return {
     documents,
     loading,
@@ -259,5 +364,6 @@ export function useKnowledgeDocuments(enabled: boolean): KnowledgeDocuments {
     replace,
     remove,
     setPrimary,
+    approve,
   };
 }

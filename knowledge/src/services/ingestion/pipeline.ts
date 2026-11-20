@@ -10,10 +10,19 @@ import {
 } from './chunk.js';
 import { extractText, isSupportedMime } from './parse.js';
 import { SerialQueue } from './queue.js';
+import { hasScanFailure, scanDocument, scanFailedFinding } from '../risk/scan.js';
+import type { RiskScanner } from '../risk/scanner.js';
 
 export interface PipelineDeps extends KnowledgeDeps {
   log: FastifyBaseLogger;
   chunkOptions?: ChunkOptions;
+  /**
+   * The risk scan's model pass (#212). Null or unset: the deterministic
+   * checks only. Either way every ingest is scanned before it can be ready.
+   */
+  riskScanner?: RiskScanner | null;
+  /** Overrides the risk scan's deadline, for tests. */
+  riskScanDeadlineMs?: number;
   /**
    * Called after a resume's ingest has committed (profile drafting hooks in
    * here). Its failure is logged and never fails the ingest.
@@ -56,7 +65,10 @@ export function publicIngestionError(error: unknown): string {
 
 /**
  * Turns one stored file into ready chunks:
- * fetch, extract text, chunk, embed, then commit atomically and bump the corpus version.
+ * fetch, extract text, risk-scan it (#212), chunk, embed, then commit
+ * atomically. A clean document becomes `ready` and bumps the corpus version;
+ * one with any finding becomes `needs_review` and is not served until the
+ * owner approves it.
  *
  * Any failure marks the document `failed` with a short reason. Its chunks
  * from a previous successful run stay in the table but are no longer served:
@@ -71,6 +83,8 @@ export function publicIngestionError(error: unknown): string {
 export async function ingestDocument(deps: PipelineDeps, doc: DocumentRecord): Promise<void> {
   const { repo, files, embedder, log } = deps;
   const started = Date.now();
+  /** Set once the ingest commits: whether the risk scan held it for review. */
+  let flagged: boolean | undefined;
 
   try {
     await repo.markProcessing(doc.id);
@@ -106,6 +120,20 @@ export async function ingestDocument(deps: PipelineDeps, doc: DocumentRecord): P
       );
     }
 
+    // Never throws: a scan that cannot finish is itself a finding.
+    const scan = await scanDocument(text, {
+      scanner: deps.riskScanner ?? null,
+      log,
+      documentId: doc.id,
+      deadlineMs: deps.riskScanDeadlineMs,
+    });
+    // An incomplete scan must hold the document. scanDocument adds a
+    // scan_failed finding when it is incomplete; this does not rely on that.
+    const findings =
+      !scan.complete && !hasScanFailure(scan.findings)
+        ? [scanFailedFinding('The risk scan did not finish.'), ...scan.findings]
+        : scan.findings;
+
     const pieces = chunkDocument(text, mime, deps.chunkOptions ?? DEFAULT_CHUNK_OPTIONS);
     const vectors = await embedder.embed(pieces.map(embeddingInput));
     if (vectors.length !== pieces.length) {
@@ -128,11 +156,19 @@ export async function ingestDocument(deps: PipelineDeps, doc: DocumentRecord): P
       };
     });
 
-    const version = await repo.completeIngestion(doc.id, text, newChunks);
+    const version = await repo.completeIngestion(doc.id, text, newChunks, findings);
+    flagged = findings.length > 0;
 
+    // Only the count is logged: findings quote the document.
     log.info(
-      { documentId: doc.id, chunks: pieces.length, version, ms: Date.now() - started },
-      'Document ingested',
+      {
+        documentId: doc.id,
+        chunks: pieces.length,
+        findings: findings.length,
+        version,
+        ms: Date.now() - started,
+      },
+      flagged ? 'Document ingested; held for review' : 'Document ingested',
     );
   } catch (error) {
     await recordFailure(deps, doc, error);
@@ -142,7 +178,8 @@ export async function ingestDocument(deps: PipelineDeps, doc: DocumentRecord): P
   deps.onCorpusChanged?.(doc.ownerId);
 
   // Outside the try above: the ingest has committed, so nothing here may mark it failed.
-  if (doc.kind === 'resume' && deps.onResumeIngested) {
+  // A flagged resume is not served, so it cannot be primary; approving it runs the hook.
+  if (doc.kind === 'resume' && flagged === false && deps.onResumeIngested) {
     try {
       await deps.onResumeIngested(doc);
     } catch (error) {

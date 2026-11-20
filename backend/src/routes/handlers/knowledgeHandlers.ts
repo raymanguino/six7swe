@@ -128,6 +128,18 @@ export function knowledgeHandlers(deps: KnowledgeHandlerDeps) {
 
     getDocumentText: withDocumentId((id) => ({ method: 'GET', path: `/documents/${id}/text` })),
 
+    /** The findings of the document's last risk scan (#212). */
+    getDocumentFindings: withDocumentId((id) => ({
+      method: 'GET',
+      path: `/documents/${id}/findings`,
+    })),
+
+    /** Approves a flagged document as it is, making it searchable (#212). */
+    approveDocument: withDocumentId((id) => ({
+      method: 'POST',
+      path: `/documents/${id}/approve`,
+    })),
+
     setPrimaryResume: withDocumentId((id) => ({
       method: 'PUT',
       path: `/documents/${id}/primary`,

@@ -33,6 +33,9 @@ export function registerRoutes(app: FastifyInstance, ctx: KnowledgeContext): voi
   app.get('/documents', OWNER_ROUTE, documents.list);
   app.get('/documents/:id', OWNER_ROUTE, documents.get);
   app.get('/documents/:id/text', OWNER_ROUTE, documents.text);
+  // The risk scan's review gate (#212): the findings, and approving them as they are.
+  app.get('/documents/:id/findings', OWNER_ROUTE, documents.findings);
+  app.post('/documents/:id/approve', OWNER_ROUTE, documents.approve);
   app.put('/documents/:id/primary', OWNER_ROUTE, documents.setPrimary);
   app.delete('/documents/:id', OWNER_ROUTE, documents.remove);
   // The same retrieval as `/retrieve`, for the owner's "ask as a visitor" playground.

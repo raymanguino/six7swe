@@ -1,7 +1,9 @@
-import { and, asc, cosineDistance, desc, eq, inArray, ne, sql } from 'drizzle-orm';
+import { and, asc, cosineDistance, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
+import { RiskFindingSchema, type DocumentStatus, type RiskFinding } from '../../contract.js';
 import type { KnowledgeDb, KnowledgeExecutor, KnowledgeTx } from '../index.js';
 import { chunks, corpusState, documents } from '../schema.js';
 import {
+  canResetToPending,
   ConflictError,
   type DocumentRecord,
   type KnowledgeRepository,
@@ -24,16 +26,25 @@ const documentColumns = {
   status: documents.status,
   error: documents.error,
   chunkCount: documents.chunkCount,
+  findingCount: sql<number>`coalesce(jsonb_array_length(${documents.riskFindings}), 0)`.mapWith(
+    Number,
+  ),
+  scannedAt: documents.scannedAt,
+  approvedAt: documents.approvedAt,
   createdAt: documents.createdAt,
   updatedAt: documents.updatedAt,
 };
+
+/** Findings are validated on the way in and on the way out, like the profile's jsonb. */
+const parseFindings = (raw: unknown): RiskFinding[] =>
+  raw === null || raw === undefined ? [] : RiskFindingSchema.array().parse(raw);
 
 /** Rows per chunk insert; each row binds about seven parameters, well under the 65535 limit. */
 const CHUNK_INSERT_BATCH = 1000;
 
 /** Postgres error 23505, whether thrown by postgres.js directly or wrapped by Drizzle. */
 export function isUniqueViolation(error: unknown): boolean {
-  for (let e: unknown = error; typeof e === 'object' && e !== null; ) {
+  for (let e: unknown = error; typeof e === 'object' && e !== null;) {
     if ('code' in e && e.code === '23505') return true;
     e = 'cause' in e ? e.cause : undefined;
   }
@@ -150,17 +161,22 @@ export function createDrizzleRepository(db: KnowledgeDb): KnowledgeRepository {
   /**
    * Moves a document to a non-ready status. If it was ready with chunks, those
    * chunks stop being served (search only reads ready documents), so the
-   * version is bumped in the same transaction.
+   * version is bumped in the same transaction. With `guard`, the change is
+   * made only when the locked row passes it; returns whether it was made.
    */
-  async function leaveReady(id: string, change: StatusChange): Promise<void> {
-    await db.transaction(async (tx) => {
+  async function leaveReady(
+    id: string,
+    change: StatusChange,
+    guard?: (row: { status: DocumentStatus; riskFindings: unknown }) => boolean,
+  ): Promise<boolean> {
+    return db.transaction(async (tx) => {
       // owner_id never changes, so it can be read before taking the owner
       // lock, which comes before the row lock (see lockOwner).
       const [owner] = await tx
         .select({ ownerId: documents.ownerId })
         .from(documents)
         .where(eq(documents.id, id));
-      if (!owner) return;
+      if (!owner) return false;
       await lockOwner(tx, owner.ownerId);
 
       const [before] = await tx
@@ -168,16 +184,18 @@ export function createDrizzleRepository(db: KnowledgeDb): KnowledgeRepository {
           ownerId: documents.ownerId,
           status: documents.status,
           chunkCount: documents.chunkCount,
+          riskFindings: documents.riskFindings,
         })
         .from(documents)
         .where(eq(documents.id, id))
         .for('update');
-      if (!before) return;
+      if (!before || (guard && !guard(before))) return false;
 
       await tx.update(documents).set(change).where(eq(documents.id, id));
       if (before.status === 'ready' && before.chunkCount > 0) {
         await bumpVersion(tx, before.ownerId);
       }
+      return true;
     });
   }
 
@@ -282,15 +300,24 @@ export function createDrizzleRepository(db: KnowledgeDb): KnowledgeRepository {
       });
     },
 
-    async resetToPending(id) {
-      await leaveReady(id, { status: 'pending', error: null });
+    async resetToPending(id, from) {
+      return leaveReady(id, { status: 'pending', error: null }, (row) => {
+        let findings: RiskFinding[];
+        try {
+          findings = parseFindings(row.riskFindings);
+        } catch {
+          return false;
+        }
+        return canResetToPending(row.status, findings, from);
+      });
     },
 
     async markProcessing(id) {
       await leaveReady(id, { status: 'processing', error: null });
     },
 
-    async completeIngestion(id, extractedText, newChunks: NewChunk[]) {
+    async completeIngestion(id, extractedText, newChunks: NewChunk[], findings) {
+      const riskFindings = parseFindings(findings);
       return withConflicts(() =>
         db.transaction(async (tx) => {
           // owner_id never changes, so it can be read before taking the
@@ -315,15 +342,97 @@ export function createDrizzleRepository(db: KnowledgeDb): KnowledgeRepository {
             const batch = newChunks.slice(i, i + CHUNK_INSERT_BATCH);
             await tx.insert(chunks).values(batch.map((c) => ({ ...c, documentId: id })));
           }
+          const flagged = riskFindings.length > 0;
           await tx
             .update(documents)
-            .set({ status: 'ready', error: null, extractedText, chunkCount: newChunks.length })
+            .set({
+              status: flagged ? 'needs_review' : 'ready',
+              error: null,
+              extractedText,
+              chunkCount: newChunks.length,
+              riskFindings,
+              scannedAt: sql`now()`,
+              approvedAt: null,
+            })
             .where(eq(documents.id, id));
 
           if (doc.kind === 'resume') await refreshPrimaryResume(tx, doc.ownerId);
-          return bumpVersion(tx, doc.ownerId);
+          // A flagged document's chunks are not served, so the corpus is unchanged.
+          return flagged ? currentVersion(tx, doc.ownerId) : bumpVersion(tx, doc.ownerId);
         }),
       );
+    },
+
+    async getRiskFindings(ownerId, id) {
+      const [row] = await db
+        .select({ ...documentColumns, riskFindings: documents.riskFindings })
+        .from(documents)
+        .where(and(eq(documents.ownerId, ownerId), eq(documents.id, id)))
+        .limit(1);
+      if (!row) return null;
+      const { riskFindings, ...document } = row;
+      return { document, findings: parseFindings(riskFindings) };
+    },
+
+    async approveDocument(ownerId, id) {
+      return db.transaction(async (tx) => {
+        // The same lock as ingestion and primary-resume changes.
+        await lockOwner(tx, ownerId);
+        const [doc] = await tx
+          .select({
+            kind: documents.kind,
+            status: documents.status,
+            approvedAt: documents.approvedAt,
+            findingCount: documentColumns.findingCount,
+          })
+          .from(documents)
+          .where(and(eq(documents.ownerId, ownerId), eq(documents.id, id)))
+          .for('update');
+        if (!doc) return null;
+
+        const activated = doc.status === 'needs_review';
+        if (activated) {
+          await tx
+            .update(documents)
+            .set({ status: 'ready', approvedAt: sql`now()` })
+            .where(eq(documents.id, id));
+          if (doc.kind === 'resume') await refreshPrimaryResume(tx, ownerId);
+          await bumpVersion(tx, ownerId);
+        } else if (doc.status === 'ready' && doc.findingCount > 0 && doc.approvedAt === null) {
+          await tx
+            .update(documents)
+            .set({ approvedAt: sql`now()` })
+            .where(eq(documents.id, id));
+        } else {
+          throw new ConflictError('Only a document with findings to review can be approved');
+        }
+
+        const [updated] = await tx
+          .select(documentColumns)
+          .from(documents)
+          .where(eq(documents.id, id));
+        return updated ? { document: updated, activated } : null;
+      });
+    },
+
+    async listUnscannedReady() {
+      return db
+        .select(documentColumns)
+        .from(documents)
+        .where(and(eq(documents.status, 'ready'), isNull(documents.scannedAt)))
+        .orderBy(asc(documents.createdAt));
+    },
+
+    async recordBackfillScan(id, findings) {
+      const riskFindings = parseFindings(findings);
+      const updated = await db
+        .update(documents)
+        .set({ riskFindings, scannedAt: sql`now()` })
+        .where(
+          and(eq(documents.id, id), eq(documents.status, 'ready'), isNull(documents.scannedAt)),
+        )
+        .returning({ id: documents.id });
+      return updated.length > 0;
     },
 
     async failIngestion(id, error) {

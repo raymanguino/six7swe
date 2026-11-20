@@ -12,6 +12,8 @@ import { createEvalRunner, type EvalRunner } from './services/evalSet/runner.js'
 import type { KnowledgeDeps } from './services/deps.js';
 import type { ProfileDrafter } from './services/profile/drafter.js';
 import { createProfileDrafting, type ProfileDrafting } from './services/profile/profiles.js';
+import { createRiskBackfill, type RiskBackfill } from './services/risk/backfill.js';
+import type { RiskScanner } from './services/risk/scanner.js';
 import {
   createIngestionQueue,
   type IngestionQueue,
@@ -28,6 +30,8 @@ declare module 'fastify' {
     evalSet: EvalSet;
     /** The eval run queue (#85); the entry point stops it on shutdown. */
     evalRunner: EvalRunner;
+    /** The one-time risk scan of documents ready before the scan existed (#212). */
+    riskBackfill: RiskBackfill;
   }
 }
 
@@ -57,6 +61,13 @@ export interface BuildAppOptions {
   mcpMaxPdfBytes?: number;
   logger?: FastifyServerOptions['logger'];
   chunkOptions?: PipelineDeps['chunkOptions'];
+  /**
+   * The risk scan's model pass (#212). Null or unset: the deterministic
+   * checks only; every ingest is still scanned before it can be ready.
+   */
+  riskScanner?: RiskScanner | null;
+  /** Overrides the risk scan's deadline, for tests. */
+  riskScanDeadlineMs?: number;
   /** Per-access-mode overrides; see plugins/serviceAuth.ts. */
   authenticators?: Partial<Authenticators>;
 }
@@ -116,12 +127,23 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     {
       ...deps,
       chunkOptions: options.chunkOptions,
+      riskScanner: options.riskScanner ?? null,
+      riskScanDeadlineMs: options.riskScanDeadlineMs,
       onResumeIngested: (doc) => drafting.resumeIngested(doc),
       onCorpusChanged: (ownerId) => evalRunner.corpusChanged(ownerId),
     },
     app.log,
   );
   app.decorate('ingestionQueue', queue);
+  app.decorate(
+    'riskBackfill',
+    createRiskBackfill({
+      repo: deps.repo,
+      scanner: options.riskScanner ?? null,
+      log: app.log,
+      deadlineMs: options.riskScanDeadlineMs,
+    }),
+  );
 
   app.setErrorHandler((error: unknown, req, reply) => {
     if (error instanceof ZodError) {

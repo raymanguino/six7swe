@@ -15,6 +15,9 @@ const document: DocumentDto = {
   status: 'ready',
   error: null,
   chunkCount: 3,
+  findingCount: 0,
+  scannedAt: null,
+  approvedAt: null,
   createdAt: '2026-11-13T00:00:00.000Z',
   updatedAt: '2026-11-13T00:00:00.000Z',
 };

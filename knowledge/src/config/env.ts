@@ -100,6 +100,16 @@ const EnvSchema = z
     /** Overrides the provider's default answering model. */
     EVAL_ANSWER_MODEL: z.string().min(1).optional(),
     /**
+     * The model pass of the risk scan run on every upload (#212). `minimax`
+     * uses the drafter's MiniMax keys; `stub` is offline and deterministic;
+     * `none` runs the deterministic checks (emails, phones, addresses) only,
+     * and is refused in production. Unset: `minimax` when MINIMAX_API_KEY is
+     * set, `none` otherwise.
+     */
+    RISK_SCANNER: z.enum(['none', 'minimax', 'stub']).optional(),
+    /** Overrides the provider's default scanning model. */
+    RISK_SCAN_MODEL: z.string().min(1).optional(),
+    /**
      * Eval thresholds that depend on the embedder (cosine similarity). An
      * active question whose best chunk is below the gap threshold is flagged
      * as a knowledge gap; a new visitor question below the off-topic one is
@@ -204,12 +214,12 @@ const EnvSchema = z
       }
     }
 
-    /** The drafter and the eval answerer pick a chat model the same way. */
+    /** The drafter, the eval answerer and the risk scanner pick a chat model the same way. */
     const chatModel = (
-      variable: 'PROFILE_DRAFTER' | 'EVAL_ANSWERER',
+      variable: 'PROFILE_DRAFTER' | 'EVAL_ANSWERER' | 'RISK_SCANNER',
+      kind: 'none' | 'minimax' | 'stub',
       modelOverride: string | undefined,
     ): ChatModelConfig | undefined => {
-      const kind = env[variable];
       if (kind === 'none') return { kind: 'none' };
       if (kind === 'stub') {
         if (env.NODE_ENV === 'production') {
@@ -239,11 +249,28 @@ const EnvSchema = z
         model: modelOverride ?? provider.defaultModel,
       };
     };
-    const profileDrafter = chatModel('PROFILE_DRAFTER', env.PROFILE_DRAFT_MODEL);
-    const evalAnswerer = chatModel('EVAL_ANSWERER', env.EVAL_ANSWER_MODEL);
+    const profileDrafter = chatModel(
+      'PROFILE_DRAFTER',
+      env.PROFILE_DRAFTER,
+      env.PROFILE_DRAFT_MODEL,
+    );
+    const evalAnswerer = chatModel('EVAL_ANSWERER', env.EVAL_ANSWERER, env.EVAL_ANSWER_MODEL);
 
-    if (!embedder || !fileStore || !profileDrafter || !evalAnswerer) return z.NEVER;
-    return { ...env, embedder, fileStore, profileDrafter, evalAnswerer };
+    // Uploads are treated as public, so production never skips the model pass.
+    const riskScannerKind = env.RISK_SCANNER ?? (env.MINIMAX_API_KEY ? 'minimax' : 'none');
+    if (riskScannerKind === 'none' && env.NODE_ENV === 'production') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['RISK_SCANNER'],
+        message: 'RISK_SCANNER=none is for development and tests only; set MINIMAX_API_KEY',
+      });
+    }
+    const riskScanner = chatModel('RISK_SCANNER', riskScannerKind, env.RISK_SCAN_MODEL);
+
+    if (!embedder || !fileStore || !profileDrafter || !evalAnswerer || !riskScanner) {
+      return z.NEVER;
+    }
+    return { ...env, embedder, fileStore, profileDrafter, evalAnswerer, riskScanner };
   });
 
 /** Providers with an OpenAI-compatible embeddings API. */
@@ -293,6 +320,8 @@ export type EmbedderConfig =
 /** The profile drafter (#86) and the eval answerer (#85) share the chat model providers. */
 export type ProfileDrafterConfig = ChatModelConfig;
 export type EvalAnswererConfig = ChatModelConfig;
+/** The risk scan's model pass (#212) uses the same providers. */
+export type RiskScannerConfig = ChatModelConfig;
 
 export type ChatModelConfig =
   | { kind: 'none' }

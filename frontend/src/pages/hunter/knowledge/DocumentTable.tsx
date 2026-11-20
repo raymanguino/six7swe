@@ -1,12 +1,13 @@
-import { useRef, useState } from 'react';
-import { ACCEPTED_EXTENSIONS, type DocumentStatus, type KnowledgeDocument } from './types';
+import type { BusyRows } from './rowActions';
+import { hasFindingsToReview, type DocumentStatus, type KnowledgeDocument } from './types';
 
-interface DocumentTableProps {
+interface DocumentTableProps extends BusyRows {
   documents: KnowledgeDocument[];
   loading: boolean;
   selectedId: string | null;
   onPreview: (doc: KnowledgeDocument) => void;
-  onReplace: (doc: KnowledgeDocument, file: File) => Promise<void>;
+  /** Opens the shared file picker to replace the document. */
+  onPickReplacement: (doc: KnowledgeDocument) => void;
   onDelete: (doc: KnowledgeDocument) => Promise<void>;
   onSetPrimary: (doc: KnowledgeDocument) => Promise<void>;
 }
@@ -14,6 +15,7 @@ interface DocumentTableProps {
 const STATUS_STYLES: Record<DocumentStatus, string> = {
   pending: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200',
   processing: 'bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-200',
+  needs_review: 'bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200',
   ready: 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-200',
   failed: 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-200',
 };
@@ -30,33 +32,12 @@ export default function DocumentTable({
   loading,
   selectedId,
   onPreview,
-  onReplace,
+  onPickReplacement,
   onDelete,
   onSetPrimary,
+  busyIds,
+  withBusy,
 }: DocumentTableProps) {
-  const replaceInput = useRef<HTMLInputElement>(null);
-  const [replacing, setReplacing] = useState<KnowledgeDocument | null>(null);
-  // Per row: a replace can run for minutes while other rows stay usable.
-  const [busyIds, setBusyIds] = useState<ReadonlySet<string>>(() => new Set());
-
-  const withBusy = async (doc: KnowledgeDocument, action: () => Promise<void>) => {
-    setBusyIds((ids) => new Set(ids).add(doc.id));
-    try {
-      await action();
-    } finally {
-      setBusyIds((ids) => {
-        const next = new Set(ids);
-        next.delete(doc.id);
-        return next;
-      });
-    }
-  };
-
-  const startReplace = (doc: KnowledgeDocument) => {
-    setReplacing(doc);
-    replaceInput.current?.click();
-  };
-
   const handleDelete = (doc: KnowledgeDocument) => {
     if (!window.confirm(`Delete ${doc.filename}? Its chunks stop being served immediately.`)) {
       return;
@@ -78,19 +59,6 @@ export default function DocumentTable({
 
   return (
     <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
-      <input
-        ref={replaceInput}
-        type="file"
-        accept={ACCEPTED_EXTENSIONS.join(',')}
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          const target = replacing;
-          e.target.value = '';
-          setReplacing(null);
-          if (file && target) void withBusy(target, () => onReplace(target, file));
-        }}
-      />
       <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-gray-700">
         <thead className="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-900/40 dark:text-gray-400">
           <tr>
@@ -131,8 +99,13 @@ export default function DocumentTable({
                   <span
                     className={`rounded-full px-2 py-0.5 text-xs font-semibold ${STATUS_STYLES[doc.status]}`}
                   >
-                    {doc.status}
+                    {doc.status === 'needs_review' ? 'needs review' : doc.status}
                   </span>
+                  {hasFindingsToReview(doc) && (
+                    <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                      {doc.findingCount} finding{doc.findingCount === 1 ? '' : 's'} to review
+                    </p>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums text-gray-700 dark:text-gray-300">
                   {doc.chunkCount}
@@ -151,7 +124,7 @@ export default function DocumentTable({
                     )}
                     <button
                       type="button"
-                      disabled={doc.status !== 'ready'}
+                      disabled={doc.status !== 'ready' && doc.status !== 'needs_review'}
                       onClick={() => onPreview(doc)}
                       className="text-primary-600 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
                     >
@@ -160,7 +133,7 @@ export default function DocumentTable({
                     <button
                       type="button"
                       disabled={busy}
-                      onClick={() => startReplace(doc)}
+                      onClick={() => onPickReplacement(doc)}
                       className="text-primary-600 hover:underline disabled:opacity-50"
                     >
                       Replace

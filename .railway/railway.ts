@@ -184,6 +184,10 @@ export default defineRailway(() => {
       // chunks. `none` records retrieval only. A run is the 10 active questions, once per corpus
       // change or on the owner's request. Uses the same MiniMax keys.
       EVAL_ANSWERER: 'minimax',
+      // The model pass of the risk scan every upload goes through before it is searchable
+      // (#212). Unset, it is `minimax` whenever MINIMAX_API_KEY is set, and production refuses
+      // `none`; named here so the choice is explicit. RISK_SCAN_MODEL overrides MiniMax-M3.
+      RISK_SCANNER: 'minimax',
       // Set these on the knowledge service in Railway (the same values as the backend's).
       // The service refuses to boot with PROFILE_DRAFTER=minimax and no MINIMAX_API_KEY. The
       // secondary key is optional: it is tried once when MiniMax answers 429.

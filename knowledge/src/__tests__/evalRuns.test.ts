@@ -57,6 +57,7 @@ async function addDocument(repo: KnowledgeRepository, name: string, axes: number
       tokenCount: 3,
       embedding: axis(a, DIMS),
     })),
+    [],
   );
   return document;
 }
