@@ -1,4 +1,16 @@
-import { and, asc, cosineDistance, desc, eq, inArray, lt, ne, or, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  cosineDistance,
+  desc,
+  eq,
+  inArray,
+  lt,
+  ne,
+  notInArray,
+  or,
+  sql,
+} from 'drizzle-orm';
 import type { KnowledgeDb, KnowledgeExecutor, KnowledgeTx } from '../index.js';
 import { evalQuestionSessions, evalQuestions, evalResults, evalRuns } from '../schema.js';
 import type {
@@ -166,8 +178,9 @@ export function createDrizzleEvalRepository(db: KnowledgeDb): EvalRepository {
               .returning(questionColumns);
           }
         }
-        // What still does not fit is skipped, never forced past the active size.
-        const fits = missing.length - Math.max(0, needed - evicted.length);
+        // What still does not fit is skipped, never forced past the active size
+        // (none fits when the pinned questions alone already fill it).
+        const fits = Math.max(0, missing.length - Math.max(0, needed - evicted.length));
         const toAdd = missing.slice(0, fits);
         const added =
           toAdd.length === 0
@@ -191,6 +204,24 @@ export function createDrizzleEvalRepository(db: KnowledgeDb): EvalRepository {
           evicted,
           skipped: missing.slice(fits).map((e) => e.question),
         };
+      });
+    },
+
+    async retireStaleExamples(ownerId, pool, now) {
+      return db.transaction(async (tx) => {
+        await lockEvalSet(tx, ownerId);
+        return tx
+          .update(evalQuestions)
+          .set({ status: 'retired', pinned: false, retiredAt: now })
+          .where(
+            and(
+              eq(evalQuestions.ownerId, ownerId),
+              eq(evalQuestions.origin, 'example'),
+              eq(evalQuestions.status, 'active'),
+              pool.length === 0 ? undefined : notInArray(evalQuestions.question, [...pool]),
+            ),
+          )
+          .returning(questionColumns);
       });
     },
 

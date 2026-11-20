@@ -140,6 +140,17 @@ export interface EvalRepository {
   ): Promise<AddExamplesOutcome>;
 
   /**
+   * Retires and unpins the owner's active `example` questions whose text is
+   * no longer in `pool` (an example edited or removed from the chat), so
+   * leftovers never hold pinned active slots. Returns the questions retired.
+   */
+  retireStaleExamples(
+    ownerId: string,
+    pool: readonly string[],
+    now: Date,
+  ): Promise<EvalQuestionRecord[]>;
+
+  /**
    * Bumps `example_clicks` on the owner's `example` question with exactly
    * this text, whatever its status. Nothing else changes: not `hit_count`,
    * sessions or `last_asked_at`. Null when there is no such question.

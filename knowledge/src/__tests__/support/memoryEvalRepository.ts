@@ -115,7 +115,7 @@ export function createMemoryEvalRepository(): EvalRepository & {
           questions.set(victim.id, retired);
           return strip(retired);
         });
-      const fits = missing.length - Math.max(0, needed - evicted.length);
+      const fits = Math.max(0, missing.length - Math.max(0, needed - evicted.length));
       const added = missing.slice(0, fits).map((e) => {
         const id = randomUUID();
         const record: EvalQuestionWithEmbedding = {
@@ -138,6 +138,18 @@ export function createMemoryEvalRepository(): EvalRepository & {
         return strip(record);
       });
       return { added, evicted, skipped: missing.slice(fits).map((e) => e.question) };
+    },
+
+    async retireStaleExamples(ownerId, pool, now) {
+      return ownerQuestions(ownerId)
+        .filter(
+          (q) => q.origin === 'example' && q.status === 'active' && !pool.includes(q.question),
+        )
+        .map((q) => {
+          const retired = { ...q, status: 'retired' as const, pinned: false, retiredAt: now };
+          questions.set(q.id, retired);
+          return strip(retired);
+        });
     },
 
     async recordExampleClick(ownerId, question) {

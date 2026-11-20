@@ -121,6 +121,63 @@ describe('eval set: example questions', () => {
     expect(retired.every((q) => q.origin === 'canned')).toBe(true);
   });
 
+  it('retires and unpins an example edited out of the pool', async () => {
+    const { repo, embedder, active } = setup();
+    const before = createEvalSet({
+      repo,
+      embedder,
+      log: silentLogger,
+      examples: ['Kept example?', 'Old wording?'],
+    });
+    await before.ensureSeeded(OWNER);
+
+    const after = createEvalSet({
+      repo,
+      embedder,
+      log: silentLogger,
+      examples: ['Kept example?', 'New wording?'],
+    });
+    await after.ensureSeeded(OWNER);
+    const pinned = (await active()).filter((q) => q.pinned).map((q) => q.question);
+    expect(pinned.sort()).toEqual(['Kept example?', 'New wording?']);
+    const old = (await repo.listQuestions(OWNER)).find((q) => q.question === 'Old wording?');
+    expect(old).toMatchObject({ status: 'retired', pinned: false });
+  });
+
+  it('keeps the eval set working while the examples cannot be embedded, and retries', async () => {
+    const { repo, embedder, active } = setup();
+    const before = createEvalSet({ repo, embedder, log: silentLogger, examples: [] });
+    await before.ensureSeeded(OWNER);
+
+    let down = true;
+    const flaky = {
+      ...embedder,
+      embed: async (texts: string[]) => {
+        if (down) throw new Error('embedder down');
+        return embedder.embed(texts);
+      },
+    };
+    const after = createEvalSet({ repo, embedder: flaky, log: silentLogger });
+    await expect(after.ensureSeeded(OWNER)).resolves.toBeUndefined();
+    expect((await active()).some((q) => q.origin === 'example')).toBe(false);
+
+    down = false;
+    await after.ensureSeeded(OWNER);
+    expect((await active()).filter((q) => q.origin === 'example')).toHaveLength(
+      CHAT_EXAMPLE_QUESTIONS.length,
+    );
+  });
+
+  it('embeds the examples once for concurrent first calls', async () => {
+    const { repo, embedder } = setup();
+    const before = createEvalSet({ repo, embedder, log: silentLogger, examples: [] });
+    await before.ensureSeeded(OWNER);
+    const after = createEvalSet({ repo, embedder, log: silentLogger });
+    const calls = embedder.calls.length;
+    await Promise.all([after.ensureSeeded(OWNER), after.ensureSeeded(OWNER)]);
+    expect(embedder.calls).toHaveLength(calls + 1);
+  });
+
   it('counts a click on its example only: no embedding, no candidate, no typed counts', async () => {
     const { evalSet, repo, embedder } = setup();
     await evalSet.ensureSeeded(OWNER);

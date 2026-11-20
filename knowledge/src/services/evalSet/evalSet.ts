@@ -197,10 +197,22 @@ export function createEvalSet(deps: EvalSetDeps): EvalSet {
     });
   }
 
-  async function ensureSeeded(ownerId: string): Promise<void> {
+  /** Seeding under way per owner, so concurrent first calls embed once. */
+  const seeding = new Map<string, Promise<void>>();
+
+  function ensureSeeded(ownerId: string): Promise<void> {
     // Once an owner has questions they always will (canned and example ones
     // are never purged), so the check runs once per owner and process.
-    if (seeded.has(ownerId)) return;
+    if (seeded.has(ownerId)) return Promise.resolve();
+    let pending = seeding.get(ownerId);
+    if (!pending) {
+      pending = seed(ownerId).finally(() => seeding.delete(ownerId));
+      seeding.set(ownerId, pending);
+    }
+    return pending;
+  }
+
+  async function seed(ownerId: string): Promise<void> {
     // Cheap check first, so the canned questions are embedded only once.
     const existing = await repo.listQuestions(ownerId);
     if (existing.length === 0) {
@@ -211,12 +223,36 @@ export function createEvalSet(deps: EvalSetDeps): EvalSet {
         log.info({ ownerId, count: canned.length }, 'Seeded the eval set');
       }
     }
-    await seedExamples(ownerId, existing);
+    // The examples are extra: the eval set keeps working when they cannot be
+    // seeded (the embedder is down), and the next call tries again, since the
+    // owner is not marked seeded.
+    try {
+      await seedExamples(ownerId, existing);
+    } catch (err) {
+      log.warn({ err, ownerId }, 'Could not seed the chat example questions; will retry');
+      return;
+    }
     seeded.add(ownerId);
   }
 
-  /** Adds the examples the owner has no question for; only those are embedded. */
+  /**
+   * Retires the examples no longer in the pool, then adds the ones the owner
+   * has no question for; only those are embedded.
+   */
   async function seedExamples(ownerId: string, existing: EvalQuestionRecord[]): Promise<void> {
+    const pool = new Set(examples);
+    const stale = existing.some(
+      (q) => q.origin === 'example' && q.status === 'active' && !pool.has(q.question),
+    );
+    if (stale) {
+      const retired = await repo.retireStaleExamples(ownerId, examples, now());
+      if (retired.length > 0) {
+        log.info(
+          { ownerId, retired: retired.map((q) => q.id) },
+          'Retired chat example questions no longer in the pool',
+        );
+      }
+    }
     const have = new Set(existing.filter((q) => q.origin === 'example').map((q) => q.question));
     const missing = examples.filter((text) => !have.has(text));
     if (missing.length === 0) return;

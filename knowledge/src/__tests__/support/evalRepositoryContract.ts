@@ -106,6 +106,53 @@ export function describeEvalRepositoryContract(
       expect(active).toHaveLength(3);
     });
 
+    it('adds nothing when the pinned questions alone already overfill the set', async () => {
+      const { evalRepo, owner, questions } = await seeded(4);
+      for (const q of questions) {
+        await evalRepo.updateQuestion(owner, q.id, { pinned: true }, undefined, at(1));
+      }
+      const outcome = await evalRepo.addExamples(
+        owner,
+        [example('example one'), example('example two')],
+        3,
+        at(2),
+      );
+      expect(outcome).toEqual({
+        added: [],
+        evicted: [],
+        skipped: ['example one', 'example two'],
+      });
+      const active = (await evalRepo.listQuestions(owner)).filter((q) => q.status === 'active');
+      expect(active).toHaveLength(4);
+    });
+
+    it('retires and unpins active examples no longer in the pool, and only those', async () => {
+      const { evalRepo, owner } = await seeded(1);
+      const { added } = await evalRepo.addExamples(
+        owner,
+        [example('kept example'), example('edited example')],
+        10,
+        at(1),
+      );
+      const stale = added.find((q) => q.question === 'edited example');
+      if (!stale) throw new Error('no example added');
+
+      const retired = await evalRepo.retireStaleExamples(owner, ['kept example'], at(2));
+      expect(retired.map((q) => q.id)).toEqual([stale.id]);
+      expect(await evalRepo.getQuestion(owner, stale.id)).toMatchObject({
+        status: 'retired',
+        pinned: false,
+      });
+      const active = (await evalRepo.listQuestions(owner)).filter((q) => q.status === 'active');
+      expect(active.map((q) => q.question).sort()).toEqual([
+        'canned question number 0',
+        'kept example',
+      ]);
+      // Nothing left to retire, and another owner's examples are never touched.
+      expect(await evalRepo.retireStaleExamples(owner, ['kept example'], at(3))).toEqual([]);
+      expect(await evalRepo.retireStaleExamples(target().newOwner(), [], at(3))).toEqual([]);
+    });
+
     it('counts an example click by exact text, and nothing else', async () => {
       const { evalRepo, owner } = await seeded(2);
       const {
