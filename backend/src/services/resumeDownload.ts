@@ -1,10 +1,11 @@
+import { createHash } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
 import { getKnowledgeRetrievalConfig } from '../config/knowledgeRetrieval';
 import { getDefaultProfileClient, type KnowledgeProfileClient } from './knowledge/profileClient';
 import { KnowledgeBodyTooLargeError } from './knowledge/transport';
 import { createHttpRetrievalClient, type RetrievalClient } from './knowledgeRetrieval';
 
-/** The resume PDF to download (with an ETag for its corpus version), or none. */
+/** The resume PDF to download (with an ETag derived from its bytes), or none. */
 export type ResumeDownload = { found: true; body: Buffer; etag: string } | { found: false };
 
 export interface ResumeSources {
@@ -28,7 +29,22 @@ export const DEFAULT_MAX_STALE_MS = 60 * 60_000;
 export const DEFAULT_MAX_PDF_BYTES = 10 * 1024 * 1024;
 
 type Logger = Pick<FastifyBaseLogger, 'warn'>;
-type CacheEntry = { version: number; pdf: Buffer | null; validatedAt: number };
+type CacheEntry = { version: number; pdf: Buffer | null; etag: string | null; validatedAt: number };
+
+/**
+ * The resume's ETag, from a hash of the PDF itself. The corpus version restarts when the knowledge
+ * database is reset, so a version-based validator could match a different file after a reset.
+ */
+export function resumeEtag(pdf: Buffer): string {
+  return `"resume-${createHash('sha256').update(pdf).digest('hex').slice(0, 32)}"`;
+}
+
+const entry = (version: number, pdf: Buffer | null, validatedAt: number): CacheEntry => ({
+  version,
+  pdf,
+  etag: pdf ? resumeEtag(pdf) : null,
+  validatedAt,
+});
 
 /** The primary resume is not something to serve (too large, not a PDF). */
 class InvalidResumeError extends Error {}
@@ -59,10 +75,8 @@ export function createResumeDownloader(
   const downloads = new Map<number, Promise<Buffer | null>>();
   let badResume: { version: number; error: Error; at: number } | null = null;
 
-  const toDownload = (entry: CacheEntry): ResumeDownload =>
-    entry.pdf
-      ? { found: true, body: entry.pdf, etag: `"resume-v${entry.version}"` }
-      : { found: false };
+  const toDownload = ({ pdf, etag }: CacheEntry): ResumeDownload =>
+    pdf && etag ? { found: true, body: pdf, etag } : { found: false };
 
   const staleUsable = (): CacheEntry | null =>
     cache && now() - cache.validatedAt < maxStaleMs ? cache : null;
@@ -171,10 +185,10 @@ export function createResumeDownloader(
 
       // A download that finished after a newer version was observed must not replace the entry.
       if (lastVersion?.version === version) {
-        cache = { version, pdf, validatedAt: lastVersion.at };
+        cache = entry(version, pdf, lastVersion.at);
         return toDownload(cache);
       }
-      return cache ? toDownload(cache) : toDownload({ version, pdf, validatedAt: now() });
+      return toDownload(cache ?? entry(version, pdf, now()));
     },
   };
 }

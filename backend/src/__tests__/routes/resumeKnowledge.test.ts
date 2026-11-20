@@ -1,6 +1,10 @@
 import Fastify, { FastifyInstance } from 'fastify';
 import { attachmentDisposition, resumeHandler } from '../../routes/handlers/resumeHandlers';
-import { createResumeDownloader, getResumeDownload } from '../../services/resumeDownload';
+import {
+  createResumeDownloader,
+  getResumeDownload,
+  resumeEtag,
+} from '../../services/resumeDownload';
 import type { KnowledgeProfileClient } from '../../services/knowledge/profileClient';
 
 jest.mock('../../services/resumeDownload', () => ({
@@ -182,7 +186,7 @@ describe('createResumeDownloader', () => {
     await downloader.get(log);
     const second = await downloader.get(log);
 
-    expect(second).toEqual({ found: true, body: PDF, etag: '"resume-v1"' });
+    expect(second).toEqual({ found: true, body: PDF, etag: resumeEtag(PDF) });
     expect(getVersion).toHaveBeenCalledTimes(1);
 
     pastTtl();
@@ -201,7 +205,7 @@ describe('createResumeDownloader', () => {
     const next = await downloader.get(log);
 
     expect(getResumePdf).toHaveBeenCalledTimes(2);
-    expect(next).toEqual({ found: true, body: resume, etag: '"resume-v2"' });
+    expect(next).toEqual({ found: true, body: resume, etag: resumeEtag(resume as Buffer) });
   });
 
   it('shares one version read and one download between concurrent requests', async () => {
@@ -250,11 +254,12 @@ describe('createResumeDownloader', () => {
   });
 
   it('never replaces a newer cache entry with an older download', async () => {
+    const V2 = Buffer.from('%PDF-1.4 v2');
     const downloader = build();
     let releaseOld: (pdf: Buffer) => void = () => undefined;
     getResumePdf
       .mockImplementationOnce(() => new Promise<Buffer | null>((r) => (releaseOld = r)))
-      .mockResolvedValueOnce(Buffer.from('%PDF-1.4 v2'));
+      .mockResolvedValueOnce(V2);
 
     // v1 starts downloading and stalls; wait until it is actually inside getResumePdf.
     const slowV1 = downloader.get(log);
@@ -262,12 +267,12 @@ describe('createResumeDownloader', () => {
 
     version = 2;
     pastTtl();
-    expect(await downloader.get(log)).toMatchObject({ found: true, etag: '"resume-v2"' });
+    expect(await downloader.get(log)).toMatchObject({ found: true, etag: resumeEtag(V2) });
 
     releaseOld(Buffer.from('%PDF-1.4 v1'));
     // The late v1 caller gets the newer entry, and the cache keeps v2.
-    expect(await slowV1).toMatchObject({ found: true, etag: '"resume-v2"' });
-    expect(await downloader.get(log)).toMatchObject({ found: true, etag: '"resume-v2"' });
+    expect(await slowV1).toMatchObject({ found: true, etag: resumeEtag(V2) });
+    expect(await downloader.get(log)).toMatchObject({ found: true, etag: resumeEtag(V2) });
     expect(getResumePdf).toHaveBeenCalledTimes(2);
   });
 
@@ -279,8 +284,36 @@ describe('createResumeDownloader', () => {
     version = 1;
     resume = Buffer.from('%PDF-1.4 after reset');
     pastTtl();
-    expect(await downloader.get(log)).toEqual({ found: true, body: resume, etag: '"resume-v1"' });
+    expect(await downloader.get(log)).toEqual({
+      found: true,
+      body: resume,
+      etag: resumeEtag(resume as Buffer),
+    });
     expect(getResumePdf).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives a different file a different ETag even when a reset reuses the version number', async () => {
+    version = 3;
+    const downloader = build();
+    const before = await downloader.get(log);
+
+    // The knowledge database is reset and climbs back to version 3 with a different resume.
+    version = 3;
+    resume = Buffer.from('%PDF-1.4 after reset');
+    const fresh = build();
+    const after = await fresh.get(log);
+
+    expect(before).toMatchObject({ found: true });
+    expect(after).toMatchObject({ found: true });
+    if (before.found && after.found) expect(after.etag).not.toBe(before.etag);
+  });
+
+  it('keeps the same ETag for identical bytes across versions', async () => {
+    const downloader = build();
+    const v1 = await downloader.get(log);
+    version = 2;
+    pastTtl();
+    expect(await downloader.get(log)).toEqual(v1);
   });
 
   it('serves the older cached PDF, bounded, when the newer version download fails', async () => {
@@ -290,7 +323,7 @@ describe('createResumeDownloader', () => {
     version = 2;
     pastTtl();
     getResumePdf.mockRejectedValue(new Error('service down'));
-    expect(await downloader.get(log)).toEqual({ found: true, body: PDF, etag: '"resume-v1"' });
+    expect(await downloader.get(log)).toEqual({ found: true, body: PDF, etag: resumeEtag(PDF) });
 
     clock += STALE;
     await expect(downloader.get(log)).rejects.toThrow('service down');
@@ -333,14 +366,14 @@ describe('createResumeDownloader', () => {
 
     // Inside the failure window the cached PDF is still served without asking again.
     clock += TTL - 1;
-    expect(await downloader.get(log)).toEqual({ found: true, body: PDF, etag: '"resume-v1"' });
+    expect(await downloader.get(log)).toEqual({ found: true, body: PDF, etag: resumeEtag(PDF) });
     expect(getVersion).toHaveBeenCalledTimes(2);
 
     // Once the window passes it asks again, and a recovered service is picked up.
     version = 2;
     clock += 2;
     resume = Buffer.concat([PDF, Buffer.from('v2')]);
-    expect(await downloader.get(log)).toMatchObject({ found: true, etag: '"resume-v2"' });
+    expect(await downloader.get(log)).toMatchObject({ found: true, etag: resumeEtag(resume) });
     expect(getVersion).toHaveBeenCalledTimes(3);
   });
 
@@ -350,7 +383,7 @@ describe('createResumeDownloader', () => {
 
     version = new Error('down');
     pastTtl();
-    expect(await downloader.get(log)).toEqual({ found: true, body: PDF, etag: '"resume-v1"' });
+    expect(await downloader.get(log)).toEqual({ found: true, body: PDF, etag: resumeEtag(PDF) });
     expect(log.warn).toHaveBeenCalled();
     expect(getResumePdf).toHaveBeenCalledTimes(1);
 

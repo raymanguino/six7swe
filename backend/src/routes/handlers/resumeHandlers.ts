@@ -38,7 +38,7 @@ export async function resumeHandler(request: FastifyRequest, reply: FastifyReply
       return reply.code(404).send({ error: 'Resume not found' });
     }
 
-    // Revalidated on every download; the ETag (the corpus version) makes that a cheap 304.
+    // Revalidated on every download; the ETag (a hash of the PDF) makes that a cheap 304.
     reply.header('Cache-Control', 'public, max-age=0, must-revalidate');
     reply.header('ETag', resume.etag);
     if (ifNoneMatchHits(request.headers['if-none-match'], resume.etag)) return reply.code(304).send();
