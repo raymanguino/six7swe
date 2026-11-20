@@ -2,6 +2,7 @@ import { and, asc, cosineDistance, desc, eq, inArray, lt, ne, or, sql } from 'dr
 import type { KnowledgeDb, KnowledgeExecutor, KnowledgeTx } from '../index.js';
 import { evalQuestionSessions, evalQuestions, evalResults, evalRuns } from '../schema.js';
 import type {
+  AddExamplesOutcome,
   EvalQuestionRecord,
   EvalRepository,
   EvalRunRecord,
@@ -21,6 +22,7 @@ const questionColumns = {
   offTopic: evalQuestions.offTopic,
   hitCount: evalQuestions.hitCount,
   distinctSessions: evalQuestions.distinctSessions,
+  exampleClicks: evalQuestions.exampleClicks,
   lastAskedAt: evalQuestions.lastAskedAt,
   retiredAt: evalQuestions.retiredAt,
   createdAt: evalQuestions.createdAt,
@@ -109,6 +111,102 @@ export function createDrizzleEvalRepository(db: KnowledgeDb): EvalRepository {
         );
         return true;
       });
+    },
+
+    async addExamples(ownerId, examples, maxActive, now): Promise<AddExamplesOutcome> {
+      if (examples.length === 0) return { added: [], evicted: [], skipped: [] };
+      return db.transaction(async (tx) => {
+        await lockEvalSet(tx, ownerId);
+        const existing = await tx
+          .select({ question: evalQuestions.question })
+          .from(evalQuestions)
+          .where(
+            and(
+              eq(evalQuestions.ownerId, ownerId),
+              eq(evalQuestions.origin, 'example'),
+              inArray(
+                evalQuestions.question,
+                examples.map((e) => e.question),
+              ),
+            ),
+          );
+        const have = new Set(existing.map((e) => e.question));
+        const missing = examples.filter((e) => !have.has(e.question));
+        if (missing.length === 0) return { added: [], evicted: [], skipped: [] };
+
+        const [count] = await tx
+          .select({ n: sql<number>`count(*)::int` })
+          .from(evalQuestions)
+          .where(and(eq(evalQuestions.ownerId, ownerId), eq(evalQuestions.status, 'active')));
+        const needed = Math.max(0, (count?.n ?? 0) + missing.length - maxActive);
+        let evicted: EvalQuestionRecord[] = [];
+        if (needed > 0) {
+          const victims = await tx
+            .select({ id: evalQuestions.id })
+            .from(evalQuestions)
+            .where(
+              and(
+                eq(evalQuestions.ownerId, ownerId),
+                eq(evalQuestions.status, 'active'),
+                eq(evalQuestions.pinned, false),
+              ),
+            )
+            .orderBy(...leastRecentlyAsked)
+            .limit(needed);
+          if (victims.length > 0) {
+            evicted = await tx
+              .update(evalQuestions)
+              .set({ status: 'retired', retiredAt: now })
+              .where(
+                inArray(
+                  evalQuestions.id,
+                  victims.map((v) => v.id),
+                ),
+              )
+              .returning(questionColumns);
+          }
+        }
+        // What still does not fit is skipped, never forced past the active size.
+        const fits = missing.length - Math.max(0, needed - evicted.length);
+        const toAdd = missing.slice(0, fits);
+        const added =
+          toAdd.length === 0
+            ? []
+            : await tx
+                .insert(evalQuestions)
+                .values(
+                  toAdd.map((e) => ({
+                    ownerId,
+                    question: e.question,
+                    embedding: e.embedding,
+                    status: 'active' as const,
+                    origin: 'example' as const,
+                    pinned: true,
+                    lastAskedAt: now,
+                  })),
+                )
+                .returning(questionColumns);
+        return {
+          added,
+          evicted,
+          skipped: missing.slice(fits).map((e) => e.question),
+        };
+      });
+    },
+
+    async recordExampleClick(ownerId, question) {
+      const [row] = await db
+        .update(evalQuestions)
+        .set({ exampleClicks: sql`${evalQuestions.exampleClicks} + 1` })
+        .where(
+          and(
+            eq(evalQuestions.ownerId, ownerId),
+            eq(evalQuestions.origin, 'example'),
+            eq(evalQuestions.question, question),
+          ),
+        )
+        .returning(questionColumns);
+      return row ?? null;
     },
 
     async nearestQuestion(ownerId, embedding) {

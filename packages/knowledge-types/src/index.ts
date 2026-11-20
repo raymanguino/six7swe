@@ -1,4 +1,7 @@
 import { z } from 'zod';
+import { CHAT_EXAMPLE_QUESTIONS } from './chatExamples';
+
+export * from './chatExamples';
 
 /**
  * The knowledge service's wire contract, shared by the service
@@ -269,8 +272,12 @@ export const EVAL_QUESTION_STATUSES = ['candidate', 'active', 'retired'] as cons
 export const EvalQuestionStatusSchema = z.enum(EVAL_QUESTION_STATUSES);
 export type EvalQuestionStatus = z.infer<typeof EvalQuestionStatusSchema>;
 
-/** `canned`: seeded by the service; `visitor`: clustered from real chat questions. */
-export const EVAL_QUESTION_ORIGINS = ['canned', 'visitor'] as const;
+/**
+ * `canned`: seeded by the service; `visitor`: clustered from real chat and
+ * public MCP questions; `example`: one of the chat widget's example questions
+ * (`CHAT_EXAMPLE_QUESTIONS`), seeded pinned and active (#205).
+ */
+export const EVAL_QUESTION_ORIGINS = ['canned', 'visitor', 'example'] as const;
 export const EvalQuestionOriginSchema = z.enum(EVAL_QUESTION_ORIGINS);
 export type EvalQuestionOrigin = z.infer<typeof EvalQuestionOriginSchema>;
 
@@ -293,9 +300,15 @@ export const EvalQuestionDtoSchema = z.object({
   pinned: z.boolean(),
   /** Flagged off-topic (automatically, or by the owner); never suggested for promotion. */
   offTopic: z.boolean(),
-  /** Times asked, near-duplicates included. */
+  /** Times asked, near-duplicates included. Typed and MCP questions only, never example clicks. */
   hitCount: z.number().int().nonnegative(),
   distinctSessions: z.number().int().nonnegative(),
+  /**
+   * Times the chat widget's example button for this question was clicked
+   * (origin `example` only; 0 otherwise). Counted apart from `hitCount`: a
+   * click is not a typed question. Defaulted for a service that predates it.
+   */
+  exampleClicks: z.number().int().nonnegative().default(0),
   lastAskedAt: z.iso.datetime(),
   createdAt: z.iso.datetime(),
 });
@@ -408,3 +421,18 @@ export type EvalQuestionResponse = z.infer<typeof EvalQuestionResponseSchema>;
 /** `POST /eval/runs` (owner): a run was queued (or one is already waiting). 202. */
 export const EvalRunAcceptedResponseSchema = z.object({ running: z.literal(true) });
 export type EvalRunAcceptedResponse = z.infer<typeof EvalRunAcceptedResponseSchema>;
+
+/**
+ * `POST /eval/example-clicks` (service): a chat visitor clicked one of the
+ * example questions (#205). Only an exact example text is accepted. It bumps
+ * that question's `exampleClicks` and nothing else: no embedding, no
+ * clustering, no candidate, no `hitCount` or session.
+ */
+export const ExampleClickRequestSchema = z.strictObject({
+  question: z.enum(CHAT_EXAMPLE_QUESTIONS),
+});
+export type ExampleClickRequest = z.infer<typeof ExampleClickRequestSchema>;
+
+/** `counted` is false when the example has no eval question (it could not be seeded). */
+export const ExampleClickResponseSchema = z.object({ counted: z.boolean() });
+export type ExampleClickResponse = z.infer<typeof ExampleClickResponseSchema>;

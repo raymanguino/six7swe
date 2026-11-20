@@ -44,6 +44,95 @@ export function describeEvalRepositoryContract(
       expect(await evalRepo.listQuestions(owner)).toHaveLength(3);
     });
 
+    const example = (text: string) => ({ question: text, embedding: embed(text) });
+
+    it('adds examples as active and pinned, retiring the least recently asked to make room', async () => {
+      const { evalRepo, owner } = await seeded(4);
+      // canned 0 was asked most recently, so it survives.
+      const [first] = (await evalRepo.listQuestions(owner)).filter(
+        (q) => q.question === 'canned question number 0',
+      );
+      if (!first) throw new Error('not seeded');
+      await evalRepo.recordAsk(first.id, 'session-aaaa', at(5));
+
+      const outcome = await evalRepo.addExamples(
+        owner,
+        [example('example one'), example('example two')],
+        4,
+        at(10),
+      );
+      expect(outcome.added.map((q) => q.question)).toEqual(['example one', 'example two']);
+      expect(outcome.added.every((q) => q.status === 'active' && q.pinned)).toBe(true);
+      expect(outcome.added.every((q) => q.origin === 'example' && q.exampleClicks === 0)).toBe(
+        true,
+      );
+      expect(outcome.evicted).toHaveLength(2);
+      expect(outcome.evicted.every((q) => q.status === 'retired')).toBe(true);
+      expect(outcome.skipped).toEqual([]);
+      const active = (await evalRepo.listQuestions(owner)).filter((q) => q.status === 'active');
+      expect(active).toHaveLength(4);
+      expect(active.map((q) => q.question)).toContain('canned question number 0');
+
+      // Already there (whatever the owner did with it since): nothing changes.
+      const added = outcome.added[0];
+      if (!added) throw new Error('no example added');
+      await evalRepo.updateQuestion(
+        owner,
+        added.id,
+        { status: 'retired', pinned: false },
+        undefined,
+        at(11),
+      );
+      const again = await evalRepo.addExamples(owner, [example('example one')], 4, at(12));
+      expect(again).toEqual({ added: [], evicted: [], skipped: [] });
+      expect(await evalRepo.getQuestion(owner, added.id)).toMatchObject({ status: 'retired' });
+    });
+
+    it('skips the examples that do not fit when every other active question is pinned', async () => {
+      const { evalRepo, owner, questions } = await seeded(3);
+      for (const q of questions.slice(0, 2)) {
+        await evalRepo.updateQuestion(owner, q.id, { pinned: true }, undefined, at(1));
+      }
+      const outcome = await evalRepo.addExamples(
+        owner,
+        [example('example one'), example('example two')],
+        3,
+        at(2),
+      );
+      expect(outcome.added.map((q) => q.question)).toEqual(['example one']);
+      expect(outcome.evicted).toHaveLength(1);
+      expect(outcome.skipped).toEqual(['example two']);
+      const active = (await evalRepo.listQuestions(owner)).filter((q) => q.status === 'active');
+      expect(active).toHaveLength(3);
+    });
+
+    it('counts an example click by exact text, and nothing else', async () => {
+      const { evalRepo, owner } = await seeded(2);
+      const {
+        added: [added],
+      } = await evalRepo.addExamples(owner, [example('Example one?')], 10, at(1));
+      if (!added) throw new Error('no example added');
+
+      const clicked = await evalRepo.recordExampleClick(owner, 'Example one?');
+      expect(clicked).toMatchObject({
+        id: added.id,
+        exampleClicks: 1,
+        hitCount: 0,
+        distinctSessions: 0,
+        status: 'active',
+      });
+      expect(clicked?.lastAskedAt.getTime()).toBe(added.lastAskedAt.getTime());
+      expect((await evalRepo.recordExampleClick(owner, 'Example one?'))?.exampleClicks).toBe(2);
+
+      // Exact text only, origin `example` only, and the owner's own.
+      expect(await evalRepo.recordExampleClick(owner, 'example one?')).toBeNull();
+      expect(await evalRepo.recordExampleClick(owner, 'canned question number 0')).toBeNull();
+      expect(await evalRepo.recordExampleClick(target().newOwner(), 'Example one?')).toBeNull();
+      const list = await evalRepo.listQuestions(owner);
+      expect(list).toHaveLength(3);
+      expect(list.filter((q) => q.exampleClicks > 0).map((q) => q.id)).toEqual([added.id]);
+    });
+
     it('finds the nearest question, and nothing for an empty owner', async () => {
       const { evalRepo, newOwner } = target();
       expect(await evalRepo.nearestQuestion(newOwner(), embed('anything'))).toBeNull();

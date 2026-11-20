@@ -157,6 +157,12 @@ export const evalQuestions = knowledge.table(
     offTopic: boolean('off_topic').notNull().default(false),
     hitCount: integer('hit_count').notNull().default(0),
     distinctSessions: integer('distinct_sessions').notNull().default(0),
+    /**
+     * Clicks on the chat widget's example button for this question (origin
+     * `example`, #205), looked up by exact text. Kept apart from `hit_count`
+     * and `distinct_sessions`, which count typed and MCP questions only.
+     */
+    exampleClicks: integer('example_clicks').notNull().default(0),
     lastAskedAt: timestamp('last_asked_at', { withTimezone: true }).notNull().defaultNow(),
     /**
      * When the question last became `retired` (by the owner or by eviction);

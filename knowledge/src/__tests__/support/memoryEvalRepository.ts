@@ -87,12 +87,67 @@ export function createMemoryEvalRepository(): EvalRepository & {
           offTopic: false,
           hitCount: 0,
           distinctSessions: 0,
+          exampleClicks: 0,
           lastAskedAt: now,
           retiredAt: null,
           createdAt: now,
         });
       }
       return true;
+    },
+
+    async addExamples(ownerId, examples, maxActive, now) {
+      const have = new Set(
+        ownerQuestions(ownerId)
+          .filter((q) => q.origin === 'example')
+          .map((q) => q.question),
+      );
+      const missing = examples.filter((e) => !have.has(e.question));
+      if (missing.length === 0) return { added: [], evicted: [], skipped: [] };
+      const active = ownerQuestions(ownerId).filter((q) => q.status === 'active');
+      const needed = Math.max(0, active.length + missing.length - maxActive);
+      const evicted = active
+        .filter((q) => !q.pinned)
+        .sort(lru)
+        .slice(0, needed)
+        .map((victim) => {
+          const retired = { ...victim, status: 'retired' as const, retiredAt: now };
+          questions.set(victim.id, retired);
+          return strip(retired);
+        });
+      const fits = missing.length - Math.max(0, needed - evicted.length);
+      const added = missing.slice(0, fits).map((e) => {
+        const id = randomUUID();
+        const record: EvalQuestionWithEmbedding = {
+          id,
+          ownerId,
+          question: e.question,
+          embedding: e.embedding,
+          status: 'active',
+          origin: 'example',
+          pinned: true,
+          offTopic: false,
+          hitCount: 0,
+          distinctSessions: 0,
+          exampleClicks: 0,
+          lastAskedAt: now,
+          retiredAt: null,
+          createdAt: now,
+        };
+        questions.set(id, record);
+        return strip(record);
+      });
+      return { added, evicted, skipped: missing.slice(fits).map((e) => e.question) };
+    },
+
+    async recordExampleClick(ownerId, question) {
+      const q = ownerQuestions(ownerId).find(
+        (x) => x.origin === 'example' && x.question === question,
+      );
+      if (!q) return null;
+      const updated = { ...q, exampleClicks: q.exampleClicks + 1 };
+      questions.set(q.id, updated);
+      return strip(updated);
     },
 
     async nearestQuestion(ownerId, embedding) {
@@ -118,6 +173,7 @@ export function createMemoryEvalRepository(): EvalRepository & {
         offTopic: input.offTopic,
         hitCount: 1,
         distinctSessions: 1,
+        exampleClicks: 0,
         lastAskedAt: input.now,
         retiredAt: null,
         createdAt: input.now,
