@@ -163,6 +163,8 @@ export type ProjectTile = {
   id: string;
   title: string;
   briefDescription?: string;
+  /** Link to the project's source; omitted when the code isn't public. */
+  repoUrl?: string;
   overview: string;
   keyChallenges: string[];
 };
@@ -171,6 +173,7 @@ export const PROJECT_TILES: ProjectTile[] = [
   {
     id: 'knowledge-service',
     title: 'Knowledge Service (RAG)',
+    repoUrl: 'https://github.com/raymanguino/six7swe/tree/main/knowledge',
     briefDescription:
       'The private RAG service behind this site: it powers the chat assistant, the job fit checker and the resume download, and the job hunter scores postings against the same knowledge.',
     overview:
@@ -185,6 +188,7 @@ export const PROJECT_TILES: ProjectTile[] = [
   {
     id: 'qa-agent',
     title: 'PR Review Agent',
+    repoUrl: 'https://github.com/raymanguino/six7swe/tree/main/backend/src/domain/qa',
     briefDescription:
       'An LLM reviewer that checks every pull request in GitHub Actions and reports through a required status check, built to treat the PR as untrusted input.',
     overview:

@@ -115,6 +115,16 @@ function ProjectTileCard({
       {project.briefDescription && (
         <p className="text-gray-600 dark:text-gray-400 text-sm mb-4">{project.briefDescription}</p>
       )}
+      {project.repoUrl && (
+        <a
+          href={project.repoUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-block text-sm font-medium text-primary-600 dark:text-primary-400 hover:underline mb-4"
+        >
+          View code on GitHub ↗
+        </a>
+      )}
       <div className="flex flex-col gap-2">
         <button
           type="button"
