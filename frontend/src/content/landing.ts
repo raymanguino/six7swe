@@ -202,6 +202,7 @@ export const PROJECT_TILES: ProjectTile[] = [
   {
     id: 'agent-workflow',
     title: 'Agentic Dev Workflow',
+    repoUrl: 'https://github.com/raymanguino/claude-agentic-workflow',
     briefDescription:
       'Custom Claude Code subagents and skills that turn a GitHub epic into reviewed pull requests, with my approval at every checkpoint.',
     overview:
