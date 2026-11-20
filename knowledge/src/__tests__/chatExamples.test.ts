@@ -5,6 +5,7 @@ import {
   CHAT_EXAMPLES_SHOWN,
   EVAL_ACTIVE_SIZE,
   EVAL_MAX_QUESTION_CHARS,
+  EvalStateResponseSchema,
   ExampleClickResponseSchema,
   MAX_CHAT_EXAMPLES,
   isChatExampleQuestion,
@@ -200,9 +201,7 @@ describe('POST /eval/example-clicks', () => {
         url: '/eval',
         headers: { 'x-knowledge-key': OWNER_KEY },
       });
-      const questions = (
-        state.json() as { questions: { question: string; exampleClicks: number }[] }
-      ).questions;
+      const { questions } = EvalStateResponseSchema.parse(state.json());
       expect(questions.find((q) => q.question === text)?.exampleClicks).toBe(1);
     } finally {
       await server.evalSet.idle();
