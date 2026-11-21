@@ -40,6 +40,7 @@ export function toEvalQuestionDto(q: EvalQuestionRecord): EvalQuestionDto {
     offTopic: q.offTopic,
     hitCount: q.hitCount,
     distinctSessions: q.distinctSessions,
+    exampleClicks: q.exampleClicks,
     lastAskedAt: q.lastAskedAt.toISOString(),
     createdAt: q.createdAt.toISOString(),
   };
