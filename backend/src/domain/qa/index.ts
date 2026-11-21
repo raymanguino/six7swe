@@ -9,4 +9,5 @@ export * from './reviewBody';
 export * from './verdictSync';
 export * from './verdictSummary';
 export * from './verdictReport';
+export * from './gitDiff';
 export * from './prSize';

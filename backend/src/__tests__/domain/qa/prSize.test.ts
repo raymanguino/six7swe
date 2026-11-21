@@ -1,5 +1,6 @@
 import type { ChangedFile, DiffBudget } from '../../../domain/qa/diff';
-import { measurePrSize, parseUnifiedDiff } from '../../../domain/qa/prSize';
+import { parseUnifiedDiff } from '../../../domain/qa/gitDiff';
+import { measurePrSize } from '../../../domain/qa/prSize';
 
 const DIFF = [
   'diff --git a/src/app.ts b/src/app.ts',
