@@ -9,3 +9,4 @@ export * from './reviewBody';
 export * from './verdictSync';
 export * from './verdictSummary';
 export * from './verdictReport';
+export * from './prSize';
