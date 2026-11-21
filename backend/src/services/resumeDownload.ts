@@ -1,9 +1,8 @@
 import { createHash } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
-import { getKnowledgeRetrievalConfig } from '../config/knowledgeRetrieval';
 import { getDefaultResumeClient, type KnowledgeResumeClient } from './knowledge/resumeClient';
 import { KnowledgeBodyTooLargeError } from './knowledge/transport';
-import { createHttpRetrievalClient, type RetrievalClient } from './knowledgeRetrieval';
+import { getDefaultRetrievalClient, type RetrievalClient } from './knowledgeRetrieval';
 
 /** The resume PDF to download (with an ETag derived from its bytes), or none. */
 export type ResumeDownload = { found: true; body: Buffer; etag: string } | { found: false };
@@ -196,19 +195,12 @@ export function createResumeDownloader(
   };
 }
 
-let defaultVersionClient: Pick<RetrievalClient, 'getVersion'> | null | undefined;
-
 const defaultDownloader = createResumeDownloader({
   getResumeClient: getDefaultResumeClient,
-  getVersionClient() {
-    if (defaultVersionClient === undefined) {
-      const config = getKnowledgeRetrievalConfig();
-      defaultVersionClient = config ? createHttpRetrievalClient(config) : null;
-    }
-    return defaultVersionClient;
-  },
+  getVersionClient: getDefaultRetrievalClient,
 });
 
+/** The primary resume, shared by `/resume` and the public MCP's `get_resume_pdf`. */
 export function getResumeDownload(log: Logger): Promise<ResumeDownload> {
   return defaultDownloader.get(log);
 }
