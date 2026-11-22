@@ -41,9 +41,10 @@ export const DEFAULT_PUBLIC_MCP_CONFIG: PublicMcpConfig = {
 
 /** An integer env value of at least `min`, or `fallback` when missing or malformed. */
 function intAtLeast(raw: string | undefined, min: number, fallback: number): number {
-  const n = Number(raw);
-  if (!raw || !Number.isInteger(n) || n < min) return fallback;
-  return n;
+  // Digits only: `Number(' ')` is 0, which would silently turn a cap off.
+  if (raw === undefined || !/^\d+$/.test(raw.trim())) return fallback;
+  const n = Number(raw.trim());
+  return Number.isSafeInteger(n) && n >= min ? n : fallback;
 }
 
 /** The rate limit needs at least one request; a daily cap of 0 turns its use off. */

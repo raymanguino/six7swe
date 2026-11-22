@@ -356,6 +356,7 @@ describe('getPublicMcpConfig', () => {
         PUBLIC_MCP_RATE_LIMIT_WINDOW_MS: '60000',
         PUBLIC_MCP_DAILY_SEARCH_CAP: '-1',
         PUBLIC_MCP_CLIENT_DAILY_SEARCH_CAP: '2.5',
+        PUBLIC_MCP_DAILY_RECORD_CAP: '   ',
         PUBLIC_MCP_CLIENT_DAILY_RECORD_CAP: '2',
       }),
     ).toEqual({
