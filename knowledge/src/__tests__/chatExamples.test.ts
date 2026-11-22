@@ -12,7 +12,11 @@ import {
   pickChatExamples,
 } from '../contract.js';
 import { CANNED_EVAL_QUESTIONS } from '../services/evalSet/canned.js';
-import { createEvalSet, DEFAULT_EVAL_SETTINGS } from '../services/evalSet/evalSet.js';
+import {
+  createEvalSet,
+  DEFAULT_EVAL_SETTINGS,
+  SEED_RETRY_MS,
+} from '../services/evalSet/evalSet.js';
 import { redactQuestion } from '../services/evalSet/redact.js';
 import { createHashingEmbedder } from '../services/embedding/hashing.js';
 import { createMemoryFileStore, silentLogger } from './support/fixtures.js';
@@ -157,15 +161,63 @@ describe('eval set: example questions', () => {
         return embedder.embed(texts);
       },
     };
-    const after = createEvalSet({ repo, embedder: flaky, log: silentLogger });
+    let clock = Date.parse('2026-11-01T00:00:00Z');
+    const after = createEvalSet({
+      repo,
+      embedder: flaky,
+      log: silentLogger,
+      now: () => new Date(clock),
+    });
     await expect(after.ensureSeeded(OWNER)).resolves.toBeUndefined();
     expect((await active()).some((q) => q.origin === 'example')).toBe(false);
 
+    // Within the retry interval nothing is tried again, even once it is back.
     down = false;
+    const calls = embedder.calls.length;
+    await after.ensureSeeded(OWNER);
+    expect(embedder.calls).toHaveLength(calls);
+
+    clock += SEED_RETRY_MS + 1;
     await after.ensureSeeded(OWNER);
     expect((await active()).filter((q) => q.origin === 'example')).toHaveLength(
       CHAT_EXAMPLE_QUESTIONS.length,
     );
+  });
+
+  it('retries examples that did not fit once pinned questions free a slot', async () => {
+    const { repo, embedder, active } = setup();
+    const settings = { activeSize: 3 };
+    const before = createEvalSet({
+      repo,
+      embedder,
+      log: silentLogger,
+      settings,
+      examples: ['A?', 'B?'],
+    });
+    await before.ensureSeeded(OWNER);
+    const [canned] = (await active()).filter((q) => q.origin === 'canned');
+    const stored = canned ? repo.questions.get(canned.id) : undefined;
+    if (!stored) throw new Error('expected one canned question');
+    stored.pinned = true;
+
+    let clock = Date.parse('2026-11-01T00:00:00Z');
+    const after = createEvalSet({
+      repo,
+      embedder,
+      log: silentLogger,
+      settings,
+      examples: ['A?', 'B?', 'C?'],
+      now: () => new Date(clock),
+    });
+    await after.ensureSeeded(OWNER);
+    expect((await active()).map((q) => q.question)).not.toContain('C?');
+
+    stored.pinned = false;
+    clock += SEED_RETRY_MS + 1;
+    await after.ensureSeeded(OWNER);
+    const list = await active();
+    expect(list.map((q) => q.question).sort()).toEqual(['A?', 'B?', 'C?']);
+    expect(list.every((q) => q.pinned)).toBe(true);
   });
 
   it('embeds the examples once for concurrent first calls', async () => {
@@ -206,6 +258,16 @@ describe('eval set: example questions', () => {
     // Not an example: nothing to count.
     expect(await evalSet.recordExampleClick(OWNER, 'What is your favorite color?')).toBe(false);
   });
+
+  it('never seeds or embeds on a click, so a fresh owner is just not counted', async () => {
+    const { repo, embedder } = setup();
+    const evalSet = createEvalSet({ repo, embedder, log: silentLogger });
+    const [text] = CHAT_EXAMPLE_QUESTIONS;
+
+    expect(await evalSet.recordExampleClick(OWNER, text)).toBe(false);
+    expect(embedder.calls).toHaveLength(0);
+    expect(repo.questions.size).toBe(0);
+  });
 });
 
 describe('POST /eval/example-clicks', () => {
@@ -241,6 +303,13 @@ describe('POST /eval/example-clicks', () => {
           headers: { 'x-knowledge-key': key },
           payload: { question },
         });
+      const ownerView = () =>
+        server.inject({ method: 'GET', url: '/eval', headers: { 'x-knowledge-key': OWNER_KEY } });
+
+      // Before the owner is seeded there is no example question to count.
+      expect((await click(text)).json()).toEqual({ counted: false });
+      // The owner's first eval view seeds it (as a recorded chat question would).
+      expect((await ownerView()).statusCode).toBe(200);
 
       const ok = await click(text);
       expect(ok.statusCode).toBe(200);
@@ -253,12 +322,7 @@ describe('POST /eval/example-clicks', () => {
       expect((await click(text, OWNER_KEY)).statusCode).toBe(401);
 
       // The owner's view carries the count.
-      const state = await server.inject({
-        method: 'GET',
-        url: '/eval',
-        headers: { 'x-knowledge-key': OWNER_KEY },
-      });
-      const { questions } = EvalStateResponseSchema.parse(state.json());
+      const { questions } = EvalStateResponseSchema.parse((await ownerView()).json());
       expect(questions.find((q) => q.question === text)?.exampleClicks).toBe(1);
     } finally {
       await server.evalSet.idle();
