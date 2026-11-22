@@ -93,13 +93,18 @@ function resolveBase(base: string): string {
 
 function main(): void {
   const base = resolveBase(parseBase(process.argv.slice(2)));
-  // The prefixes and drivers are pinned, so the user's git config (noprefix,
-  // mnemonicPrefix, textconv) cannot change the paths or the patches.
+  // Everything that shapes the patch is pinned to git's defaults, which is
+  // what GitHub shows, so the user's git config (noprefix, mnemonicPrefix,
+  // textconv, diff.context, diff.algorithm, diff.indentHeuristic) cannot
+  // change the paths, hunks or patch lengths.
   const diff = git([
     'diff',
     '--no-color',
     '--no-ext-diff',
     '--no-textconv',
+    '--unified=3',
+    '--diff-algorithm=myers',
+    '--indent-heuristic',
     '-M',
     '--src-prefix=a/',
     '--dst-prefix=b/',
