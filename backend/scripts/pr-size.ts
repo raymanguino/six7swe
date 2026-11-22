@@ -9,6 +9,10 @@
  *
  * Only commits count: uncommitted changes are not part of a pull request.
  *
+ * The result is an upper bound. GitHub leaves out the patch of a very large
+ * file, which the review then lists without its text; locally every file
+ * has its patch, so a branch can only measure larger here, never smaller.
+ *
  * Usage:
  *   pnpm pr:size                      # against main
  *   pnpm pr:size --base feat/104-x    # a stacked pull request
@@ -26,13 +30,22 @@ function git(args: readonly string[]): string {
   });
 }
 
-function refExists(ref: string): boolean {
+/** Whether a git command exits 0; for the commands whose answer is their exit code. */
+function succeeds(args: readonly string[]): boolean {
   try {
-    git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+    git(args);
     return true;
   } catch {
     return false;
   }
+}
+
+function refExists(ref: string): boolean {
+  return succeeds(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+}
+
+function isAncestor(ancestor: string, descendant: string): boolean {
+  return succeeds(['merge-base', '--is-ancestor', ancestor, descendant]);
 }
 
 function parseBase(argv: readonly string[]): string {
@@ -52,24 +65,47 @@ function parseBase(argv: readonly string[]): string {
 }
 
 /**
- * Prefers the remote-tracking branch: a stale local `main` would move the
- * merge base back and count other people's commits as this branch's.
+ * Picks whichever of `<base>` and `origin/<base>` is further ahead.
+ *
+ * A base that is behind moves the merge base back and counts its missing
+ * commits as this branch's: a stale local `main` counts other people's
+ * merged work, and a stale `origin/<parent>` counts a stacked parent's
+ * unpushed commits. When the two have diverged, the remote is used, with a
+ * warning.
  */
 function resolveBase(base: string): string {
   const remote = `origin/${base}`;
-  if (!base.startsWith('origin/') && refExists(remote)) {
+  const hasRemote = !base.startsWith('origin/') && refExists(remote);
+  const hasLocal = refExists(base);
+
+  if (hasRemote && hasLocal) {
+    if (isAncestor(remote, base)) return base;
+    if (!isAncestor(base, remote)) {
+      process.stderr.write(`${base} and ${remote} have diverged; measuring against ${remote}.\n`);
+    }
     return remote;
   }
-  if (refExists(base)) {
-    return base;
-  }
+  if (hasRemote) return remote;
+  if (hasLocal) return base;
 
   throw new Error(`Base branch not found: ${base} (try git fetch)`);
 }
 
 function main(): void {
   const base = resolveBase(parseBase(process.argv.slice(2)));
-  const diff = git(['diff', '--no-color', '--no-ext-diff', '-M', `${base}...HEAD`]);
+  // The prefixes and drivers are pinned, so the user's git config (noprefix,
+  // mnemonicPrefix, textconv) cannot change the paths or the patches.
+  const diff = git([
+    'diff',
+    '--no-color',
+    '--no-ext-diff',
+    '--no-textconv',
+    '-M',
+    '--src-prefix=a/',
+    '--dst-prefix=b/',
+    `${base}...HEAD`,
+    '--',
+  ]);
   const report = measurePrSize(parseUnifiedDiff(diff), REVIEW_DIFF_BUDGET, base);
 
   process.stdout.write(`${report.text}\n`);

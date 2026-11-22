@@ -15,8 +15,19 @@ import {
 } from './diff';
 import { describeCoverage, SIZE_ADVISORY_THRESHOLD, sizeAdvisory } from './review';
 
-function isLockfile(filename: string): boolean {
-  return LOCKFILES.includes(filename.slice(filename.lastIndexOf('/') + 1));
+/**
+ * Whether the review withholds a file's patch on purpose, mirroring
+ * `isPatchWithheld` in `diff.ts` (kept private there: that file runs the
+ * review, so changing it puts a pull request under manual review).
+ */
+function isWithheld(file: ChangedFile, budget: DiffBudget): boolean {
+  const base = file.filename.slice(file.filename.lastIndexOf('/') + 1);
+  return budget.skipPatchesFor.includes(file.filename) || LOCKFILES.includes(base);
+}
+
+/** One key per changed file: two files can share a name only across a rename. */
+function fileKey(file: { filename: string; previousFilename?: string }): string {
+  return `${file.filename}\u0000${file.previousFilename ?? ''}`;
 }
 
 function chars(n: number): string {
@@ -48,12 +59,12 @@ export function measurePrSize(
   base: string,
 ): PrSizeReport {
   const { coverage, shown } = prepareReviewDiff(files, budget);
-  const shownNames = new Set(shown.map((file) => file.filename));
-  const patched = files.filter((file) => file.patch !== undefined && !isLockfile(file.filename));
+  const shownKeys = new Set(shown.map(fileKey));
+  const patched = files.filter((file) => file.patch !== undefined && !isWithheld(file, budget));
 
-  const notShown = patched.filter((file) => !shownNames.has(file.filename));
+  const notShown = patched.filter((file) => !shownKeys.has(fileKey(file)));
   const shortened = patched.filter(
-    (file) => shownNames.has(file.filename) && (file.patch?.length ?? 0) > budget.perFileChars,
+    (file) => shownKeys.has(fileKey(file)) && (file.patch?.length ?? 0) > budget.perFileChars,
   );
   const fits = coverage.omittedFiles <= SIZE_ADVISORY_THRESHOLD;
   const additions = files.reduce((sum, file) => sum + file.additions, 0);
