@@ -137,8 +137,9 @@ function QuestionList({
             <li key={q.id} className="flex flex-wrap items-center gap-2 py-2">
               <span className="flex-1 text-sm text-gray-900 dark:text-white">{q.question}</span>
               <span className="text-xs tabular-nums text-gray-500 dark:text-gray-400">
-                {q.origin === 'canned'
-                  ? 'canned'
+                {/* Canned and example questions are seeded, never typed, so asks mean nothing there. */}
+                {q.origin !== 'visitor'
+                  ? q.origin
                   : `${q.hitCount} asks, ${q.distinctSessions} session${q.distinctSessions === 1 ? '' : 's'}`}
               </span>
               {q.origin === 'example' && (
