@@ -134,6 +134,8 @@ export function createPublicMcpServer(deps: PublicMcpDeps): McpServer {
     guarded(log, 'search_background', async ({ query, k }) => {
       const client = deps.getRetrievalClient();
       if (!client) throw new Error('The knowledge service is not configured');
+      // The day the budgets are charged to, so a refund never lands on the next one.
+      const takenOn = searchBudget.today();
       const refused = searchBudget.takeSearch(clientKey);
       if (refused === 'global') {
         log.warn('Public MCP daily search cap reached');
@@ -152,8 +154,8 @@ export function createPublicMcpServer(deps: PublicMcpDeps): McpServer {
         return json({ chunks: result.chunks.slice(0, k).map(toPublicChunk) });
       } catch (err) {
         // A failed retrieval costs no embedding we can count on: give it back.
-        searchBudget.refundSearch(clientKey);
-        if (recorded) searchBudget.refundRecord(clientKey);
+        searchBudget.refundSearch(clientKey, takenOn);
+        if (recorded) searchBudget.refundRecord(clientKey, takenOn);
         throw err;
       }
     }),

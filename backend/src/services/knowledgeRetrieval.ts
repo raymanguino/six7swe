@@ -54,8 +54,10 @@ const retrievalError: KnowledgeErrorFactory = (message, options) =>
  */
 export interface RecordQuestion {
   /**
-   * The browser's random per-session id for chat; a fresh random id per call
-   * for the public MCP endpoint (#205), so each MCP question is one session.
+   * The browser's random per-session id for chat. For the public MCP endpoint
+   * (#205), the client's stable id (an HMAC of its client key with a
+   * per-process secret), so one client asking the same thing twice is one
+   * session; a restart gives every client a new id.
    */
   sessionId: string;
 }

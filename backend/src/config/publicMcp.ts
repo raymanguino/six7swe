@@ -17,7 +17,9 @@
  * replica, so they are global; with more replicas they would apply per
  * replica, and a restart resets them.
  *
- * A missing or malformed value falls back to its default.
+ * A missing or malformed value falls back to its default. The four daily
+ * caps may be 0: no public searches, or none recorded in the eval set. The
+ * rate limit must be at least 1.
  */
 export interface PublicMcpConfig {
   rateLimitMax: number;
@@ -37,11 +39,22 @@ export const DEFAULT_PUBLIC_MCP_CONFIG: PublicMcpConfig = {
   clientDailyRecordCap: 5,
 };
 
-function positiveInt(raw: string | undefined, fallback: number): number {
+/** An integer env value of at least `min`, or `fallback` when missing or malformed. */
+function intAtLeast(raw: string | undefined, min: number, fallback: number): number {
   const n = Number(raw);
-  if (!raw || !Number.isInteger(n) || n < 1) return fallback;
+  if (!raw || !Number.isInteger(n) || n < min) return fallback;
   return n;
 }
+
+/** The rate limit needs at least one request; a daily cap of 0 turns its use off. */
+const MINIMUM: Record<keyof PublicMcpConfig, number> = {
+  rateLimitMax: 1,
+  rateLimitWindowMs: 1,
+  dailySearchCap: 0,
+  clientDailySearchCap: 0,
+  dailyRecordCap: 0,
+  clientDailyRecordCap: 0,
+};
 
 const ENV_NAMES: Record<keyof PublicMcpConfig, string> = {
   rateLimitMax: 'PUBLIC_MCP_RATE_LIMIT_MAX',
@@ -57,7 +70,7 @@ export function getPublicMcpConfig(
 ): PublicMcpConfig {
   const config = { ...DEFAULT_PUBLIC_MCP_CONFIG };
   for (const key of Object.keys(ENV_NAMES) as (keyof PublicMcpConfig)[]) {
-    config[key] = positiveInt(env[ENV_NAMES[key]], DEFAULT_PUBLIC_MCP_CONFIG[key]);
+    config[key] = intAtLeast(env[ENV_NAMES[key]], MINIMUM[key], DEFAULT_PUBLIC_MCP_CONFIG[key]);
   }
   return config;
 }

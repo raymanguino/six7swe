@@ -6,10 +6,16 @@
 export interface DailyCap {
   /** Spends one use of `key`'s budget; false (and nothing spent) when today's is gone. */
   tryTake(key?: string): boolean;
-  /** Gives back one use taken today, e.g. when the work it paid for failed. */
-  refund(key?: string): void;
+  /**
+   * Gives back one use, e.g. when the work it paid for failed. With
+   * `takenOn` (from `today()` at the take), a use taken before the day rolled
+   * is not given back: it was charged to a day whose counts are gone.
+   */
+  refund(key?: string, takenOn?: string): void;
   /** Uses left today for `key`. */
   remaining(key?: string): number;
+  /** The current UTC day, to pass to `refund` as `takenOn`. */
+  today(): string;
 }
 
 /** The UTC calendar day, e.g. `2026-11-20`. */
@@ -40,8 +46,9 @@ export function createDailyCap(limit: number, now: () => number = Date.now): Dai
       used.set(key, n + 1);
       return true;
     },
-    refund(key = '') {
+    refund(key = '', takenOn?: string) {
       roll();
+      if (takenOn !== undefined && takenOn !== day) return;
       const n = used.get(key) ?? 0;
       if (n <= 1) used.delete(key);
       else used.set(key, n - 1);
@@ -49,6 +56,10 @@ export function createDailyCap(limit: number, now: () => number = Date.now): Dai
     remaining(key = '') {
       roll();
       return Math.max(0, limit - (used.get(key) ?? 0));
+    },
+    today() {
+      roll();
+      return day;
     },
   };
 }
@@ -67,12 +78,17 @@ export type SearchRefusal = 'global' | 'client';
 export interface SearchBudget {
   /** Takes a search for `client`, or says which cap refused it (nothing spent then). */
   takeSearch(client: string): SearchRefusal | null;
-  /** Gives back a search whose retrieval failed. */
-  refundSearch(client: string): void;
+  /**
+   * Gives back a search whose retrieval failed. `takenOn` is `today()` at the
+   * take: a search taken before the UTC day rolled is not given back.
+   */
+  refundSearch(client: string, takenOn: string): void;
   /** Whether this search may be recorded; spends the allowance when it may. */
   takeRecord(client: string): boolean;
-  /** Gives back a record allowance whose retrieval failed. */
-  refundRecord(client: string): void;
+  /** Gives back a record allowance whose retrieval failed (see `refundSearch`). */
+  refundRecord(client: string, takenOn: string): void;
+  /** The current UTC day, read just before a take and passed to the refunds. */
+  today(): string;
 }
 
 export interface SearchBudgetLimits {
@@ -100,9 +116,9 @@ export function createSearchBudget(
       }
       return null;
     },
-    refundSearch(client) {
-      searches.refund();
-      clientSearches.refund(client);
+    refundSearch(client, takenOn) {
+      searches.refund('', takenOn);
+      clientSearches.refund(client, takenOn);
     },
     takeRecord(client) {
       if (!clientRecords.tryTake(client)) return false;
@@ -112,9 +128,11 @@ export function createSearchBudget(
       }
       return true;
     },
-    refundRecord(client) {
-      records.refund();
-      clientRecords.refund(client);
+    refundRecord(client, takenOn) {
+      records.refund('', takenOn);
+      clientRecords.refund(client, takenOn);
     },
+    // Every cap reads the same clock, so any of them names the day.
+    today: () => searches.today(),
   };
 }
