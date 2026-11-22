@@ -354,7 +354,8 @@ describe('getPublicMcpConfig', () => {
       getPublicMcpConfig({
         PUBLIC_MCP_RATE_LIMIT_MAX: '5',
         PUBLIC_MCP_RATE_LIMIT_WINDOW_MS: '60000',
-        PUBLIC_MCP_DAILY_SEARCH_CAP: '0',
+        PUBLIC_MCP_DAILY_SEARCH_CAP: '-1',
+        PUBLIC_MCP_CLIENT_DAILY_SEARCH_CAP: '2.5',
         PUBLIC_MCP_CLIENT_DAILY_RECORD_CAP: '2',
       }),
     ).toEqual({
@@ -363,6 +364,16 @@ describe('getPublicMcpConfig', () => {
       rateLimitWindowMs: 60_000,
       clientDailyRecordCap: 2,
     });
+  });
+
+  it('lets a daily cap be 0, but not the rate limit', () => {
+    expect(
+      getPublicMcpConfig({
+        PUBLIC_MCP_RATE_LIMIT_MAX: '0',
+        PUBLIC_MCP_DAILY_SEARCH_CAP: '0',
+        PUBLIC_MCP_CLIENT_DAILY_RECORD_CAP: '0',
+      }),
+    ).toEqual({ ...DEFAULT_PUBLIC_MCP_CONFIG, dailySearchCap: 0, clientDailyRecordCap: 0 });
   });
 });
 
@@ -397,6 +408,17 @@ describe('createDailyCap', () => {
     cap.refund('a');
     expect(cap.tryTake('a')).toBe(true);
   });
+
+  it('does not give back a use taken before the day rolled', () => {
+    let now = Date.parse('2026-11-20T23:59:59Z');
+    const cap = createDailyCap(2, () => now);
+    const takenOn = cap.today();
+    expect(cap.tryTake()).toBe(true);
+    now = Date.parse('2026-11-21T00:00:01Z');
+    expect(cap.tryTake()).toBe(true);
+    cap.refund('', takenOn);
+    expect(cap.remaining()).toBe(1);
+  });
 });
 
 describe('createSearchBudget', () => {
@@ -414,7 +436,7 @@ describe('createSearchBudget', () => {
     expect(budget.takeSearch('b')).toBeNull();
     expect(budget.takeSearch('c')).toBe('global');
     // 'c' was refused globally, so its own allowance is untouched.
-    budget.refundSearch('b');
+    budget.refundSearch('b', budget.today());
     expect(budget.takeSearch('c')).toBeNull();
   });
 
@@ -422,7 +444,7 @@ describe('createSearchBudget', () => {
     const budget = createSearchBudget(limits);
     expect(budget.takeRecord('a')).toBe(true);
     expect(budget.takeRecord('b')).toBe(false);
-    budget.refundRecord('a');
+    budget.refundRecord('a', budget.today());
     expect(budget.takeRecord('b')).toBe(true);
   });
 });

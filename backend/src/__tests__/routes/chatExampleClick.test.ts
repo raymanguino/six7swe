@@ -79,6 +79,7 @@ describe('POST /chat with a clicked example', () => {
   it('answers even when counting the click fails', async () => {
     recordClick?.mockRejectedValueOnce(new Error('down'));
     const res = await post({ message: EXAMPLE, sessionId: SESSION, example: true });
+    expect(recordClick).toHaveBeenCalledWith(EXAMPLE);
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ response: 'ok' });
   });
@@ -121,5 +122,21 @@ describe('createExampleClickClient', () => {
     expect(actual.countExampleClick('Something typed', log, client)).toBe(false);
     expect(actual.countExampleClick(EXAMPLE, log, client)).toBe(true);
     expect(client.recordClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs and swallows a failed count, without the message', async () => {
+    const client = { recordClick: jest.fn().mockRejectedValue(new Error('down')) };
+    const log = { warn: jest.fn() };
+    const actual: typeof import('../../services/knowledge/exampleClicks') = jest.requireActual(
+      '../../services/knowledge/exampleClicks',
+    );
+    expect(actual.countExampleClick(EXAMPLE, log, client)).toBe(true);
+    // The rejection settles after the call returns.
+    for (let tick = 0; tick < 3; tick++) await Promise.resolve();
+    expect(log.warn).toHaveBeenCalledWith(
+      { source: 'knowledge', error: 'down' },
+      'Counting a chat example click failed',
+    );
+    expect(JSON.stringify(log.warn.mock.calls)).not.toContain(EXAMPLE);
   });
 });
