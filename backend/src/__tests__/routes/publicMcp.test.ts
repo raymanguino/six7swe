@@ -413,11 +413,11 @@ describe('createDailyCap', () => {
   it('does not give back a use taken before the day rolled', () => {
     let now = Date.parse('2026-11-20T23:59:59Z');
     const cap = createDailyCap(2, () => now);
-    const takenOn = cap.today();
-    expect(cap.tryTake()).toBe(true);
+    const takenAt = now;
+    expect(cap.tryTake('', takenAt)).toBe(true);
     now = Date.parse('2026-11-21T00:00:01Z');
     expect(cap.tryTake()).toBe(true);
-    cap.refund('', takenOn);
+    cap.refund('', takenAt);
     expect(cap.remaining()).toBe(1);
   });
 });
@@ -432,20 +432,35 @@ describe('createSearchBudget', () => {
 
   it('refuses per client first, then globally, spending nothing on a refusal', () => {
     const budget = createSearchBudget(limits);
-    expect(budget.takeSearch('a')).toBeNull();
-    expect(budget.takeSearch('a')).toBe('client');
-    expect(budget.takeSearch('b')).toBeNull();
-    expect(budget.takeSearch('c')).toBe('global');
+    expect(budget.takeSearch('a', budget.now())).toBeNull();
+    expect(budget.takeSearch('a', budget.now())).toBe('client');
+    expect(budget.takeSearch('b', budget.now())).toBeNull();
+    expect(budget.takeSearch('c', budget.now())).toBe('global');
     // 'c' was refused globally, so its own allowance is untouched.
-    budget.refundSearch('b', budget.today());
-    expect(budget.takeSearch('c')).toBeNull();
+    budget.refundSearch('b', budget.now());
+    expect(budget.takeSearch('c', budget.now())).toBeNull();
   });
 
   it('records within both allowances', () => {
     const budget = createSearchBudget(limits);
-    expect(budget.takeRecord('a')).toBe(true);
-    expect(budget.takeRecord('b')).toBe(false);
-    budget.refundRecord('a', budget.today());
-    expect(budget.takeRecord('b')).toBe(true);
+    expect(budget.takeRecord('a', budget.now())).toBe(true);
+    expect(budget.takeRecord('b', budget.now())).toBe(false);
+    budget.refundRecord('a', budget.now());
+    expect(budget.takeRecord('b', budget.now())).toBe(true);
+  });
+  it('charges and refunds one call on the day it started, across midnight', () => {
+    let clock = Date.parse('2026-11-20T23:59:59.999Z');
+    const budget = createSearchBudget(
+      { ...limits, dailySearchCap: 1, clientDailySearchCap: 5 },
+      () => clock,
+    );
+    const at = budget.now();
+    clock = Date.parse('2026-11-21T00:00:00.001Z');
+    // Taken at the call's own time: charged to the 20th, whose day is over.
+    expect(budget.takeSearch('a', at)).toBeNull();
+    budget.refundSearch('a', at);
+    // The refund did not credit the 21st: its single search is still there, once.
+    expect(budget.takeSearch('b', budget.now())).toBeNull();
+    expect(budget.takeSearch('c', budget.now())).toBe('global');
   });
 });
