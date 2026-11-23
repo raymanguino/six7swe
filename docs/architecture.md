@@ -162,7 +162,7 @@ auth context has registered one.
 
 | Module | Routes |
 |---|---|
-| `routes/portfolio.ts` | `GET /resume` (the knowledge service primary resume, cached by corpus version), `POST /chat`, `POST /fitcheck`, `POST /contact` (to `CONTACT_TO_EMAIL`) |
+| `routes/portfolio.ts` | `GET /resume` (the knowledge service primary resume, cached by corpus version), `POST /chat`, `POST /fitcheck`, `POST /contact` (to `CONTACT_TO_EMAIL`), and the public MCP server below (`routes/publicMcp.ts`) |
 | `routes/jobHunt.ts` | `/job-hunt/jobs`, `/job-hunt/profiles` (CRUD), `/job-hunt/profiles/:id/jobs`, `/job-hunt/profiles/:id/jobs/refresh[/:refreshId]`, `/job-hunt/users` |
 | `routes/knowledge.ts` | `GET /knowledge/access`; owner only: `/knowledge/documents` (list, upload, get, text, primary, delete), `POST /knowledge/search` |
 
@@ -178,6 +178,63 @@ Prompts live in `backend/src/services/ai/prompts/`. `minimaxService.ts` is
 transport only: it sends the request, parses the response and applies the
 supplied Zod schema. A malformed model response is an error, never a
 fabricated result.
+
+**Public MCP server** — `POST /mcp/public` (#205; `routes/publicMcp.ts`,
+`services/publicMcp/`). A stateless streamable-HTTP MCP endpoint that anyone's
+MCP client can use, with no key, so a prospective employer's AI can query the
+owner's background directly. It is not the knowledge service's `/mcp`, which
+stays the owner's private server; the knowledge service keeps no public
+domain. Add it to Claude Code with:
+
+```sh
+claude mcp add --transport http six7swe https://<backend-host>/mcp/public
+```
+
+- **Tools**, both `readOnlyHint: true`: `search_background { query, k? }`
+  (`/retrieve` through the backend's retrieval client; `k` defaults to 6, at
+  most 8; returns each chunk's source file, heading, content and similarity)
+  and `get_resume_pdf` (the same cached PDF `/resume` serves, as an embedded
+  `application/pdf` resource; a tool error when there is none or it is over
+  5 MB). Everything uploaded is meant to be public, and the risk scan (#212)
+  holds back anything flagged until the owner approves it.
+- **Requests.** Each request gets a fresh `McpServer` and transport; `GET` and
+  `DELETE` answer 405. Every tool failure is logged and answered with a
+  generic message. The backend calls only the knowledge service's `service`
+  routes, with `KNOWLEDGE_SERVICE_KEY`.
+- **Limits.** Per client (the last `X-Forwarded-For` entry, as for `/chat`),
+  `PUBLIC_MCP_RATE_LIMIT_MAX` requests per `PUBLIC_MCP_RATE_LIMIT_WINDOW_MS`
+  (default 20 per 10 minutes; an MCP handshake is two or three requests);
+  over it, 429 with a JSON-RPC error. And `PUBLIC_MCP_DAILY_SEARCH_CAP`
+  `search_background` calls per UTC day across all clients (default 500, since
+  each costs an embedding), and `PUBLIC_MCP_CLIENT_DAILY_SEARCH_CAP` per client
+  (default 50), so one client cannot spend everyone's day; over either, the tool
+  answers an error until 00:00 UTC. A search whose retrieval fails is given
+  back. The daily caps are counted in the process's memory: the backend runs
+  one replica, so they are global, but a restart resets them, and with more
+  replicas they would apply per replica.
+- **Eval set.** Only some searches are recorded: `PUBLIC_MCP_DAILY_RECORD_CAP`
+  a day across all clients (default 100) and the first
+  `PUBLIC_MCP_CLIENT_DAILY_RECORD_CAP` per client (default 5). The rest are
+  answered but not recorded, so public searches cannot flood the owner's
+  500-candidate pool. A recorded search uses the client's stable session id (an
+  HMAC of the client key with a per-process random salt), so one client asking
+  the same thing twice counts as one session. Chat keeps its
+  per-browser-session counting.
+- **CORS** is unchanged. MCP clients run server-side and send no `Origin`,
+  which CORS does not block; browsers on other origins still get no CORS
+  grant.
+
+**Chat examples** — the widget shows a random 3 or 4 of
+`CHAT_EXAMPLE_QUESTIONS` (`packages/knowledge-types/src/chatExamples.ts`, at
+most 6; the frontend compiles that one dependency-free module from source
+through a Vite alias). The knowledge service seeds each as a pinned active eval
+question. A clicked example is sent to `/chat` with `example: true`; when the
+message is exactly an example, the backend leaves out the session id (so it is
+not recorded as a typed question) and, once the turn has been answered, has
+the knowledge service bump that example's `example_clicks` in the background
+(`POST /eval/example-clicks`, service key); a failed turn counts nothing. The click rides on the chat request it starts, so it is public,
+rate-limited by `/chat`'s limit, accepts only exact example texts, and cannot
+be inflated without spending a chat turn.
 
 ## Data Layer
 
@@ -247,9 +304,10 @@ are no portfolio tables and no published profile. Full details are in
   Every change bumps `corpus_version`, which callers use as a cache key and a
   staleness signal.
 - **Access.** Callers authenticate with the `x-knowledge-key` header, using one
-  of two keys: the service key opens only the retrieval routes, and the owner
-  key opens only the owner routes (documents and search). On Railway the
-  service is private-network only. Raw files live in the private
+  of two keys: the service key opens only the service routes (retrieval, the
+  resume PDF and example clicks), and the owner key opens only the owner routes
+  (documents, search and the eval set). On Railway the service is
+  private-network only; the public MCP server is the backend's. Raw files live in the private
   `portfolio-files` Storage bucket.
 - **Owner gate.** The owner's Knowledge page never calls the service. It calls
   the backend's `/knowledge/*` proxy (`backend/src/routes/knowledge.ts`), which
@@ -358,8 +416,11 @@ imports:
 | `JOB_REFRESH_STALE_MINUTES` | backend | Abandoned refresh threshold (default 30) |
 | `OWNER_AUTH_ID` | backend, knowledge | Supabase subject that owns the knowledge base |
 | `KNOWLEDGE_URL` | backend | Knowledge service base URL, used by retrieval (chat, fitcheck, `/resume`, job hunter) and the owner proxy (private network on Railway); required in production |
-| `KNOWLEDGE_SERVICE_KEY` | backend, knowledge | Service credential for retrieval, `/version` and `/resume.pdf`; required in production |
+| `KNOWLEDGE_SERVICE_KEY` | backend, knowledge | Service credential for retrieval, `/version`, `/resume.pdf` and example clicks; required in production |
 | `KNOWLEDGE_OWNER_KEY` | backend, knowledge | Owner credential the backend proxy sends to the service |
+| `PUBLIC_MCP_RATE_LIMIT_MAX`, `PUBLIC_MCP_RATE_LIMIT_WINDOW_MS` | backend | Public MCP requests per client per window (default 20 per 600000 ms) |
+| `PUBLIC_MCP_DAILY_SEARCH_CAP`, `PUBLIC_MCP_CLIENT_DAILY_SEARCH_CAP` | backend | Public MCP `search_background` calls per UTC day, all clients and per client (default 500 and 50; per process) |
+| `PUBLIC_MCP_DAILY_RECORD_CAP`, `PUBLIC_MCP_CLIENT_DAILY_RECORD_CAP` | backend | Public MCP searches recorded in the eval set per UTC day, all clients and per client (default 100 and 5; per process) |
 | `VITE_API_URL` | frontend | Backend base URL |
 | `VITE_SUPABASE_URL` | frontend | Supabase project URL |
 | `VITE_SUPABASE_ANON_KEY` | frontend | Supabase anon key |
