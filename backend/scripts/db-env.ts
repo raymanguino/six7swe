@@ -12,8 +12,16 @@ import dotenv from 'dotenv';
 import path from 'node:path';
 
 export interface DatabaseTarget {
-  /** The connection string. */
+  /**
+   * The connection as the table owner, for migrations and the lockdown:
+   * `DATABASE_MIGRATION_URL`, or `DATABASE_URL` when that is unset.
+   */
   databaseUrl: string;
+  /**
+   * The backend's runtime connection, `DATABASE_URL`. `db:secure` provisions
+   * its role when it differs from the owner's (see src/db/appRole.ts).
+   */
+  appDatabaseUrl: string;
   /** True when the hosted database was selected. */
   remote: boolean;
 }
@@ -39,20 +47,26 @@ export const assumesYes = process.argv.includes('--yes');
  * `.env` points at the local Supabase stack; `.env.remote` points at the
  * hosted project. Values already in the environment win over both, so a
  * caller can override the URL without editing a file.
+ *
+ * The migrations connect as the table owner through `DATABASE_MIGRATION_URL`.
+ * Without it they use `DATABASE_URL`, which is the local default: the local
+ * stack's `postgres` user owns the tables and the backend connects as it too.
  */
 export function resolveDatabaseTarget(): DatabaseTarget {
   const envFile = wantsRemote ? '.env.remote' : '.env';
   dotenv.config({ path: path.resolve(__dirname, '..', envFile) });
 
-  const databaseUrl = process.env.DATABASE_URL;
+  const appDatabaseUrl = process.env.DATABASE_URL;
 
-  if (!databaseUrl) {
+  if (!appDatabaseUrl) {
     throw new Error(
       `DATABASE_URL is not set. Add it to backend/${envFile} or export it before running this script.`,
     );
   }
 
-  return { databaseUrl, remote: wantsRemote };
+  const databaseUrl = process.env.DATABASE_MIGRATION_URL || appDatabaseUrl;
+
+  return { databaseUrl, appDatabaseUrl, remote: wantsRemote };
 }
 
 /** The SSL settings postgres.js needs for a hosted connection. */
@@ -63,7 +77,7 @@ export function sslOptions(remote: boolean): { ssl: 'require' } | { ssl: undefin
 /**
  * Applies the pending migrations to the selected target.
  *
- * `DATABASE_URL` is passed through explicitly rather than relying on the
+ * The owner connection is passed through explicitly rather than relying on the
  * environment: dotenv does not override a variable that is already set, so
  * the local .env would otherwise win over the --remote target.
  */
@@ -71,7 +85,13 @@ export function runMigrations(target: DatabaseTarget): void {
   const result = spawnSync('npx', ['drizzle-kit', 'migrate'], {
     cwd: path.join(__dirname, '..'),
     stdio: 'inherit',
-    env: { ...process.env, DATABASE_URL: target.databaseUrl },
+    // Both names carry the owner connection: drizzle.config.ts prefers
+    // DATABASE_MIGRATION_URL, and an inherited one must not point elsewhere.
+    env: {
+      ...process.env,
+      DATABASE_URL: target.databaseUrl,
+      DATABASE_MIGRATION_URL: target.databaseUrl,
+    },
     shell: true,
   });
 

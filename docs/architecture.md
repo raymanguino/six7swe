@@ -345,7 +345,8 @@ imports:
 
 | Variable | Scope | Purpose |
 |---|---|---|
-| `DATABASE_URL` | backend | PostgreSQL connection string (the job hunter's tables) |
+| `DATABASE_URL` | backend | PostgreSQL connection string (the job hunter's tables), as a runtime role that owns no table |
+| `DATABASE_MIGRATION_URL` | backend (pre-deploy) | The table owner's connection, for `db:migrate`, `db:secure` and `db:reset` only; falls back to `DATABASE_URL`, and the start command strips it from the server |
 | `MINIMAX_API_KEY` | backend | AI provider key |
 | `RESEND_API_KEY` | backend | Contact form delivery |
 | `RESEND_FROM_EMAIL` | backend | Sender address for outbound mail |

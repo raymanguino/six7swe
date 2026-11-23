@@ -5,6 +5,13 @@ import {
 } from '../src/services/jobHunt/standalone';
 import * as refreshStatusService from '../src/db/api/refreshStatus';
 import type { RefreshUpdateStatus } from '../src/db/schema/jobHunt';
+import { dropMigrationUrl, MIGRATION_URL_WARNING } from '../src/config/migrationUrl';
+
+// The refresh launches Chrome. The table owner's connection is for the migration scripts only,
+// so drop it before anything else runs (see src/config/migrationUrl.ts).
+if (dropMigrationUrl() && process.env.NODE_ENV === 'production') {
+  process.stderr.write(`${MIGRATION_URL_WARNING}\n`);
+}
 
 interface Args {
   profileIds: number[];

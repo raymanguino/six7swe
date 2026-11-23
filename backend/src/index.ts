@@ -7,6 +7,7 @@ import { FastifyReply, FastifyRequest } from 'fastify';
 import { UnauthenticatedUser } from './constants';
 import { CORS_METHODS, getCorsOrigin } from './config/cors';
 import { getSafeEnv } from './config/env';
+import { dropMigrationUrl, MIGRATION_URL_WARNING } from './config/migrationUrl';
 import { assertKnowledgeRetrievalConfigured } from './config/knowledgeRetrieval';
 import * as plugins from './plugins';
 import authPlugin from './plugins/auth';
@@ -16,6 +17,10 @@ import { reapStaleRefreshes } from './services/jobHunt/standalone';
 import { setRetrievalLogger } from './services/knowledgeRetrieval';
 import Fastify from 'fastify';
 import path from 'path';
+
+// The table owner's connection is for the migration scripts only. Drop it before anything else
+// runs, so no code in this process and no Chrome the scraper launches can read it.
+const startedWithMigrationUrl = dropMigrationUrl();
 
 const fastify = Fastify({
   logger: {
@@ -102,6 +107,10 @@ const start = async () => {
   try {
     const port = parseInt(process.env.PORT || '3000');
     const host = process.env.HOST || '0.0.0.0';
+
+    if (startedWithMigrationUrl && process.env.NODE_ENV === 'production') {
+      fastify.log.warn(MIGRATION_URL_WARNING);
+    }
 
     // Validate CORS first so a bad config fails before anything touches the database. The plugin
     // options above evaluate the same function again when it loads.

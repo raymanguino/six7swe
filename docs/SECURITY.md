@@ -31,7 +31,7 @@ invalidate a value that has already been disclosed.
 | 1 | `MINIMAX_API_KEY` | minimax.io | Account → API keys → revoke + regenerate | `backend/.env`, Railway backend variables |
 | 2 | `RESEND_API_KEY` | resend.com | Account → API Keys → revoke + regenerate | `backend/.env`, Railway backend variables |
 | 3 | `SUPABASE_SECRET_KEY` | Supabase project | Project → Settings → API Keys | Railway backend variables (if still set) |
-| 4 | `DATABASE_URL` (password) | Supabase project | Project → Settings → Database → reset password | `backend/.env`, Railway backend variables |
+| 4 | `DATABASE_URL` (password) | Supabase project | Project → Settings → Database → reset password (the owner, `DATABASE_MIGRATION_URL`); the runtime role's password is the one in `DATABASE_URL`, and the next `db:secure` sets it | `backend/.env`, Railway backend variables |
 | 5 | Second Supabase project password | Supabase project (us-west-2) | Project → Settings → Database → reset password | `backend/.env` (remove if unused) |
 | 6 | ~~MCP `x-brain-key`~~ (retired) | MCP edge function | Open-brain MCP server → key management: **revoke** it | Nothing reads it since #213 removed the open-brain MCP client and every `MCP_PORTFOLIO_*` variable. Revoke the key, and delete any `MCP_*` line left in `backend/.env` or Railway |
 
@@ -119,8 +119,20 @@ leaves the function callable, so it has to be revoked from `PUBLIC`. That
 revoke must use the **global** `ALTER DEFAULT PRIVILEGES` form; the
 schema-scoped form leaves the built-in EXECUTE privilege in place.
 
-The backend is unaffected: it connects as the table owner, and an owner
-bypasses RLS.
+The backend connects as its own runtime role (`DATABASE_URL`), not as the
+table owner, so a process that leaks its environment, such as a compromised
+`--no-sandbox` Chrome in the job scraper, does not leak the owner's rights.
+`db:secure` connects as the owner (`DATABASE_MIGRATION_URL`), creates the
+runtime role from `DATABASE_URL`'s user and password, grants it `SELECT`,
+`INSERT`, `UPDATE` and `DELETE` on every table and `USAGE` on every sequence,
+adds one policy per table that admits only that role, and sets the owner's
+default privileges so a new table gets the same grants. RLS stays on, so
+`anon` and `authenticated` still see nothing. It then checks the role is not a
+superuser, does not bypass RLS, is not a member of `postgres`, owns no table and
+cannot create objects in `public`, and fails otherwise
+(`backend/src/db/appRole.ts`; `DEPLOYMENT.md`, "Database roles"). Without
+`DATABASE_MIGRATION_URL` (local development) the backend connects as the owner,
+which bypasses RLS.
 
 ### Running it
 
@@ -130,9 +142,9 @@ pnpm run db:secure -- --remote    # the hosted database
 ```
 
 **This must run after every migration.** The Drizzle schema is the
-source of truth for the tables, but Drizzle ORM 0.33 cannot express row level
-security or role grants, so the rules live in `backend/src/db/security.ts`
-and have to be applied separately. `db:reset` applies them automatically, and
+source of truth for the tables, but the grants and policies name a role that
+comes from the environment, so the rules live in `backend/src/db/security.ts`
+and `backend/src/db/appRole.ts` and have to be applied separately. `db:reset` applies them automatically, and
 the backend's Railway `preDeployCommand` (`.railway/railway.ts`) runs `db:deploy`,
 which runs `db:migrate` followed by `db:secure`.
 
@@ -145,7 +157,8 @@ curl "https://<project-ref>.supabase.co/rest/v1/users?select=email" \
 
 A closed table returns `permission denied for table users`.
 
-The regression test is `backend/src/__tests__/db/security.test.ts`.
+The regression tests are `backend/src/__tests__/db/security.test.ts` and
+`backend/src/__tests__/db/appRole.test.ts`.
 
 ### What is deliberately left alone
 
