@@ -30,7 +30,8 @@
     "test": "pnpm --filter @six7swe/backend test && pnpm --filter @six7swe/knowledge test",
     "test:knowledge": "pnpm --filter @six7swe/knowledge test",
     "test:watch": "pnpm --filter @six7swe/backend test:watch",
-    "test:coverage": "pnpm --filter @six7swe/backend test:coverage"
+    "test:coverage": "pnpm --filter @six7swe/backend test:coverage",
+    "pr:size": "pnpm --filter @six7swe/backend pr:size"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
