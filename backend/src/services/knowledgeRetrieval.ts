@@ -53,7 +53,12 @@ const retrievalError: KnowledgeErrorFactory = (message, options) =>
  * question alone: that is what the service stores.
  */
 export interface RecordQuestion {
-  /** The browser's random per-session id. */
+  /**
+   * The browser's random per-session id for chat. For the public MCP endpoint
+   * (#205), the client's stable id (an HMAC of its client key with a
+   * per-process secret), so one client asking the same thing twice is one
+   * session; a restart gives every client a new id.
+   */
   sessionId: string;
 }
 
@@ -297,6 +302,22 @@ export function createCachedRetriever(
   };
 }
 
+let defaultClient: RetrievalClient | null | undefined;
+
+/**
+ * The process-wide uncached client built from the environment, or null when
+ * `KNOWLEDGE_URL` / `KNOWLEDGE_SERVICE_KEY` are not set. For callers that need
+ * their own `k` or no cache: `/resume`'s version reads and the public MCP
+ * endpoint's searches.
+ */
+export function getDefaultRetrievalClient(): RetrievalClient | null {
+  if (defaultClient === undefined) {
+    const config = getKnowledgeRetrievalConfig();
+    defaultClient = config ? createHttpRetrievalClient(config) : null;
+  }
+  return defaultClient;
+}
+
 let defaultRetriever: CachedRetriever | null | undefined;
 let retrievalLogger: RetrievalLogger | undefined;
 
@@ -328,4 +349,5 @@ export function getDefaultRetriever(): CachedRetriever | null {
 /** For tests: forget the retriever so the next call reads the environment again. */
 export function resetDefaultRetriever(): void {
   defaultRetriever = undefined;
+  defaultClient = undefined;
 }
