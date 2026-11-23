@@ -23,6 +23,7 @@
     "qa:review": "tsx scripts/review-pr.ts",
     "qa:calibration": "tsx scripts/qa-calibration.ts",
     "qa:verdicts": "tsx scripts/qa-verdicts.ts",
+    "pr:size": "tsx scripts/pr-size.ts",
     "chat:eval": "pnpm --filter @six7swe/knowledge-types build && tsx scripts/chat-eval.ts",
     "browsers:install": "puppeteer browsers install chrome"
   },
