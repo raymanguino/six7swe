@@ -134,9 +134,10 @@ export function createPublicMcpServer(deps: PublicMcpDeps): McpServer {
     guarded(log, 'search_background', async ({ query, k }) => {
       const client = deps.getRetrievalClient();
       if (!client) throw new Error('The knowledge service is not configured');
-      // The day the budgets are charged to, so a refund never lands on the next one.
-      const takenOn = searchBudget.today();
-      const refused = searchBudget.takeSearch(clientKey);
+      // One timestamp for every take and refund of this call, so they all land
+      // on the same UTC day, even when the call straddles midnight.
+      const at = searchBudget.now();
+      const refused = searchBudget.takeSearch(clientKey, at);
       if (refused === 'global') {
         log.warn('Public MCP daily search cap reached');
         return failure(DAILY_CAP_ERROR);
@@ -144,7 +145,7 @@ export function createPublicMcpServer(deps: PublicMcpDeps): McpServer {
       if (refused === 'client') return failure(CLIENT_DAILY_CAP_ERROR);
       // Recorded for the eval set only within the record allowance, under the
       // client's stable session id.
-      const recorded = searchBudget.takeRecord(clientKey);
+      const recorded = searchBudget.takeRecord(clientKey, at);
       try {
         const result = await client.retrieve(
           query,
@@ -154,8 +155,8 @@ export function createPublicMcpServer(deps: PublicMcpDeps): McpServer {
         return json({ chunks: result.chunks.slice(0, k).map(toPublicChunk) });
       } catch (err) {
         // A failed retrieval costs no embedding we can count on: give it back.
-        searchBudget.refundSearch(clientKey, takenOn);
-        if (recorded) searchBudget.refundRecord(clientKey, takenOn);
+        searchBudget.refundSearch(clientKey, at);
+        if (recorded) searchBudget.refundRecord(clientKey, at);
         throw err;
       }
     }),
