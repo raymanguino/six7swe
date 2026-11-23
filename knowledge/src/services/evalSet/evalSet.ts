@@ -227,9 +227,18 @@ export function createEvalSet(deps: EvalSetDeps): EvalSet {
     if (existing.length === 0) {
       // The examples take their active slots below; the canned fill the rest.
       const room = Math.max(0, settings.activeSize - examples.length);
-      const canned = await embedAll(CANNED_EVAL_QUESTIONS.slice(0, room), 'canned questions');
-      if (await repo.seedIfEmpty(ownerId, canned, now())) {
-        log.info({ ownerId, count: canned.length }, 'Seeded the eval set');
+      try {
+        const canned = await embedAll(CANNED_EVAL_QUESTIONS.slice(0, room), 'canned questions');
+        if (await repo.seedIfEmpty(ownerId, canned, now())) {
+          log.info({ ownerId, count: canned.length }, 'Seeded the eval set');
+        }
+      } catch (err) {
+        // Like the examples below: the set stays empty for now and a call
+        // after SEED_RETRY_MS tries again, rather than every call hitting a
+        // down embedder (or failing the owner's view).
+        log.warn({ err, ownerId }, 'Could not seed the eval set; will retry');
+        retryAt.set(ownerId, now().getTime() + SEED_RETRY_MS);
+        return;
       }
     }
     // The examples are extra: the eval set keeps working when they cannot all
