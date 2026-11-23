@@ -12,8 +12,8 @@
     "packages/*"
   ],
   "scripts": {
-    "lint": "pnpm build:types && eslint . --ext .ts,.tsx",
-    "lint:fix": "pnpm build:types && eslint . --ext .ts,.tsx --fix",
+    "lint": "pnpm build:types && eslint .",
+    "lint:fix": "pnpm build:types && eslint . --fix",
     "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md}\"",
     "build": "pnpm --filter @six7swe/backend build && pnpm --filter @six7swe/knowledge build && pnpm --filter @six7swe/frontend build",
