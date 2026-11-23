@@ -8,6 +8,9 @@ import { UnauthenticatedUser } from './constants';
 import { CORS_METHODS, getCorsOrigin } from './config/cors';
 import { getSafeEnv } from './config/env';
 import { dropMigrationUrl, MIGRATION_URL_WARNING } from './config/migrationUrl';
+import { pgClient } from './db';
+import { assertRuntimeRoleIsSafe } from './db/appRole';
+import { OWNER_ROLE } from './db/security';
 import { assertKnowledgeRetrievalConfigured } from './config/knowledgeRetrieval';
 import * as plugins from './plugins';
 import authPlugin from './plugins/auth';
@@ -18,8 +21,9 @@ import { setRetrievalLogger } from './services/knowledgeRetrieval';
 import Fastify from 'fastify';
 import path from 'path';
 
-// The table owner's connection is for the migration scripts only. Drop it before anything else
-// runs, so no code in this process and no Chrome the scraper launches can read it.
+// The table owner's connection is for the migration scripts only. The start command's `env -u`
+// keeps it out of this process; this drop (after the hoisted imports) is a backstop, so later
+// code and the Chrome the scraper launches cannot read it.
 const startedWithMigrationUrl = dropMigrationUrl();
 
 const fastify = Fastify({
@@ -108,8 +112,10 @@ const start = async () => {
     const port = parseInt(process.env.PORT || '3000');
     const host = process.env.HOST || '0.0.0.0';
 
-    if (startedWithMigrationUrl && process.env.NODE_ENV === 'production') {
-      fastify.log.warn(MIGRATION_URL_WARNING);
+    if (process.env.NODE_ENV === 'production') {
+      if (startedWithMigrationUrl) fastify.log.warn(MIGRATION_URL_WARNING);
+      // Refuse to serve with the table owner's rights (DEPLOYMENT.md, "Database roles").
+      await assertRuntimeRoleIsSafe(pgClient, OWNER_ROLE);
     }
 
     // Validate CORS first so a bad config fails before anything touches the database. The plugin

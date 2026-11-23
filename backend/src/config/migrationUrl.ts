@@ -13,9 +13,9 @@ export const MIGRATION_URL_VARIABLE = 'DATABASE_MIGRATION_URL';
 /**
  * Removes the owner's connection string from this process's environment.
  *
- * A second line of defence behind the start command: the server and the
- * refresh runner call it first, so nothing in the process can read the
- * variable and the Chrome the scraper launches does not inherit it. It cannot
+ * A backstop behind the start command: the server and the refresh runner call
+ * it once their imports have loaded, so later code cannot read the variable
+ * and the Chrome the scraper launches does not inherit it. It cannot
  * scrub `/proc/<pid>/environ`, which keeps the environment the process started
  * with, which is why the start command has to remove it as well.
  *

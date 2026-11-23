@@ -120,46 +120,37 @@ policy and the watch paths.
 
 #### Database roles
 
-The backend runs a `--no-sandbox` Chrome for the job scraper, and anything that compromises it can
-read the server's environment. `DATABASE_URL` therefore connects as a role that can read and
-write the rows of the `public` tables but owns none of them: no `CREATE`, `ALTER`, `DROP` or
-`TRUNCATE`, and no way to turn row level security off. The table owner (`postgres`) connects
-only through `DATABASE_MIGRATION_URL`, which `db:migrate`, `db:secure` and `db:reset` use.
-Without `DATABASE_MIGRATION_URL` they fall back to `DATABASE_URL`, which is the local default:
-there the backend connects as `postgres` too.
+Anything that compromises the `--no-sandbox` scraper Chrome can read the server's environment, so
+`DATABASE_URL` connects as a runtime role that reads and writes rows but owns nothing (no DDL, no
+`TRUNCATE`, no turning RLS off). The owner (`postgres`) connects only through
+`DATABASE_MIGRATION_URL`, for `db:migrate`, `db:secure` and `db:reset`. The fallback to
+`DATABASE_URL` is local only: with `--remote` or `NODE_ENV=production` the scripts fail without
+`DATABASE_MIGRATION_URL` or when both URLs name the same role, and the server refuses to start if
+its role is a superuser, bypasses RLS, belongs to `postgres` or owns a `public` table. Chrome
+itself gets only `PATH`, `HOME`, locale, temp and font variables
+(`services/jobFetchers/browser.ts`).
 
-`db:secure` provisions the runtime role from `DATABASE_URL` itself. Over the owner connection it
-creates the role named by the URL's user (`six7swe_app.<project-ref>` on the Supabase pooler
-means the role `six7swe_app`) if it does not exist, sets its password to the URL's password
-(sent as a SCRAM-SHA-256 verifier, so the plain password never appears in a statement), grants
-it `SELECT`, `INSERT`, `UPDATE` and `DELETE` on every table and `USAGE` on every sequence, adds
-a row level security policy that admits only that role, and sets the owner's default privileges
-so a table a later migration creates gets the same grants. It then checks that the role is not
-a superuser, does not bypass row level security, cannot create roles or databases, is not a
-member of `postgres`, owns no table and cannot create objects in `public`, and fails the deploy
-if any of that is true. The pre-deploy command runs it on every deploy, so the runtime role is
-always in place before the new server starts.
+`db:secure` provisions the role from `DATABASE_URL` (user `six7swe_app.<project-ref>` on the
+pooler means role `six7swe_app`), in one transaction: create it if missing, set the URL's
+password (as a SCRAM verifier), check it, roll back if the check fails. The check rejects
+reserved names (`pg_*`, `supabase_*`, `anon`, ...), passwords under 32 characters, and a role
+that is a superuser, bypasses RLS, can create roles or databases or replicate, is a member of any
+role, owns any object in `public`, or can create there. It then grants row access, one RLS policy
+per table for that role, and default privileges for later tables.
 
-Provisioning on Railway, once (or to rotate the password, steps 2 and 4 only):
+Provisioning on Railway (to rotate the password, steps 1 and 2 with a new password):
 
-1. Set `DATABASE_MIGRATION_URL` on the backend service to the current owner connection string
-   (the value `DATABASE_URL` holds today, `postgresql://postgres.<project-ref>:<password>@...`).
-   It has to exist before the `railway config apply` that adds it as `preserve()`.
-2. Pick a password for the runtime role: printable ASCII, for example
-   `openssl rand -base64 32 | tr -d '/+='`. Nothing else stores it; the URL is the only copy.
-3. Apply `.railway/railway.ts` (see [Changing Railway config](#changing-railway-config)) so the
-   start command strips `DATABASE_MIGRATION_URL`, and deploy this change. With both URLs still
-   naming `postgres`, `db:secure` provisions nothing and the backend runs as before.
-4. Change `DATABASE_URL` to the same host, port and database with the runtime role:
+1. Generate the password: `openssl rand -hex 32` (URL-safe). The URL is the only copy.
+2. In the backend's variables, stage both changes together: `DATABASE_MIGRATION_URL` = the
+   current owner URL, and `DATABASE_URL` =
    `postgresql://six7swe_app.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres`.
-   Railway redeploys. The pre-deploy command creates the role (or resets its password) and
-   grants it, then the server starts as `six7swe_app`. The deploy log's `db:secure` step says
-   `The backend connects as six7swe_app`.
+3. Apply `.railway/railway.ts` ([Changing Railway config](#changing-railway-config)) and deploy
+   this change. The pre-deploy creates the role before the server starts; its log says
+   `The backend connects as six7swe_app`. A deploy of this code without the variables fails in
+   pre-deploy and leaves the old deployment serving.
 
-To go back to running as the owner, set `DATABASE_URL` to the owner connection again; the role
-and its grants stay in place and are harmless. A cron or one-off command that runs in the backend
-image should be prefixed with `env -u DATABASE_MIGRATION_URL` like the start command, unless it
-is a migration script.
+A cron or one-off command in the backend image should be prefixed with
+`env -u DATABASE_MIGRATION_URL` like the start command, unless it is a migration script.
 
 ### 2. Frontend Service
 

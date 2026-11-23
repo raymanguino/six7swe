@@ -25,25 +25,12 @@ import type postgres from 'postgres';
  *     `PUBLIC`; revoking it from `anon` alone would leave the grant in
  *     place for `anon` to inherit.
  *
- * When the backend connects as its own runtime role (`DATABASE_URL` names a
- * role other than the owner; see `appRole.ts`), that role is let back in:
- *
- *   - It gets SELECT, INSERT, UPDATE and DELETE on every table and USAGE on
- *     every sequence, and nothing else: no TRUNCATE, REFERENCES or TRIGGER,
- *     and no ownership, so no DDL.
- *   - Each table gets one policy that admits that role to every row. RLS
- *     stays on, so `anon` and `authenticated` still see nothing.
- *   - The owner's default privileges grant the same to tables and sequences
- *     a later migration creates. The policy for a new table is added the
- *     next time this runs, which `db:deploy` does right after the migration.
- *
- * When the backend connects as the owner (local development without
- * `DATABASE_MIGRATION_URL`), none of that is needed: an owner bypasses RLS.
- *
- * The tables live in the Drizzle schema, but the grants and policies depend
- * on a role name that comes from the environment, so this file is the source
- * of truth for the database's access rules and `db:secure` has to run after
- * every migration.
+ * A runtime role (`appRole.ts`) is let back in: SELECT, INSERT, UPDATE and
+ * DELETE on tables, USAGE on sequences, one policy per table admitting only it,
+ * and the same as default privileges for later tables. Without one (local
+ * development) the backend is the owner, which bypasses RLS. The role comes
+ * from the environment, so this file, not the Drizzle schema, holds these
+ * rules and `db:secure` has to run after every migration.
  */
 
 /** Roles that reach the database from a browser. */
@@ -52,16 +39,11 @@ const PUBLIC_ROLES = ['anon', 'authenticated'] as const;
 /** The role the migrations connect as, and the owner of the tables. */
 export const OWNER_ROLE = 'postgres';
 
-/**
- * The policy that admits the runtime role to every row. One fixed name, so a
- * change of runtime role replaces the policy instead of leaving the old one.
- */
+/** One fixed name, so a change of runtime role replaces the policy. */
 export const APP_POLICY = 'backend_app_access';
 
-/** What the runtime role may do with a table: read and write rows, nothing else. */
 const APP_TABLE_PRIVILEGES = 'SELECT, INSERT, UPDATE, DELETE';
 
-/** What the runtime role may do with a sequence: draw ids for inserts. */
 const APP_SEQUENCE_PRIVILEGES = 'USAGE, SELECT';
 
 /** Matches an unquoted Postgres identifier. */

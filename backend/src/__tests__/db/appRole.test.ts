@@ -15,48 +15,65 @@ import {
 } from '../../db/appRole';
 
 const OWNER = 'postgres://postgres.abcd:ownerpw@pooler.example.com:5432/postgres';
-const APP = 'postgres://six7swe_app.abcd:app%40pw@pooler.example.com:5432/postgres';
+const PASSWORD = 'a'.repeat(31) + '@';
+const app = (user: string, password = encodeURIComponent(PASSWORD)): string =>
+  `postgres://${user}.abcd:${password}@pooler.example.com:5432/postgres`;
+const APP = app('six7swe_app');
 
 describe('roleFromUrl', () => {
   it('drops the Supabase pooler project suffix from the user name', () => {
-    expect(roleFromUrl(APP)).toEqual({ role: 'six7swe_app', password: 'app@pw' });
-  });
-
-  it('reads a plain local user', () => {
-    expect(roleFromUrl('postgresql://postgres:postgres@127.0.0.1:54322/postgres')).toEqual({
-      role: 'postgres',
-      password: 'postgres',
-    });
+    expect(roleFromUrl(APP)).toEqual({ role: 'six7swe_app', password: PASSWORD });
   });
 
   it('rejects a role name that is not a plain identifier', () => {
     expect(() => roleFromUrl('postgres://App%22x:pw@host/db')).toThrow(/plain lower-case/);
   });
 
-  it('rejects something that is not a URL without echoing it', () => {
+  it('rejects a malformed URL or escape without echoing it', () => {
     expect(() => roleFromUrl('not a url secret')).toThrow('not a valid connection string');
+    expect(() => roleFromUrl('postgres://u:se%E0cret@host/db')).toThrow(
+      /^The database URL is not a valid connection string\.$/,
+    );
   });
 });
 
 describe('resolveRuntimeRole', () => {
   it('returns the runtime role when it differs from the owner', () => {
-    expect(resolveRuntimeRole(OWNER, APP, 'postgres')).toEqual({
+    expect(resolveRuntimeRole(OWNER, APP, 'postgres', true)).toEqual({
       role: 'six7swe_app',
-      password: 'app@pw',
+      password: PASSWORD,
     });
   });
 
-  it('returns null when the backend connects as the owner', () => {
-    expect(resolveRuntimeRole(OWNER, OWNER, 'postgres')).toBeNull();
+  it('allows running as the owner locally only', () => {
+    expect(resolveRuntimeRole(OWNER, OWNER, 'postgres', false)).toBeNull();
+    expect(() => resolveRuntimeRole(OWNER, OWNER, 'postgres', true)).toThrow(
+      /other than the owner/,
+    );
   });
 
   it('refuses a migration URL that does not connect as the owner', () => {
-    expect(() => resolveRuntimeRole(APP, OWNER, 'postgres')).toThrow(/must connect as postgres/);
+    expect(() => resolveRuntimeRole(APP, OWNER, 'postgres', true)).toThrow(
+      /must connect as postgres/,
+    );
   });
 
-  it('refuses a runtime URL without a password', () => {
-    const noPassword = 'postgres://six7swe_app.abcd@pooler.example.com:5432/postgres';
-    expect(() => resolveRuntimeRole(OWNER, noPassword, 'postgres')).toThrow(/no password/);
+  it.each([
+    'pg_monitor',
+    'supabase_admin',
+    'anon',
+    'authenticated',
+    'service_role',
+    'authenticator',
+    'dashboard_user',
+  ])('refuses the reserved role %s', (role) => {
+    expect(() => resolveRuntimeRole(OWNER, app(role), 'postgres', true)).toThrow(/reserved role/);
+  });
+
+  it('refuses a password shorter than 32 characters', () => {
+    expect(() => resolveRuntimeRole(OWNER, app('six7swe_app', 'short'), 'postgres', true)).toThrow(
+      /at least 32/,
+    );
   });
 });
 
@@ -116,8 +133,10 @@ describe('describeRoleProblems', () => {
     rolbypassrls: false,
     rolcreaterole: false,
     rolcreatedb: false,
+    rolreplication: false,
     owner_member: false,
-    owns_tables: false,
+    member_of_any: false,
+    owns_objects: false,
     can_create: false,
   };
 
@@ -126,16 +145,12 @@ describe('describeRoleProblems', () => {
   });
 
   it('names every right that would put the owner back behind DATABASE_URL', () => {
-    const problems = describeRoleProblems('six7swe_app', 'postgres', {
-      rolsuper: true,
-      rolbypassrls: true,
-      rolcreaterole: true,
-      rolcreatedb: true,
-      owner_member: true,
-      owns_tables: true,
-      can_create: true,
-    });
-    expect(problems).toHaveLength(7);
+    const all = Object.fromEntries(Object.keys(safe).map((key) => [key, true])) as typeof safe;
+    const problems = describeRoleProblems('six7swe_app', 'postgres', all);
+    expect(problems).toHaveLength(9);
+    expect(problems).toContain('six7swe_app is a member of another role');
+    expect(problems).toContain('six7swe_app can start replication');
+    expect(problems).toContain('six7swe_app owns objects in the public schema');
     expect(problems).toContain('six7swe_app is a member of postgres');
     expect(problems).toContain('six7swe_app bypasses row level security');
   });

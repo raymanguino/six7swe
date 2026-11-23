@@ -17,7 +17,12 @@ export interface LockdownResult extends SecurityResult {
 }
 
 export async function lockDownDatabase(target: DatabaseTarget): Promise<LockdownResult> {
-  const app = resolveRuntimeRole(target.databaseUrl, target.appDatabaseUrl, OWNER_ROLE);
+  const app = resolveRuntimeRole(
+    target.databaseUrl,
+    target.appDatabaseUrl,
+    OWNER_ROLE,
+    target.strict,
+  );
   // `DROP POLICY IF EXISTS` raises a notice for every table without the policy yet, which would
   // only clutter the deploy log.
   const sql = postgres(target.databaseUrl, {

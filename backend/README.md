@@ -183,17 +183,12 @@ among them) readable and writable by anyone, without authenticating.
 `db:secure` turns row level security on for every application table and revokes the
 `anon` and `authenticated` grants. No policies are created, so the default is to deny every
 row. Function execution is revoked as well, since a function in an exposed schema is an RPC
-endpoint that the anon key could otherwise call.
-
-When `DATABASE_URL` names a role other than the owner in `DATABASE_MIGRATION_URL`, `db:secure`
-also creates that runtime role (or resets its password to the URL's), grants it read and write
-access to the rows and adds a policy that admits only it, so the backend runs without owner
-rights. Locally, with only `DATABASE_URL` set, the backend connects as the owner, which bypasses
-RLS. See `DEPLOYMENT.md`, "Database roles".
+endpoint that the anon key could otherwise call. The backend connects as a runtime role that
+`db:secure` creates and admits per table (`DEPLOYMENT.md`, "Database roles").
 
 **Run `db:secure` after every migration.** The Drizzle schema is the source of truth
-for the tables, but the grants and policies name a role that comes from the environment, so the
-rules live in `src/db/security.ts` and `src/db/appRole.ts` and are applied separately. `db:reset` applies them
+for the tables, but Drizzle ORM 0.33 cannot express row level security or role grants, so the
+rules live in `src/db/security.ts` and are applied separately. `db:reset` applies them
 automatically, and the Railway deploy runs `db:migrate` followed by `db:secure`.
 
 See [`docs/SECURITY.md`](../docs/SECURITY.md) for the full rationale.

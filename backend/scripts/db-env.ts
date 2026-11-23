@@ -24,6 +24,8 @@ export interface DatabaseTarget {
   appDatabaseUrl: string;
   /** True when the hosted database was selected. */
   remote: boolean;
+  /** True when the backend must run as a separate runtime role (remote or production). */
+  strict: boolean;
 }
 
 /** True when the script was asked to target the hosted database. */
@@ -49,8 +51,8 @@ export const assumesYes = process.argv.includes('--yes');
  * caller can override the URL without editing a file.
  *
  * The migrations connect as the table owner through `DATABASE_MIGRATION_URL`.
- * Without it they use `DATABASE_URL`, which is the local default: the local
- * stack's `postgres` user owns the tables and the backend connects as it too.
+ * Without it, and only locally, they use `DATABASE_URL`: the local stack's
+ * `postgres` user owns the tables and the backend connects as it too.
  */
 export function resolveDatabaseTarget(): DatabaseTarget {
   const envFile = wantsRemote ? '.env.remote' : '.env';
@@ -64,9 +66,22 @@ export function resolveDatabaseTarget(): DatabaseTarget {
     );
   }
 
-  const databaseUrl = process.env.DATABASE_MIGRATION_URL || appDatabaseUrl;
+  // The fallback is for local development only: the hosted database and the
+  // production image must never run the backend as the owner.
+  const strict = wantsRemote || process.env.NODE_ENV === 'production';
+  const migrationUrl = process.env.DATABASE_MIGRATION_URL;
+  if (strict && !migrationUrl) {
+    throw new Error(
+      `DATABASE_MIGRATION_URL is not set. With --remote or NODE_ENV=production it is required (backend/${envFile}).`,
+    );
+  }
 
-  return { databaseUrl, appDatabaseUrl, remote: wantsRemote };
+  return {
+    databaseUrl: migrationUrl || appDatabaseUrl,
+    appDatabaseUrl,
+    remote: wantsRemote,
+    strict,
+  };
 }
 
 /** The SSL settings postgres.js needs for a hosted connection. */

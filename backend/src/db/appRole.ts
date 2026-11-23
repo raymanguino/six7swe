@@ -7,105 +7,106 @@ import type postgres from 'postgres';
  * The backend runs a `--no-sandbox` Chrome for the job scraper, so anything
  * that can read the process environment could connect with `DATABASE_URL`.
  * That URL therefore names a role that can read and write the `public` tables
- * but owns none of them: no DDL, no `DROP`, `ALTER` or `TRUNCATE`. The tables
- * stay owned by the role in `DATABASE_MIGRATION_URL`, which only the
- * migration scripts use (`db:migrate`, `db:secure`, `db:reset`).
+ * but owns nothing: no DDL, no `DROP`, `ALTER` or `TRUNCATE`. The tables stay
+ * owned by the role in `DATABASE_MIGRATION_URL`, which only the migration
+ * scripts use.
  *
- * `DATABASE_URL` is the source of truth for the role: `db:secure` reads its
- * user name and password and creates the role (or resets its password) over
- * the owner connection, so rotating the password is a change to one variable
- * followed by a deploy. The grants and row level security policies are in
- * `security.ts`.
+ * `DATABASE_URL` is the source of truth for the role: `db:secure` creates it
+ * (or resets its password) from the URL's user and password over the owner
+ * connection. The grants and policies are in `security.ts`.
  */
 
 /** Matches an unquoted Postgres identifier. */
 const SAFE_ROLE = /^[a-z_][a-z0-9_]*$/;
+
+/** Roles Postgres or Supabase rely on, which must never become the runtime role. */
+const RESERVED_ROLE =
+  /^(pg_|supabase_)|^(postgres|anon|authenticated|service_role|authenticator|dashboard_user)$/;
+
+/** The shortest runtime role password accepted (`openssl rand -hex 32` gives 64). */
+export const MIN_APP_PASSWORD_LENGTH = 32;
 
 /** PBKDF2 iterations for the SCRAM verifier; Postgres's own default. */
 const SCRAM_ITERATIONS = 4096;
 
 /** The connection settings of the role a URL connects as. */
 export interface RoleCredentials {
-  /** The Postgres role name. */
   role: string;
-  /** The password, decoded. Empty when the URL has none. */
+  /** Decoded; empty when the URL has none. */
   password: string;
 }
 
 /**
- * The role a connection string connects as.
- *
- * The Supabase pooler (Supavisor) takes the user name as `<role>.<project-ref>`
- * and connects as `<role>`, so anything after the first dot is dropped. A role
- * name that is not a plain lower-case identifier is rejected, because it is
- * interpolated into SQL.
+ * The role a connection string connects as. The Supabase pooler takes the user
+ * as `<role>.<project-ref>`, so anything after the first dot is dropped. The
+ * URL is never echoed in an error: it holds a password.
  */
 export function roleFromUrl(url: string): RoleCredentials {
-  let parsed: URL;
+  let user: string;
+  let password: string;
   try {
-    parsed = new URL(url);
+    const parsed = new URL(url);
+    user = decodeURIComponent(parsed.username);
+    password = decodeURIComponent(parsed.password);
   } catch {
     throw new Error('The database URL is not a valid connection string.');
   }
 
-  const user = decodeURIComponent(parsed.username);
   const role = user.split('.')[0] ?? '';
   if (!SAFE_ROLE.test(role)) {
-    throw new Error(
-      `The database URL's role "${role}" is not a plain lower-case identifier ([a-z_][a-z0-9_]*).`,
-    );
+    throw new Error("The database URL's role is not a plain lower-case identifier.");
   }
-
-  return { role, password: decodeURIComponent(parsed.password) };
+  return { role, password };
 }
 
 /**
  * The runtime role to provision, or null when the backend connects as the
- * owner (local development without `DATABASE_MIGRATION_URL`, where both URLs
- * are the same).
+ * owner. That is allowed only locally (`strict` false): with `strict`, a
+ * missing or owner-named runtime role is an error, so a deploy cannot quietly
+ * run the server with owner rights. Everything is validated before any SQL runs.
  *
- * @param ownerUrl The migration connection (`DATABASE_MIGRATION_URL`).
- * @param appUrl The backend's connection (`DATABASE_URL`).
- * @param ownerRole The role the lockdown's default privileges are written for.
+ * @param ownerUrl `DATABASE_MIGRATION_URL`, or `DATABASE_URL` when unset.
+ * @param appUrl `DATABASE_URL`.
  */
 export function resolveRuntimeRole(
   ownerUrl: string,
   appUrl: string,
   ownerRole: string,
+  strict: boolean,
 ): RoleCredentials | null {
   const owner = roleFromUrl(ownerUrl);
   const app = roleFromUrl(appUrl);
 
   if (app.role === owner.role) {
+    if (strict) {
+      throw new Error(
+        'DATABASE_URL must name a runtime role other than the owner in DATABASE_MIGRATION_URL.',
+      );
+    }
     return null;
   }
   if (owner.role !== ownerRole) {
+    throw new Error(`DATABASE_MIGRATION_URL must connect as ${ownerRole}, not ${owner.role}.`);
+  }
+  if (RESERVED_ROLE.test(app.role)) {
+    throw new Error(`DATABASE_URL names the reserved role ${app.role}; pick a role of its own.`);
+  }
+  if (app.password.length < MIN_APP_PASSWORD_LENGTH) {
     throw new Error(
-      `DATABASE_MIGRATION_URL must connect as ${ownerRole}, the owner of the tables, not ${owner.role}.`,
+      `DATABASE_URL's password must be at least ${MIN_APP_PASSWORD_LENGTH} characters ` +
+        '(openssl rand -hex 32).',
     );
   }
-  if (!app.password) {
-    throw new Error(
-      `DATABASE_URL has no password. It is the password db:secure sets for the ${app.role} role.`,
-    );
-  }
-
   return app;
 }
 
 /**
- * The SCRAM-SHA-256 verifier Postgres stores for a password.
+ * The SCRAM-SHA-256 verifier Postgres stores for a password (RFC 5802, 7677).
+ * Postgres stores a value with this prefix as is, so the plain password never
+ * appears in a statement or a server log. Only printable ASCII is accepted,
+ * which SASLprep leaves unchanged, so the server hashes it the same way.
  *
- * Passing the verifier to `CREATE ROLE ... PASSWORD` instead of the plain
- * password means the password never appears in a statement, so it cannot end
- * up in a server log. Postgres recognises the `SCRAM-SHA-256$` prefix and
- * stores the value as is (RFC 5802 and RFC 7677).
- *
- * Postgres runs a password through SASLprep before hashing it. SASLprep leaves
- * printable ASCII unchanged, so only printable ASCII passwords are accepted:
- * anything else could hash differently here and in the server.
- *
- * @param salt Fixed only in tests; a random 16 bytes otherwise.
+ * @param salt Fixed only in tests.
  */
 export function scramSha256Verifier(password: string, salt: Buffer = randomBytes(16)): string {
   if (!/^[\x20-\x7e]+$/.test(password)) {
@@ -124,13 +125,10 @@ export function scramSha256Verifier(password: string, salt: Buffer = randomBytes
 }
 
 /**
- * Builds the statements that create the runtime role or reset its password.
- *
- * Pure, so the rules can be asserted in a test without a database. The role is
- * created with the defaults (no superuser, no `CREATEDB`, no `CREATEROLE`, no
- * `BYPASSRLS`, no membership in any role); those attributes are not named,
- * because on Supabase the `postgres` role may not set them at all. Nothing
- * grants it `CREATE` on the `public` schema; `provisionAppRole` checks that.
+ * The statements that create the runtime role or reset its password. The role
+ * gets the defaults (no superuser, CREATEDB, CREATEROLE, BYPASSRLS or
+ * membership); they are not named because Supabase's `postgres` may not set
+ * them. `readRoleProblems` checks the result.
  */
 export function buildAppRoleStatements(role: string, verifier: string): string[] {
   if (!SAFE_ROLE.test(role)) {
@@ -147,37 +145,66 @@ export function buildAppRoleStatements(role: string, verifier: string): string[]
 }
 
 /** The catalog facts that decide whether a role is safe as the runtime role. */
-interface RoleCheckRow {
+export interface RoleCheckRow {
   rolsuper: boolean;
   rolbypassrls: boolean;
   rolcreaterole: boolean;
   rolcreatedb: boolean;
+  rolreplication: boolean;
   owner_member: boolean;
-  owns_tables: boolean;
+  member_of_any: boolean;
+  owns_objects: boolean;
   can_create: boolean;
 }
 
 /**
- * Explains what is wrong with a role as the runtime role, or returns an empty
- * list. A role that bypasses row level security, can act as the table owner
- * or owns a table would put the owner's rights back behind `DATABASE_URL`.
+ * What is wrong with a role as the runtime role; empty when nothing is. Any of
+ * these would put the owner's rights, or a way to them, behind `DATABASE_URL`.
  */
 export function describeRoleProblems(role: string, ownerRole: string, row: RoleCheckRow): string[] {
-  const problems: string[] = [];
-  if (row.rolsuper) problems.push(`${role} is a superuser`);
-  if (row.rolbypassrls) problems.push(`${role} bypasses row level security`);
-  if (row.rolcreaterole) problems.push(`${role} can create roles`);
-  if (row.rolcreatedb) problems.push(`${role} can create databases`);
-  if (row.owner_member) problems.push(`${role} is a member of ${ownerRole}`);
-  if (row.owns_tables) problems.push(`${role} owns tables in the public schema`);
-  if (row.can_create) problems.push(`${role} can create objects in the public schema`);
-  return problems;
+  const checks: [boolean, string][] = [
+    [row.rolsuper, 'is a superuser'],
+    [row.rolbypassrls, 'bypasses row level security'],
+    [row.rolcreaterole, 'can create roles'],
+    [row.rolcreatedb, 'can create databases'],
+    [row.rolreplication, 'can start replication'],
+    [row.owner_member, `is a member of ${ownerRole}`],
+    [row.member_of_any, 'is a member of another role'],
+    [row.owns_objects, 'owns objects in the public schema'],
+    [row.can_create, 'can create objects in the public schema'],
+  ];
+  return checks.filter(([bad]) => bad).map(([, problem]) => `${role} ${problem}`);
+}
+
+/** Reads a role's catalog facts and describes what is wrong with it. */
+export async function readRoleProblems(
+  sql: postgres.TransactionSql,
+  role: string,
+  ownerRole: string,
+): Promise<string[]> {
+  const [row] = await sql<RoleCheckRow[]>`
+    select
+      r.rolsuper, r.rolbypassrls, r.rolcreaterole, r.rolcreatedb, r.rolreplication,
+      pg_has_role(r.rolname, ${ownerRole}::name, 'MEMBER') as owner_member,
+      exists (select 1 from pg_auth_members m where m.member = r.oid) as member_of_any,
+      exists (
+        select 1 from pg_class c
+        where c.relnamespace = 'public'::regnamespace and c.relowner = r.oid
+      ) or exists (
+        select 1 from pg_proc p
+        where p.pronamespace = 'public'::regnamespace and p.proowner = r.oid
+      ) as owns_objects,
+      has_schema_privilege(r.rolname, 'public', 'CREATE') as can_create
+    from pg_roles r
+    where r.rolname = ${role}::name
+  `;
+  return row ? describeRoleProblems(role, ownerRole, row) : [`${role} does not exist`];
 }
 
 /**
- * Creates the runtime role or resets its password, then checks it holds none
- * of the owner's rights. Throws when it does, so a deploy fails rather than
- * run the backend with owner rights under a different name.
+ * Creates the runtime role or resets its password, then checks it, all in one
+ * transaction: a failed check rolls the role and the password change back, and
+ * the deploy fails rather than run the backend with owner rights.
  *
  * @param sql A connection as the table owner.
  */
@@ -186,34 +213,29 @@ export async function provisionAppRole(
   app: RoleCredentials,
   ownerRole: string,
 ): Promise<void> {
-  for (const statement of buildAppRoleStatements(app.role, scramSha256Verifier(app.password))) {
-    await sql.unsafe(statement);
-  }
+  const statements = buildAppRoleStatements(app.role, scramSha256Verifier(app.password));
+  await sql.begin(async (tx) => {
+    for (const statement of statements) {
+      await tx.unsafe(statement);
+    }
+    const problems = await readRoleProblems(tx, app.role, ownerRole);
+    if (problems.length > 0) {
+      throw new Error(`The runtime role must not hold owner rights: ${problems.join('; ')}.`);
+    }
+  });
+}
 
-  const [row] = await sql<RoleCheckRow[]>`
-    select
-      r.rolsuper,
-      r.rolbypassrls,
-      r.rolcreaterole,
-      r.rolcreatedb,
-      pg_has_role(r.rolname, ${ownerRole}, 'MEMBER') as owner_member,
-      exists (
-        select 1 from pg_tables t
-        where t.schemaname = 'public' and t.tableowner = r.rolname
-      ) as owns_tables,
-      has_schema_privilege(r.rolname, 'public', 'CREATE') as can_create
-    from pg_roles r
-    where r.rolname = ${app.role}
-  `;
-
-  if (!row) {
-    throw new Error(`The role ${app.role} was not created.`);
-  }
-
-  const problems = describeRoleProblems(app.role, ownerRole, row);
+/**
+ * Refuses to serve when the server's own connection holds owner rights. Run at
+ * production startup, so a `DATABASE_URL` pointed back at the owner fails the
+ * deploy instead of silently undoing the runtime role.
+ */
+export async function assertRuntimeRoleIsSafe(sql: postgres.Sql, ownerRole: string): Promise<void> {
+  const problems = await sql.begin(async (tx) => {
+    const [current] = await tx<{ role: string }[]>`select current_user as role`;
+    return readRoleProblems(tx, current?.role ?? '', ownerRole);
+  });
   if (problems.length > 0) {
-    throw new Error(
-      `The runtime role must not hold the table owner's rights: ${problems.join('; ')}.`,
-    );
+    throw new Error(`DATABASE_URL must connect as a non-owner role: ${problems.join('; ')}.`);
   }
 }

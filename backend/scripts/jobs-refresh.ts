@@ -7,8 +7,8 @@ import * as refreshStatusService from '../src/db/api/refreshStatus';
 import type { RefreshUpdateStatus } from '../src/db/schema/jobHunt';
 import { dropMigrationUrl, MIGRATION_URL_WARNING } from '../src/config/migrationUrl';
 
-// The refresh launches Chrome. The table owner's connection is for the migration scripts only,
-// so drop it before anything else runs (see src/config/migrationUrl.ts).
+// The refresh launches Chrome. The table owner's connection is for the migration scripts only:
+// `env -u` in the command keeps it out; this drop (after the hoisted imports) is a backstop.
 if (dropMigrationUrl() && process.env.NODE_ENV === 'production') {
   process.stderr.write(`${MIGRATION_URL_WARNING}\n`);
 }
