@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { pickChatExamples } from '@six7swe/knowledge-types/chat-examples';
 import { apiRequest } from '../utils/api';
 import { getChatSessionId } from '../utils/chatSession';
 import { INPUT_LIMITS } from '../constants';
@@ -10,13 +11,6 @@ interface Message {
   /** A local error notice, not a real answer; never sent back as history. */
   isError?: boolean;
 }
-
-const EXAMPLE_QUESTIONS = [
-  "What technologies do you work with daily?",
-  "Can you describe a challenging project you worked on?",
-  "How do you ensure code quality and security?",
-  "What's your experience with team collaboration?",
-];
 
 const GREEN_DOT_STYLE = {
   boxShadow:
@@ -48,6 +42,9 @@ export default function ChatAssistant() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  // A random 3 or 4 from the shared pool, chosen once per visit. Each one is a pinned eval
+  // question in the knowledge service, so every suggestion is checked to get a good answer.
+  const [examples] = useState(() => pickChatExamples());
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -58,7 +55,8 @@ export default function ChatAssistant() {
     scrollToBottom();
   }, [messages]);
 
-  const sendMessage = async (text: string) => {
+  /** `example`: the visitor clicked a suggested question rather than typing one. */
+  const sendMessage = async (text: string, example = false) => {
     if (!text.trim() || isLoading) return;
 
     const userMessage = text.trim();
@@ -72,7 +70,13 @@ export default function ChatAssistant() {
         .map((m) => ({ role: m.role, content: m.content }));
       const data = await apiRequest('/chat', {
         method: 'POST',
-        body: JSON.stringify({ message: userMessage, history, sessionId: getChatSessionId() }),
+        // A clicked example is counted apart from typed questions in the eval set (#205).
+        body: JSON.stringify({
+          message: userMessage,
+          history,
+          sessionId: getChatSessionId(),
+          ...(example ? { example: true } : {}),
+        }),
       });
       setMessages((prev) => [...prev, { role: 'assistant', content: data.response, timestamp: new Date() }]);
     } catch (error) {
@@ -94,7 +98,7 @@ export default function ChatAssistant() {
   };
 
   const handleSend = () => sendMessage(input);
-  const handleExampleClick = (question: string) => sendMessage(question);
+  const handleExampleClick = (question: string) => sendMessage(question, true);
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -162,9 +166,9 @@ export default function ChatAssistant() {
                   Ask me about my experience, skills, or how I might fit your role. I&apos;ll keep it short—ask for more detail anytime.
                 </p>
                 <div className="flex flex-col gap-2 pt-1">
-                  {EXAMPLE_QUESTIONS.map((q, i) => (
+                  {examples.map((q) => (
                     <button
-                      key={i}
+                      key={q}
                       type="button"
                       onClick={() => handleExampleClick(q)}
                       disabled={isLoading}

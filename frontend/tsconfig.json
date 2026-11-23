@@ -19,7 +19,9 @@
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      // The chat example pool, compiled from source; keep in step with the alias in vite.config.ts.
+      "@six7swe/knowledge-types/chat-examples": ["../packages/knowledge-types/src/chatExamples.ts"]
     }
   },
   "include": ["src"],

@@ -28,9 +28,11 @@ export default defineRailway(() => {
       builder: 'RAILPACK',
       buildCommand: 'cd frontend && pnpm build',
       // The frontend plus the root files the build reads: Railpack installs from the workspace
-      // root, and frontend/tsconfig.json extends tsconfig.base.json.
+      // root, and frontend/tsconfig.json extends tsconfig.base.json. The chat example pool is
+      // compiled from the shared package's source (#205).
       watchPatterns: [
         '/frontend/**',
+        '/packages/knowledge-types/src/chatExamples.ts',
         '/package.json',
         '/pnpm-lock.yaml',
         '/pnpm-workspace.yaml',
@@ -149,8 +151,8 @@ export default defineRailway(() => {
     // Same region as the backend, its main caller over the private network.
     replicas: { 'us-west2': 1 },
     // Private networking only (six7sweknowledge.railway.internal); the backends call it there.
-    // The owner's Knowledge page goes through the backend's /knowledge/* proxy, so the browser
-    // never needs a public domain. Step 7 (#89) adds one if Claude-client access needs it.
+    // The owner's Knowledge page goes through the backend's /knowledge/* proxy, and the public
+    // MCP server is the backend's /mcp/public (#205), so the service never needs a public domain.
     networking: { privateNetworkEndpoint: 'six7sweknowledge' },
     // Only the variables the service requires. Optional ones (EMBEDDER, EMBEDDING_MODEL,
     // FILE_STORE, STORAGE_BUCKET, MAX_UPLOAD_BYTES, RESUME_INGESTION_ON_BOOT, ...) are left

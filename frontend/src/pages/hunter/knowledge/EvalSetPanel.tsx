@@ -137,10 +137,19 @@ function QuestionList({
             <li key={q.id} className="flex flex-wrap items-center gap-2 py-2">
               <span className="flex-1 text-sm text-gray-900 dark:text-white">{q.question}</span>
               <span className="text-xs tabular-nums text-gray-500 dark:text-gray-400">
-                {q.origin === 'canned'
-                  ? 'canned'
+                {/* Canned and example questions are seeded, never typed, so asks mean nothing there. */}
+                {q.origin !== 'visitor'
+                  ? q.origin
                   : `${q.hitCount} asks, ${q.distinctSessions} session${q.distinctSessions === 1 ? '' : 's'}`}
               </span>
+              {q.origin === 'example' && (
+                <span
+                  className="text-xs tabular-nums text-indigo-600 dark:text-indigo-300"
+                  title="Clicks on this chat example. Counted apart from typed asks."
+                >
+                  {q.exampleClicks} example click{q.exampleClicks === 1 ? '' : 's'}
+                </span>
+              )}
               {suggested?.(q) && <Badge tone="amber">suggested</Badge>}
               {q.pinned && <Badge tone="green">pinned</Badge>}
               {q.offTopic && <Badge tone="gray">off-topic</Badge>}
@@ -183,7 +192,7 @@ export default function EvalSetPanel({ evalSet }: { evalSet: EvalSetState }) {
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Chat eval set</h3>
           <p className="mt-1 max-w-3xl text-sm text-gray-600 dark:text-gray-300">
             {settings
-              ? `Up to ${settings.activeSize} questions, re-run whenever the documents change. Visitor questions collect here as candidates; one asked in ${settings.suggestSessions} or more separate sessions is marked suggested. Only you promote: promoting replaces the least recently asked question that is not pinned. A question whose best chunk scores below ${settings.gapSimilarity.toFixed(2)} is a knowledge gap. Candidates not asked for ${settings.candidateTtlDays} days are dropped, and at most ${settings.maxCandidates} are kept.`
+              ? `Up to ${settings.activeSize} questions, re-run whenever the documents change. Visitor questions collect here as candidates; one asked in ${settings.suggestSessions} or more separate sessions is marked suggested. Only you promote: promoting replaces the least recently asked question that is not pinned. A question whose best chunk scores below ${settings.gapSimilarity.toFixed(2)} is a knowledge gap. Candidates not asked for ${settings.candidateTtlDays} days are dropped, and at most ${settings.maxCandidates} are kept. The chat's example questions are pinned here; clicks on them are counted separately from typed asks and never become candidates.`
               : 'The questions the chat is checked against.'}
             {settings &&
               !settings.answering &&

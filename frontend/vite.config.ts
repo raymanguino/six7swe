@@ -7,6 +7,13 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
+      // The chat example pool (#205), shared with the knowledge service. Compiled from source: the
+      // module imports nothing, so the frontend needs neither the package's build nor zod. Keep
+      // in step with the same path in tsconfig.json (`paths`), which tsc reads instead of this.
+      '@six7swe/knowledge-types/chat-examples': path.resolve(
+        import.meta.dirname,
+        '../packages/knowledge-types/src/chatExamples.ts',
+      ),
       '@': path.resolve(import.meta.dirname, './src'),
     },
   },
