@@ -4,21 +4,24 @@
  * restart resets the day's counts.
  */
 export interface DailyCap {
-  /** Spends one use of `key`'s budget; false (and nothing spent) when today's is gone. */
-  tryTake(key?: string): boolean;
+  /**
+   * Spends one use of `key`'s budget on the UTC day of `at` (default: now);
+   * false, and nothing spent, when that day's budget is gone or the day has
+   * already passed.
+   */
+  tryTake(key?: string, at?: number): boolean;
   /**
    * Gives back one use, e.g. when the work it paid for failed. With
-   * `takenOn` (from `today()` at the take), a use taken before the day rolled
-   * is not given back: it was charged to a day whose counts are gone.
+   * `takenAt` (the `at` of the take), a use charged to a day that has since
+   * rolled is not given back: its counts are gone, and taking one off today's
+   * would credit a use nobody gave back.
    */
-  refund(key?: string, takenOn?: string): void;
+  refund(key?: string, takenAt?: number): void;
   /** Uses left today for `key`. */
   remaining(key?: string): number;
-  /** The current UTC day, to pass to `refund` as `takenOn`. */
-  today(): string;
 }
 
-/** The UTC calendar day, e.g. `2026-11-20`. */
+/** The UTC calendar day, e.g. `2026-11-20`. ISO dates compare in order as strings. */
 const utcDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
 /**
@@ -30,36 +33,34 @@ export function createDailyCap(limit: number, now: () => number = Date.now): Dai
   let day = utcDay(now());
   const used = new Map<string, number>();
 
-  function roll(): void {
-    const today = utcDay(now());
-    if (today !== day) {
-      day = today;
+  /** Moves to `at`'s day when it is later; never back to an earlier one. */
+  function roll(at: number): void {
+    const next = utcDay(at);
+    if (next > day) {
+      day = next;
       used.clear();
     }
   }
 
   return {
-    tryTake(key = '') {
-      roll();
+    tryTake(key = '', at = now()) {
+      roll(at);
+      if (utcDay(at) !== day) return false;
       const n = used.get(key) ?? 0;
       if (n >= limit) return false;
       used.set(key, n + 1);
       return true;
     },
-    refund(key = '', takenOn?: string) {
-      roll();
-      if (takenOn !== undefined && takenOn !== day) return;
+    refund(key = '', takenAt?: number) {
+      roll(now());
+      if (takenAt !== undefined && utcDay(takenAt) !== day) return;
       const n = used.get(key) ?? 0;
       if (n <= 1) used.delete(key);
       else used.set(key, n - 1);
     },
     remaining(key = '') {
-      roll();
+      roll(now());
       return Math.max(0, limit - (used.get(key) ?? 0));
-    },
-    today() {
-      roll();
-      return day;
     },
   };
 }
@@ -76,19 +77,20 @@ export type SearchRefusal = 'global' | 'client';
  *   owner's candidate pool and push out the chat visitors' questions.
  */
 export interface SearchBudget {
-  /** Takes a search for `client`, or says which cap refused it (nothing spent then). */
-  takeSearch(client: string): SearchRefusal | null;
   /**
-   * Gives back a search whose retrieval failed. `takenOn` is `today()` at the
-   * take: a search taken before the UTC day rolled is not given back.
+   * The time one request's takes and refunds are charged at. Read it once
+   * and pass it to every call for that request, so they all land on the same
+   * UTC day even when the request straddles midnight.
    */
-  refundSearch(client: string, takenOn: string): void;
+  now(): number;
+  /** Takes a search for `client`, or says which cap refused it (nothing spent then). */
+  takeSearch(client: string, at: number): SearchRefusal | null;
+  /** Gives back a search whose retrieval failed; not when its day has rolled. */
+  refundSearch(client: string, at: number): void;
   /** Whether this search may be recorded; spends the allowance when it may. */
-  takeRecord(client: string): boolean;
-  /** Gives back a record allowance whose retrieval failed (see `refundSearch`). */
-  refundRecord(client: string, takenOn: string): void;
-  /** The current UTC day, read just before a take and passed to the refunds. */
-  today(): string;
+  takeRecord(client: string, at: number): boolean;
+  /** Gives back a record allowance whose retrieval failed; not when its day has rolled. */
+  refundRecord(client: string, at: number): void;
 }
 
 export interface SearchBudgetLimits {
@@ -108,31 +110,30 @@ export function createSearchBudget(
   const clientRecords = createDailyCap(limits.clientDailyRecordCap, now);
 
   return {
-    takeSearch(client) {
-      if (!clientSearches.tryTake(client)) return 'client';
-      if (!searches.tryTake()) {
-        clientSearches.refund(client);
+    now,
+    takeSearch(client, at) {
+      if (!clientSearches.tryTake(client, at)) return 'client';
+      if (!searches.tryTake('', at)) {
+        clientSearches.refund(client, at);
         return 'global';
       }
       return null;
     },
-    refundSearch(client, takenOn) {
-      searches.refund('', takenOn);
-      clientSearches.refund(client, takenOn);
+    refundSearch(client, at) {
+      searches.refund('', at);
+      clientSearches.refund(client, at);
     },
-    takeRecord(client) {
-      if (!clientRecords.tryTake(client)) return false;
-      if (!records.tryTake()) {
-        clientRecords.refund(client);
+    takeRecord(client, at) {
+      if (!clientRecords.tryTake(client, at)) return false;
+      if (!records.tryTake('', at)) {
+        clientRecords.refund(client, at);
         return false;
       }
       return true;
     },
-    refundRecord(client, takenOn) {
-      records.refund('', takenOn);
-      clientRecords.refund(client, takenOn);
+    refundRecord(client, at) {
+      records.refund('', at);
+      clientRecords.refund(client, at);
     },
-    // Every cap reads the same clock, so any of them names the day.
-    today: () => searches.today(),
   };
 }
