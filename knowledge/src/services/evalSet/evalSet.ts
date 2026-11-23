@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
 import {
+  CHAT_EXAMPLE_QUESTIONS,
   EVAL_ACTIVE_SIZE,
   EVAL_CANDIDATE_TTL_DAYS,
   EVAL_CLUSTER_SIMILARITY,
@@ -39,6 +40,13 @@ import { redactQuestion } from './redact.js';
  * - **Off-topic.** A new candidate is flagged off-topic when the corpus has
  *   chunks but the best one is below `offTopicSimilarity`; the owner can set
  *   or clear the flag.
+ * - **Examples.** Each of the chat widget's example questions
+ *   (`CHAT_EXAMPLE_QUESTIONS`, #205) is seeded once as an active, pinned
+ *   question of origin `example`, retiring the least recently asked
+ *   unpinned active questions to make room, so every run checks that each
+ *   suggestion gets a good answer. A click on an example only bumps its
+ *   `example_clicks` (by exact text): no embedding, no cluster, no
+ *   candidate, and its typed counts stay as they are.
  * - **Purge.** Candidates not asked for `candidateTtlDays`, and visitor
  *   questions retired more than `candidateTtlDays` ago (by `retired_at`), are
  *   deleted, and an owner keeps at most `maxCandidates` candidates.
@@ -76,6 +84,8 @@ export const DEFAULT_EVAL_SETTINGS: EvalSettings = {
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Purging is cheap but not free; once an hour per owner is plenty for a 90-day rule. */
 const PURGE_INTERVAL_MS = 60 * 60 * 1000;
+/** How long an owner whose examples could not all be seeded waits before the next try. */
+export const SEED_RETRY_MS = 60 * 1000;
 /** Questions waiting to be recorded beyond this are dropped (and logged). */
 export const MAX_WAITING_RECORDS = 100;
 
@@ -117,12 +127,22 @@ export interface EvalSetDeps {
   settings?: Partial<EvalSettings>;
   /** The clock; tests pin it. */
   now?: () => Date;
+  /** The example questions to seed pinned; `CHAT_EXAMPLE_QUESTIONS` by default. */
+  examples?: readonly string[];
 }
 
 export interface EvalSet {
   readonly settings: EvalSettings;
-  /** Seeds the canned questions when the owner has no eval question yet. */
+  /**
+   * Seeds the canned questions when the owner has no eval question yet, and
+   * any example question the owner has none for (once per owner and process).
+   */
   ensureSeeded(ownerId: string): Promise<void>;
+  /**
+   * Counts a click on an example question, found by exact text. True when
+   * counted; false when the owner has no example question with that text.
+   */
+  recordExampleClick(ownerId: string, question: string): Promise<boolean>;
   /** Records one visitor question as a candidate (new or bumped); never promotes. */
   record(input: RecordInput): Promise<RecordOutcome>;
   /**
@@ -155,8 +175,15 @@ export function createEvalSet(deps: EvalSetDeps): EvalSet {
   const settings: EvalSettings = { ...DEFAULT_EVAL_SETTINGS, ...deps.settings };
   const now = deps.now ?? (() => new Date());
   const { repo, embedder, log } = deps;
+  const examples = [...new Set(deps.examples ?? CHAT_EXAMPLE_QUESTIONS)];
   const lastPurge = new Map<string, number>();
   const seeded = new Set<string>();
+  /**
+   * When an owner whose examples could not all be seeded (the embedder was
+   * down, or pinned questions filled the set) may be tried again. Without it
+   * every recorded question would re-embed the examples and log a warning.
+   */
+  const retryAt = new Map<string, number>();
 
   // Questions waiting to be recorded. The backend's chat is rate-limited, so
   // this stays small; the cap only stops a flood from growing it unbounded.
@@ -169,26 +196,115 @@ export function createEvalSet(deps: EvalSetDeps): EvalSet {
     (item, error) => log.warn({ err: error, ownerId: item.ownerId }, 'Could not record question'),
   );
 
-  async function ensureSeeded(ownerId: string): Promise<void> {
-    // Once an owner has questions they always will (canned ones are never
-    // purged), so the check runs once per owner and process.
-    if (seeded.has(ownerId)) return;
-    // Cheap check first, so the canned questions are embedded only once.
-    if ((await repo.listQuestions(ownerId)).length > 0) {
-      seeded.add(ownerId);
-      return;
-    }
-    const texts = [...CANNED_EVAL_QUESTIONS];
+  async function embedAll(texts: string[], what: string) {
     const vectors = await embedder.embed(texts);
-    const canned = texts.map((question, i) => {
+    return texts.map((question, i) => {
       const embedding = vectors[i];
-      if (!embedding) throw new Error('Embedder returned too few vectors for the canned questions');
+      if (!embedding) throw new Error(`Embedder returned too few vectors for the ${what}`);
       return { question, embedding };
     });
-    if (await repo.seedIfEmpty(ownerId, canned, now())) {
-      log.info({ ownerId, count: canned.length }, 'Seeded the eval set');
+  }
+
+  /** Seeding under way per owner, so concurrent first calls embed once. */
+  const seeding = new Map<string, Promise<void>>();
+
+  function ensureSeeded(ownerId: string): Promise<void> {
+    // Once an owner has questions they always will (canned and example ones
+    // are never purged), so the check runs once per owner and process.
+    if (seeded.has(ownerId)) return Promise.resolve();
+    if ((retryAt.get(ownerId) ?? 0) > now().getTime()) return Promise.resolve();
+    let pending = seeding.get(ownerId);
+    if (!pending) {
+      pending = seed(ownerId).finally(() => seeding.delete(ownerId));
+      seeding.set(ownerId, pending);
     }
+    return pending;
+  }
+
+  async function seed(ownerId: string): Promise<void> {
+    // Cheap check first, so the canned questions are embedded only once.
+    const existing = await repo.listQuestions(ownerId);
+    if (existing.length === 0) {
+      // The examples take their active slots below; the canned fill the rest.
+      const room = Math.max(0, settings.activeSize - examples.length);
+      try {
+        const canned = await embedAll(CANNED_EVAL_QUESTIONS.slice(0, room), 'canned questions');
+        if (await repo.seedIfEmpty(ownerId, canned, now())) {
+          log.info({ ownerId, count: canned.length }, 'Seeded the eval set');
+        }
+      } catch (err) {
+        // Like the examples below: the set stays empty for now and a call
+        // after SEED_RETRY_MS tries again, rather than every call hitting a
+        // down embedder (or failing the owner's view).
+        log.warn({ err, ownerId }, 'Could not seed the eval set; will retry');
+        retryAt.set(ownerId, now().getTime() + SEED_RETRY_MS);
+        return;
+      }
+    }
+    // The examples are extra: the eval set keeps working when they cannot all
+    // be seeded (the embedder is down, or pinned questions fill the set). The
+    // owner is then not marked seeded, and a call after SEED_RETRY_MS tries
+    // again.
+    let complete: boolean;
+    try {
+      complete = await seedExamples(ownerId, existing);
+    } catch (err) {
+      log.warn({ err, ownerId }, 'Could not seed the chat example questions; will retry');
+      complete = false;
+    }
+    if (!complete) {
+      retryAt.set(ownerId, now().getTime() + SEED_RETRY_MS);
+      return;
+    }
+    retryAt.delete(ownerId);
     seeded.add(ownerId);
+  }
+
+  /**
+   * Retires the examples no longer in the pool, then adds the ones the owner
+   * has no question for; only those are embedded. True when every example in
+   * the pool now has a question; false when some did not fit.
+   */
+  async function seedExamples(ownerId: string, existing: EvalQuestionRecord[]): Promise<boolean> {
+    const pool = new Set(examples);
+    const stale = existing.some(
+      (q) => q.origin === 'example' && q.status === 'active' && !pool.has(q.question),
+    );
+    if (stale) {
+      const retired = await repo.retireStaleExamples(ownerId, examples, now());
+      if (retired.length > 0) {
+        log.info(
+          { ownerId, retired: retired.map((q) => q.id) },
+          'Retired chat example questions no longer in the pool',
+        );
+      }
+    }
+    const have = new Set(existing.filter((q) => q.origin === 'example').map((q) => q.question));
+    const missing = examples.filter((text) => !have.has(text));
+    if (missing.length === 0) return true;
+    const outcome = await repo.addExamples(
+      ownerId,
+      await embedAll(missing, 'example questions'),
+      settings.activeSize,
+      now(),
+    );
+    if (outcome.added.length > 0) {
+      log.info(
+        {
+          ownerId,
+          added: outcome.added.length,
+          evicted: outcome.evicted.map((q) => q.id),
+        },
+        'Seeded the chat example questions as pinned eval questions',
+      );
+    }
+    if (outcome.skipped.length > 0) {
+      log.warn(
+        { ownerId, skipped: outcome.skipped.length },
+        'Every other active eval question is pinned; some chat examples were not seeded, will retry',
+      );
+    }
+    return outcome.skipped.length === 0;
   }
 
   async function purge(ownerId: string): Promise<number> {
@@ -319,6 +435,12 @@ export function createEvalSet(deps: EvalSetDeps): EvalSet {
   return {
     settings,
     ensureSeeded,
+    async recordExampleClick(ownerId, question) {
+      // No seeding: a click is one UPDATE with no embedding, so it never
+      // depends on the embedder. An example with no question yet (not seeded)
+      // has nothing to match, and the click is simply not counted.
+      return (await repo.recordExampleClick(ownerId, question)) !== null;
+    },
     record,
     enqueueRecord(input) {
       if (waiting >= MAX_WAITING_RECORDS) {

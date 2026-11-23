@@ -23,6 +23,8 @@ export function registerRoutes(app: FastifyInstance, ctx: KnowledgeContext): voi
   // Service-to-service.
   app.post('/retrieve', SERVICE_ROUTE, retrieval.retrieve);
   app.get('/version', SERVICE_ROUTE, retrieval.version);
+  // A chat visitor clicked an example question (#205): counted apart, never clustered.
+  app.post('/eval/example-clicks', SERVICE_ROUTE, evaluation.exampleClick);
 
   // Owner: the backend's owner proxy, with the owner key, once it has checked
   // that the signed-in user is the owner.
