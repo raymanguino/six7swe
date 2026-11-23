@@ -184,6 +184,38 @@ describe('eval set: example questions', () => {
     );
   });
 
+  it("leaves a new owner's set empty while the embedder is down, and seeds it later", async () => {
+    const { repo, embedder, active } = setup();
+    let down = true;
+    let attempts = 0;
+    const flaky = {
+      ...embedder,
+      embed: async (texts: string[]) => {
+        attempts++;
+        if (down) throw new Error('embedder down');
+        return embedder.embed(texts);
+      },
+    };
+    let clock = Date.parse('2026-11-01T00:00:00Z');
+    const evalSet = createEvalSet({
+      repo,
+      embedder: flaky,
+      log: silentLogger,
+      now: () => new Date(clock),
+    });
+
+    await expect(evalSet.ensureSeeded(OWNER)).resolves.toBeUndefined();
+    expect(repo.questions.size).toBe(0);
+    // Within the retry interval the embedder is not tried again.
+    await evalSet.ensureSeeded(OWNER);
+    expect(attempts).toBe(1);
+
+    down = false;
+    clock += SEED_RETRY_MS + 1;
+    await evalSet.ensureSeeded(OWNER);
+    expect(await active()).toHaveLength(EVAL_ACTIVE_SIZE);
+  });
+
   it('retries examples that did not fit once pinned questions free a slot', async () => {
     const { repo, embedder, active } = setup();
     const settings = { activeSize: 3 };
