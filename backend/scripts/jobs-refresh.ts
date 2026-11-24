@@ -84,8 +84,6 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (!args.profileIds.length) return;
-
   // Poll until every refresh reaches a terminal state, unless the caller
   // asked to fire and forget.
   if (!args.wait) {
