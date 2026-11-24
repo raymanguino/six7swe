@@ -6,16 +6,9 @@ import { dropMigrationUrl } from './config/migrationUrl';
 import { loadWorkerConfig, WORKER_TICK_MS } from './config/worker';
 
 /**
- * The scraper worker (#243): the Railway service `@six7swe/job-worker`, and
- * the only service meant to launch Chrome once #254 moves user-triggered
- * refreshes here. It holds a reduced variable set (`config/worker.ts`) and
- * connects as the worker role, which reaches only the refresh's tables
- * (`db/workerRole.ts`).
- *
- * It is long-lived rather than a cron that exits, so queue polling can join
- * the scheduled refresh in the same loop.
- *
- * Usage: pnpm start:worker (production build) or pnpm worker:dev.
+ * The scraper worker (#243), Railway's `@six7swe/job-worker`: a reduced
+ * variable set (`config/worker.ts`) and the worker role (`db/workerRole.ts`).
+ * Long-lived rather than a cron, so queue polling (#254) can join the loop.
  */
 
 const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });

@@ -106,9 +106,8 @@ export default defineRailway(() => {
       // The table owner (`postgres.<project-ref>`), for the pre-deploy command only. The start
       // command removes it from the server's environment.
       DATABASE_MIGRATION_URL: preserve(),
-      // The scraper worker's role (#243), `six7swe_worker.<project-ref>`: the job-worker service's
-      // DATABASE_URL, here only so the pre-deploy's `db:secure` can provision the role. Set it in
-      // Railway before the apply that adds it (DEPLOYMENT.md, "Scraper worker").
+      // The job-worker's DATABASE_URL (#243), here so the pre-deploy's `db:secure` provisions
+      // its role. Set it in Railway before the apply that adds it.
       DATABASE_WORKER_URL: preserve(),
       MINIMAX_API_KEY: preserve(),
       MINIMAX_API_KEY_SECONDARY: preserve(),
@@ -140,11 +139,9 @@ export default defineRailway(() => {
     },
   });
 
-  // The scraper worker (#243, `backend/src/worker.ts`): the backend image, a different start
-  // command, and only the variables scraping and scoring need. No DATABASE_MIGRATION_URL (the
-  // worker refuses to start with it, or with any variable in config/worker.ts's forbidden list),
-  // no pre-deploy (the backend's migrates), no domain and no port: it serves nothing. Exactly one
-  // replica: its schedule starts one refresh at a time and assumes no second worker.
+  // The scraper worker (#243, `backend/src/worker.ts`): only the variables scraping and scoring
+  // need (it refuses to start with the forbidden ones in config/worker.ts), no pre-deploy, no
+  // domain. Exactly one replica: its schedule assumes no second worker.
   const jobWorker = service('@six7swe/job-worker', {
     source: repo,
     build: backendImage,
@@ -153,14 +150,12 @@ export default defineRailway(() => {
     replicas: { 'us-west2': 1 },
     env: {
       NODE_ENV: 'production',
-      // The worker role, `six7swe_worker.<project-ref>`, with the same value as the backend's
-      // DATABASE_WORKER_URL. It reaches only the tables a refresh reads or writes.
+      // The worker role: the same value as the backend's DATABASE_WORKER_URL.
       DATABASE_URL: preserve(),
       MINIMAX_API_KEY: preserve(),
       MINIMAX_API_KEY_SECONDARY: preserve(),
-      // Scoring retrieves the owner's background per job (services/jobHunt/knowledgeSource.ts),
-      // so the worker keeps the retrieval key; never the owner key. OWNER_AUTH_ID (an auth user
-      // id, not a credential) decides which profiles are scored against that background.
+      // Scoring retrieves the owner's background (services/jobHunt/knowledgeSource.ts). OWNER_AUTH_ID
+      // (a user id, not a credential) decides which profiles are scored against it.
       KNOWLEDGE_URL: 'http://six7sweknowledge.railway.internal:3100',
       KNOWLEDGE_SERVICE_KEY: preserve(),
       OWNER_AUTH_ID: preserve(),

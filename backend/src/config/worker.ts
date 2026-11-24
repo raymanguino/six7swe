@@ -1,13 +1,7 @@
 /**
- * The scraper worker's configuration (`src/worker.ts`, #243).
- *
- * The worker is the process that launches the `--no-sandbox` Chrome, so it
- * holds only what scraping and scoring need: `DATABASE_URL` (the worker role,
- * which reaches only the refresh's tables), `MINIMAX_API_KEY`, and the
- * knowledge retrieval variables the scoring reads background from. A
- * production worker started with a variable it must never hold refuses to
- * start, so a copied variable set fails the deploy instead of widening what a
- * compromised Chrome could read.
+ * The scraper worker's configuration (`src/worker.ts`, #243). The worker
+ * launches the `--no-sandbox` Chrome, so in production it refuses to start
+ * with a variable it must never hold.
  */
 
 /** Variables the worker must never receive: owner and worker-provisioning URLs, mail, auth, the owner proxy key. */

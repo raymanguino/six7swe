@@ -3,15 +3,11 @@ import type { WorkerConfig } from '../../config/worker';
 import { RefreshInProgressError, type JobRefreshService } from './jobRefreshService';
 
 /**
- * The scraper worker's scheduled refresh: what `pnpm jobs:refresh` does when
- * run by hand, on a timer.
- *
- * Each tick starts at most one refresh, and none while the last one this
- * worker started is still running, so the worker never runs two Chromes at
- * once. A profile is due when its latest refresh (from any process) started
- * more than the interval ago, read from `refresh_status`, so a restart does
- * not reset the schedule. A profile whose refresh could not start is not tried
- * again until the interval passes.
+ * The scraper worker's scheduled refresh. Each tick starts at most one, and
+ * none while the worker's last one runs, so it never runs two Chromes. A
+ * profile is due when its latest refresh (from any process, read from
+ * `refresh_status`, so a restart keeps the schedule) is older than the
+ * interval; one that could not start waits out the interval too.
  */
 
 interface Logger {
