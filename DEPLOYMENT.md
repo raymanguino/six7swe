@@ -133,65 +133,57 @@ itself gets only `PATH`, `HOME`, locale, temp and font variables
 
 `db:secure` provisions the role from `DATABASE_URL` (user `six7swe_app.<project-ref>` on the
 pooler means role `six7swe_app`) in two transactions. The first creates the role if missing, sets
-the URL's password (as a SCRAM verifier) and checks the role, and rolls back if the check fails.
-The check rejects reserved names (`pg_*`, `supabase_*`, `anon`, ...), passwords under 32
-characters, and a role that is a superuser, bypasses RLS, can create roles or databases or
-replicate, is a member of any role (the owner included), owns any object in `public`, or can
-create in `public`. The second transaction grants row access, one RLS policy per table for that
-role, and default privileges for later tables. The first one is already committed when the second
-runs, so a failed grant step can leave the password change applied: fix the cause and redeploy.
+the URL's password (as a SCRAM verifier) and checks the role, rolling back on failure. The check
+rejects reserved names (`pg_*`, `supabase_*`, `anon`, ...), passwords under 32 characters, and a
+role that is a superuser, bypasses RLS, can create roles or databases or replicate, is a member of
+any role, owns any object in `public`, or can create there. The second grants row access, one RLS
+policy per table and default privileges for later tables. The first is already committed when the
+second runs, so a failed grant step can leave the password change applied: fix the cause and
+redeploy.
 
-Provisioning on Railway. The order matters: the old code cannot connect as a role that does not
-exist yet, so `DATABASE_URL` changes only together with the deploy of the new code.
+Provisioning on Railway. The old code cannot connect as a role that does not exist yet, so
+`DATABASE_URL` changes only together with the deploy of the new code:
 
 1. Generate the password: `openssl rand -hex 32` (URL-safe). The URL is the only copy. Set it in
-   the Railway dashboard, not with `railway variables --set` on the command line, and do not paste
-   it into chat, tickets or assistant sessions.
-2. Add `DATABASE_MIGRATION_URL` first, set to the current owner URL (user `postgres.<project-ref>`).
-   The code deployed before #242 ignores it, so it is safe to add while the old code is running.
-   Do not reset the owner password yet: the running app still connects with it.
-3. Apply `.railway/railway.ts` ([Changing Railway config](#changing-railway-config)). `preserve()`
-   shows no change for a variable that already exists, so only the start command changes. An apply
-   or an auto-deploy can build the new code before step 4. Its pre-deploy then fails with
-   `DATABASE_URL must name a runtime role other than DATABASE_MIGRATION_URL`, which is harmless:
-   the old deployment keeps serving. Step 4 is what makes the deploy succeed.
-4. Change `DATABASE_URL` in the same step that deploys the new code. The **user** changes from the
-   owner to `six7swe_app.<project-ref>`, not only the password:
+   the Railway dashboard, not with `railway variables --set`, and never paste it into chat,
+   tickets or assistant sessions.
+2. Add `DATABASE_MIGRATION_URL`, set to the current owner URL (user `postgres.<project-ref>`). The
+   code from before #242 ignores it, so this is safe. Do not reset the owner password yet.
+3. Apply `.railway/railway.ts` ([Changing Railway config](#changing-railway-config)).
+   `preserve()` shows no change for an existing variable; only the start command changes. An apply
+   or auto-deploy can build the new code before step 4: pre-deploy then fails with
+   `DATABASE_URL must name a runtime role other than DATABASE_MIGRATION_URL`, which is harmless
+   because the old deployment keeps serving.
+4. Change `DATABASE_URL` and deploy the new code together. The **user** changes from the owner to
+   `six7swe_app.<project-ref>`, not only the password:
 
    ```text
    before: postgresql://postgres.<project-ref>:<owner-password>@aws-0-<region>.pooler.supabase.com:5432/postgres
    after:  postgresql://six7swe_app.<project-ref>:<new-password>@aws-0-<region>.pooler.supabase.com:5432/postgres
    ```
 
-   If the step 4 deploy fails, restore the previous owner `DATABASE_URL`: a later restart of the
-   old image would otherwise pick up a role that may not exist.
-5. The pre-deploy runs `db:secure`, which creates the role before the server starts and prints
-   `The backend connects as six7swe_app: it reads and writes the rows and owns no table.` The
-   opposite line, `The backend connects as the table owner (postgres). ...`, means the role change
-   did not take effect. A deploy of this code without the variables fails in pre-deploy and leaves
-   the old deployment serving.
-6. Once the deploy is healthy and the log has the `six7swe_app` line, reset the `postgres` owner
-   password in Supabase (Project -> Settings -> Database). The old owner password was exposed
-   through the old `DATABASE_URL`, so treat it as compromised. Then update
-   `DATABASE_MIGRATION_URL` in Railway and in `backend/.env.remote`, and confirm the next
-   pre-deploy still succeeds.
+   If this deploy fails, restore the previous owner `DATABASE_URL`; a later restart of the old
+   image would otherwise pick up a role that may not exist.
+5. The pre-deploy log shows the `db:secure` line `The backend connects as six7swe_app: it reads
+   and writes the rows and owns no table.` The line `The backend connects as the table owner
+   (postgres). ...` means the role change did not take effect.
+6. Once the deploy is healthy, reset the `postgres` owner password in Supabase (Project ->
+   Settings -> Database); the old one was exposed through the old `DATABASE_URL`. Update
+   `DATABASE_MIGRATION_URL` in Railway and `backend/.env.remote`, and confirm the next pre-deploy
+   still succeeds.
 
-To rotate the runtime password, generate a new one (step 1), put it in `DATABASE_URL` and deploy;
-the user stays `six7swe_app.<project-ref>`. The pre-deploy commits `ALTER ROLE ... PASSWORD`
-before the new container starts, and until that container is healthy the old deployment cannot
-open new connections, so roll out at a quiet time. If the deploy fails after pre-deploy, redeploy,
-or restore the old `DATABASE_URL` and redeploy. After a suspected leak, end the sessions still
-open under the old password:
+To rotate the runtime password, repeat step 1 and deploy with the new `DATABASE_URL` (same user).
+The pre-deploy commits `ALTER ROLE ... PASSWORD` before the new container starts, and until it is
+healthy the old deployment cannot open new connections, so roll out at a quiet time. If the deploy
+fails after pre-deploy, redeploy, or restore the old `DATABASE_URL` and redeploy. After a suspected
+leak, end the sessions open under the old password, then check that the old password is rejected:
 
 ```sql
 select pg_terminate_backend(pid) from pg_stat_activity where usename like 'six7swe_app%';
 ```
 
-Afterwards check that the old runtime password is rejected (connect with the old URL and expect an
-authentication failure).
-
-The first production rollout confirmed that the Supabase pooler accepts `<role>.<project-ref>` for
-the new role, and that the hosted `postgres` role can create roles.
+The first production rollout confirmed that the Supabase pooler accepts `<role>.<project-ref>` and
+that the hosted `postgres` role can create roles.
 
 A cron or one-off command in the backend image should be prefixed with
 `env -u DATABASE_MIGRATION_URL` like the start command, unless it is a migration script.
