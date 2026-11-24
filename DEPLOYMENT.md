@@ -138,11 +138,10 @@ rejects reserved names (`pg_*`, `supabase_*`, `anon`, ...), passwords under 32 c
 role that is a superuser, bypasses RLS, can create roles or databases or replicate, is a member of
 any role, owns any object in `public`, or can create there. The second grants row access, one RLS
 policy per table and default privileges for later tables. The first is already committed when the
-second runs, so a failed grant step can leave the password change applied: fix the cause and
-redeploy.
+second runs, so a failed grant step can leave the password change applied: fix the cause, redeploy.
 
 Provisioning on Railway. The old code cannot connect as a role that does not exist yet, so
-`DATABASE_URL` changes only together with the deploy of the new code:
+`DATABASE_URL` changes only with the deploy of the new code:
 
 1. Generate the password: `openssl rand -hex 32` (URL-safe). The URL is the only copy. Set it in
    the Railway dashboard, not with `railway variables --set`, and never paste it into chat,
@@ -173,8 +172,8 @@ Provisioning on Railway. The old code cannot connect as a role that does not exi
    still succeeds.
 
 To rotate the runtime password, repeat step 1 and deploy with the new `DATABASE_URL` (same user).
-The pre-deploy commits `ALTER ROLE ... PASSWORD` before the new container starts, and until it is
-healthy the old deployment cannot open new connections, so roll out at a quiet time. If the deploy
+The pre-deploy commits `ALTER ROLE ... PASSWORD` before the new container starts, so until it is
+healthy the old deployment cannot open connections: roll out at a quiet time. If the deploy
 fails after pre-deploy, redeploy, or restore the old `DATABASE_URL` and redeploy. After a suspected
 leak, end the sessions open under the old password, then check that the old password is rejected:
 
@@ -296,9 +295,8 @@ the image keeps dev dependencies: `db:migrate` and `db:secure` run through `tsx`
 service does not need a pre-deploy command.
 
 > Railway PR environments inherit this command, and `--remote` requires `DATABASE_MIGRATION_URL`
-> (there is no fallback). A PR environment would run the branch's migrations as the production
-> owner. Do not enable PR environments unless both URLs point at a database other than the hosted
-> one.
+> (no fallback), so a PR environment would run the branch's migrations as the production owner.
+> Do not enable them unless both URLs point at a database other than the hosted one.
 
 Both steps connect as the table owner through `DATABASE_MIGRATION_URL` (see
 [Database roles](#database-roles)), and `db:secure` also provisions the runtime role that
