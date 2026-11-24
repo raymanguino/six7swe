@@ -8,3 +8,9 @@ import * as runtimeRoleService from '../db/api/runtimeRole';
 export async function assertServerRoleIsSafe(): Promise<void> {
   await runtimeRoleService.assertConnectionRoleIsSafe();
 }
+
+/** The worker's check: no owner rights, and connected as the worker role `db:secure` made. */
+export async function assertWorkerRoleIsSafe(): Promise<void> {
+  await runtimeRoleService.assertConnectionRoleIsSafe();
+  await runtimeRoleService.assertConnectionIsWorkerRole();
+}

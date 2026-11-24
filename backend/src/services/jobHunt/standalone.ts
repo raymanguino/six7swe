@@ -1,4 +1,5 @@
 import pino from 'pino';
+import type { WorkerConfig } from '../../config/worker';
 import { runJobFetch } from '../jobFetchers';
 import * as jobService from '../../db/api/job';
 import * as profileJobService from '../../db/api/profileJob';
@@ -6,6 +7,11 @@ import * as profileService from '../../db/api/profile';
 import * as refreshStatusService from '../../db/api/refreshStatus';
 import { createJobRefreshService, type JobRefreshService } from './jobRefreshService';
 import { getDefaultJobKnowledgeAccess } from './knowledgeSource';
+import {
+  createRefreshScheduler,
+  type RefreshScheduler,
+  type RefreshSchedulerDeps,
+} from './refreshScheduler';
 
 /**
  * Builds a refresh service that runs outside a Fastify request lifecycle.
@@ -36,6 +42,19 @@ export function createStandaloneJobRefreshService(): JobRefreshService {
     profileService,
     refreshStatusService,
     knowledge: getDefaultJobKnowledgeAccess(),
+    logger,
+  });
+}
+
+/** The worker's scheduler, reading `refresh_status` through this module. */
+export function createStandaloneRefreshScheduler(
+  config: WorkerConfig,
+  logger: RefreshSchedulerDeps['logger'],
+): RefreshScheduler {
+  return createRefreshScheduler(config, {
+    service: createStandaloneJobRefreshService(),
+    getLatestRefreshStartedAt: refreshStatusService.getLatestRefreshStartedAt,
+    getRefreshStatus: refreshStatusService.getRefreshStatus,
     logger,
   });
 }

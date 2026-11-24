@@ -21,29 +21,16 @@ async function main(): Promise<void> {
   // Only reachable outside production, where a local .env may carry the owner's URL.
   dropMigrationUrl();
 
-  const [{ createStandaloneJobRefreshService, reapStaleRefreshes }, refreshStatus, role, sched] =
-    await Promise.all([
-      import('./services/jobHunt/standalone'),
-      import('./db/api/refreshStatus'),
-      import('./db/api/runtimeRole'),
-      import('./services/jobHunt/refreshScheduler'),
-    ]);
+  const [{ createStandaloneRefreshScheduler, reapStaleRefreshes }, { assertWorkerRoleIsSafe }] =
+    await Promise.all([import('./services/jobHunt/standalone'), import('./services/databaseRole')]);
 
-  if (process.env.NODE_ENV === 'production') {
-    await role.assertConnectionRoleIsSafe();
-    await role.assertConnectionIsWorkerRole();
-  }
+  if (process.env.NODE_ENV === 'production') await assertWorkerRoleIsSafe();
 
   // Once, at startup: a periodic reap could fail a refresh the API process is still running.
   const reaped = await reapStaleRefreshes();
   if (reaped > 0) logger.info({ reaped }, 'Reaped stale refreshes');
 
-  const scheduler = sched.createRefreshScheduler(config, {
-    service: createStandaloneJobRefreshService(),
-    getLatestRefreshStartedAt: refreshStatus.getLatestRefreshStartedAt,
-    getRefreshStatus: refreshStatus.getRefreshStatus,
-    logger,
-  });
+  const scheduler = createStandaloneRefreshScheduler(config, logger);
 
   logger.info(
     { profileIds: config.profileIds, intervalHours: config.intervalMs / 3_600_000 },
