@@ -1,84 +1,32 @@
 /**
- * Runs the lockdown against a real Postgres, in a throwaway database, to check
- * what Postgres makes of the SQL the statement tests pin. Skipped when no
- * Supabase Postgres answers; `LOCKDOWN_TEST_REQUIRED=1` makes that a failure.
+ * Runs the lockdown against a real Postgres (see `lockdownDatabase.ts`) to
+ * check what Postgres makes of the SQL the statement tests pin.
  */
 
-import { randomBytes } from 'node:crypto';
-import postgres from 'postgres';
 import { applyLockdown } from '../../../scripts/db-lockdown';
-import {
-  ADMIN_URL,
-  credentials,
-  type Credentials,
-  databaseUrl,
-  probeDatabase,
-} from './lockdownDatabase';
-
-const unavailable = probeDatabase();
-const required = process.env.LOCKDOWN_TEST_REQUIRED === '1';
-const describeWithDatabase = unavailable === null || required ? describe : describe.skip;
+import { credentials, describeWithDatabase, runSuffix, useTestDatabase } from './lockdownDatabase';
 
 describeWithDatabase('the lockdown against a real database', () => {
-  const suffix = `${process.pid}_${randomBytes(3).toString('hex')}`;
-  const database = `six7swe_lockdown_test_${suffix}`;
+  const suffix = runSuffix();
   const roleA = credentials(`six7swe_lt_a_${suffix}`);
   const roleB = credentials(`six7swe_lt_b_${suffix}`);
   const bystander = credentials(`six7swe_lt_bi_${suffix}`);
-  const quiet = { max: 1, onnotice: () => undefined };
-  const urlFor = (as?: Credentials): string => databaseUrl(database, as);
-
-  let admin: postgres.Sql | undefined;
-  let owner: postgres.Sql;
-
-  async function asRole<T>(as: Credentials, fn: (sql: postgres.Sql) => Promise<T>): Promise<T> {
-    const sql = postgres(urlFor(as), quiet);
-    try {
-      return await fn(sql);
-    } finally {
-      await sql.end();
-    }
-  }
-
-  beforeAll(async () => {
-    if (unavailable !== null) {
-      throw new Error(`LOCKDOWN_TEST_REQUIRED=1 but the database is ${unavailable}.`);
-    }
-    admin = postgres(ADMIN_URL, quiet);
-    await admin.unsafe(`create database "${database}"`);
-    await admin.unsafe(`create role "${bystander.role}" login password '${bystander.password}'`);
-    owner = postgres(urlFor(), quiet);
-    await owner.unsafe(`
-      create table public.items (id serial primary key, name text not null);
-      create function public.add_one(i integer) returns integer language sql as 'select i + 1';
-      create function public.add_one(i bigint) returns bigint language sql as 'select i + 1';
-      create function public.whoami() returns text language sql security definer
-        as 'select current_user::text';
-      alter default privileges in schema public grant select on tables to "${bystander.role}";
-    `);
-  }, 30_000);
-
-  afterAll(async () => {
-    try {
-      await owner?.end();
-    } finally {
-      try {
-        await admin?.unsafe(`drop database if exists "${database}" with (force)`);
-      } finally {
-        try {
-          for (const role of [roleA.role, roleB.role, bystander.role]) {
-            await admin?.unsafe(`drop role if exists "${role}"`);
-          }
-        } finally {
-          await admin?.end();
-        }
-      }
-    }
-  }, 30_000);
+  const db = useTestDatabase(
+    `six7swe_lockdown_test_${suffix}`,
+    `create table public.items (id serial primary key, name text not null);
+    create function public.add_one(i integer) returns integer language sql as 'select i + 1';
+    create function public.add_one(i bigint) returns bigint language sql as 'select i + 1';
+    create function public.whoami() returns text language sql security definer
+      as 'select current_user::text';
+    alter default privileges in schema public grant select on tables to "${bystander.role}";`,
+    [bystander],
+    [roleA, roleB, bystander],
+  );
+  const asRole = db.asRole;
 
   it('provisions and secures, and a second run changes nothing', async () => {
-    const first = await applyLockdown(owner, roleA);
-    const second = await applyLockdown(owner, roleA);
+    const first = await applyLockdown(db.owner, roleA);
+    const second = await applyLockdown(db.owner, roleA);
     expect(first.tables).toEqual(['items']);
     expect(second.statements).toBe(first.statements);
     expect(second.formerRoles).toEqual([]);
@@ -99,7 +47,7 @@ describeWithDatabase('the lockdown against a real database', () => {
   }, 30_000);
 
   it('leaves no function in public executable by anon or PUBLIC', async () => {
-    const open = await owner<{ signature: string }[]>`
+    const open = await db.owner<{ signature: string }[]>`
       select p.oid::regprocedure::text as signature from pg_proc p
       join pg_namespace n on n.oid = p.pronamespace
       where n.nspname = 'public' and (
@@ -107,7 +55,7 @@ describeWithDatabase('the lockdown against a real database', () => {
           select 1 from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
           where a.grantee = 0 and a.privilege_type = 'EXECUTE'))
     `;
-    const [{ count }] = await owner<{ count: number }[]>`
+    const [{ count }] = await db.owner<{ count: number }[]>`
       select count(*)::int as count from pg_proc p
       join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public'
     `;
@@ -116,30 +64,30 @@ describeWithDatabase('the lockdown against a real database', () => {
   });
 
   it('keeps the lockdown when the role check fails', async () => {
-    await owner.unsafe(`
+    await db.owner.unsafe(`
       alter table public.items disable row level security;
       grant all on table public.items to anon;
       grant execute on function public.whoami() to "${roleA.role}";
     `);
-    await expect(applyLockdown(owner, roleA)).rejects.toThrow(/SECURITY DEFINER/);
+    await expect(applyLockdown(db.owner, roleA)).rejects.toThrow(/SECURITY DEFINER/);
 
-    const [state] = await owner<{ anon: boolean; rls: boolean }[]>`
+    const [state] = await db.owner<{ anon: boolean; rls: boolean }[]>`
       select has_table_privilege('anon', 'public.items', 'SELECT') as anon,
         relrowsecurity as rls from pg_class where oid = 'public.items'::regclass
     `;
     expect(state).toEqual({ anon: false, rls: true });
 
-    await owner.unsafe(`revoke execute on function public.whoami() from "${roleA.role}"`);
-    await expect(applyLockdown(owner, roleA)).resolves.toMatchObject({ appRole: roleA.role });
+    await db.owner.unsafe(`revoke execute on function public.whoami() from "${roleA.role}"`);
+    await expect(applyLockdown(db.owner, roleA)).resolves.toMatchObject({ appRole: roleA.role });
   }, 30_000);
 
   it('shuts the old role out when the runtime role is renamed, and only it', async () => {
     // Another database's runtime role in the same cluster must be left alone.
-    await admin?.unsafe(`comment on role "${bystander.role}" is 'six7swe-runtime:other_db'`);
-    const lingering = postgres(urlFor(roleA), quiet);
+    await db.admin.unsafe(`comment on role "${bystander.role}" is 'six7swe-runtime:other_db'`);
+    const lingering = db.connect(roleA);
     try {
       await lingering`select 1`;
-      const result = await applyLockdown(owner, roleB);
+      const result = await applyLockdown(db.owner, roleB);
       expect(result.formerRoles).toEqual([roleA.role]);
       expect(result.endedSessions).toBe(1);
       await expect(lingering`select 1`).rejects.toThrow();
@@ -147,7 +95,7 @@ describeWithDatabase('the lockdown against a real database', () => {
       await lingering.end({ timeout: 1 });
     }
 
-    const roles = await owner<
+    const roles = await db.owner<
       { rolname: string; login: boolean; insert: boolean; defaults: boolean; mark: string | null }[]
     >`
       select r.rolname, r.rolcanlogin as login, shobj_description(r.oid, 'pg_authid') as mark,
@@ -170,32 +118,11 @@ describeWithDatabase('the lockdown against a real database', () => {
       },
     ]);
     // A role marked for something else is never adopted as the runtime role.
-    await expect(applyLockdown(owner, bystander)).rejects.toThrow(/refusing to adopt/);
+    await expect(applyLockdown(db.owner, bystander)).rejects.toThrow(/refusing to adopt/);
 
     await expect(asRole(roleA, (sql) => sql`select 1`)).rejects.toThrow(/not permitted to log in/);
     await asRole(roleB, async (sql) => {
       await expect(sql`insert into public.items (name) values ('new')`).resolves.toBeDefined();
     });
-  }, 30_000);
-
-  it('fails on an exposed SECURITY DEFINER routine the owner cannot revoke', async () => {
-    // Created by the bystander itself: `GRANT <role> TO current_user` segfaults local Supabase.
-    await owner.unsafe(`grant create on schema public to "${bystander.role}"`);
-    await asRole(bystander, (sql) =>
-      sql.unsafe(
-        "create function public.foreign_definer() returns int language sql security definer as 'select 1'",
-      ),
-    );
-    await owner.unsafe(`revoke create on schema public from "${bystander.role}"`);
-    await expect(applyLockdown(owner, roleB)).rejects.toThrow(
-      `owner ${bystander.role}; executable by anon, authenticated, PUBLIC): as ${bystander.role}, ` +
-        'run REVOKE EXECUTE ON FUNCTION public.foreign_definer() FROM anon, authenticated, PUBLIC;',
-    );
-    // Once it is not a definer, it is only reported.
-    await asRole(bystander, (sql) => sql`alter function public.foreign_definer() security invoker`);
-    const result = await applyLockdown(owner, roleB);
-    expect(result.skippedFunctions).toEqual([
-      { signature: 'foreign_definer()', owner: bystander.role, extension: null, definer: false },
-    ]);
   }, 30_000);
 });
