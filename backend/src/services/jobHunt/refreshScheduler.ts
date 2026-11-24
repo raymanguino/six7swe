@@ -8,13 +8,9 @@ import {
 } from './jobRefreshService';
 
 /**
- * The scraper worker's scheduled refresh. Each tick starts at most one, and
- * none while the worker's last one runs, so it never runs two Chromes. A
- * profile is due when its latest refresh (from any process, read from
- * `refresh_status`, so a restart keeps the schedule) is older than the
- * interval. A missing profile or bad location waits out the interval; any
- * other start failure is retried on the next tick. Stale rows are reaped once,
- * at worker startup: a periodic reap could fail a refresh the API still runs.
+ * The worker's scheduled refresh: at most one per tick and never two Chromes.
+ * A profile is due when its latest `refresh_status` row is older than the
+ * interval. A permanent start error waits out the interval; others retry next tick.
  */
 
 interface Logger {

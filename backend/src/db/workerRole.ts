@@ -14,16 +14,10 @@ import {
 import { OWNER_ROLE } from './security';
 
 /**
- * The scraper worker's database role (#243).
- *
- * The worker is the process that launches the `--no-sandbox` Chrome, so its
- * `DATABASE_URL` names a role that reaches only what a job refresh reads or
- * writes. `db:secure` provisions it from `DATABASE_WORKER_URL` (a variable of
- * the backend service, where the pre-deploy runs) the way it provisions the
- * runtime role from `DATABASE_URL` (`appRole.ts`), with the same checks.
- *
- * Unlike the runtime role it gets no default privileges: a table added later
- * stays closed to the worker until it is listed in `WORKER_TABLE_ACCESS`.
+ * The scraper worker's database role (#243): it launches the `--no-sandbox`
+ * Chrome, so it reaches only what a refresh needs. `db:secure` provisions it
+ * from `DATABASE_WORKER_URL` like the runtime role (`appRole.ts`). No default
+ * privileges: a new table stays closed until listed in `WORKER_TABLE_ACCESS`.
  */
 
 /** The comment on the worker role, followed by `:` and the database name. */
@@ -60,12 +54,8 @@ export const WORKER_TABLE_ACCESS: Readonly<Record<string, TableAccess>> = {
 };
 
 /**
- * The worker role to provision, or null when `DATABASE_WORKER_URL` is unset
- * (no worker deployed). Validated before any SQL runs: the worker role must be
- * a role of its own, neither the owner nor the backend's runtime role, with a
- * password as long as the runtime role's.
- *
- * @param appRole The runtime role's name, or null when the backend connects as the owner.
+ * The worker role, or null when `DATABASE_WORKER_URL` is unset. Validated
+ * before any SQL: its own role, not the owner or runtime role (`appRole`).
  */
 export function resolveWorkerRole(
   workerUrl: string | undefined,
@@ -95,13 +85,8 @@ export function resolveWorkerRole(
 }
 
 /**
- * The statements that shut former worker roles out and give the current one
- * exactly `WORKER_TABLE_ACCESS`. Everything the role held in `public` is
- * revoked first, so a grant made by hand, or one for a table no longer
- * listed, does not survive.
- *
- * @param workerRole The worker role, or null when none is configured.
- * @param formerRoles Roles marked as worker roles earlier.
+ * Shuts former worker roles out and gives the current one exactly
+ * `WORKER_TABLE_ACCESS`, after revoking all it held in `public`.
  */
 export function buildWorkerAccessStatements(
   { tables, sequences }: Pick<PublicObjects, 'tables' | 'sequences'>,
