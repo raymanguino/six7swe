@@ -1,19 +1,19 @@
 import { quoteIdentifier } from './identifier';
-import {
-  APP_POLICY,
-  APP_SEQUENCE_PRIVILEGES,
-  APP_TABLE_PRIVILEGES,
-  OWNER_ROLE,
-  PUBLIC_ROLES,
-} from './security';
+import { APP_POLICY, OWNER_ROLE } from './security';
 
 /**
- * The statements behind the rules in `security.ts`. Pure, so the rules can be
+ * The statements behind the rules in `security.ts`, applied by
+ * `scripts/db-lockdown.ts` in two transactions. Pure, so the rules can be
  * asserted in a test without a database. Each kind of object is revoked or
  * granted in one list statement; an empty list issues none.
  */
 
-const BROWSER_ROLES = PUBLIC_ROLES.join(', ');
+/** Roles that reach the database from a browser. */
+const BROWSER_ROLES = 'anon, authenticated';
+
+const APP_TABLE_PRIVILEGES = 'SELECT, INSERT, UPDATE, DELETE';
+
+const APP_SEQUENCE_PRIVILEGES = 'USAGE, SELECT';
 
 /**
  * Matches a routine's argument types as `oidvectortypes` prints them

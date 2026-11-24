@@ -31,20 +31,8 @@
  * rules and `db:secure` has to run after every migration.
  */
 
-/** Roles that reach the database from a browser. */
-export const PUBLIC_ROLES = ['anon', 'authenticated'] as const;
-
 /** The role the migrations connect as, and the owner of the tables. */
 export const OWNER_ROLE = 'postgres';
 
 /** One fixed name, so a change of runtime role replaces the policy. */
 export const APP_POLICY = 'backend_app_access';
-
-export const APP_TABLE_PRIVILEGES = 'SELECT, INSERT, UPDATE, DELETE';
-
-export const APP_SEQUENCE_PRIVILEGES = 'USAGE, SELECT';
-
-// The statements are built in `lockdownStatements.ts` (functions by full
-// signature, former runtime roles shut out) and applied by
-// `scripts/db-lockdown.ts` in two transactions; the catalog reads are in
-// `securityCatalog.ts`.
