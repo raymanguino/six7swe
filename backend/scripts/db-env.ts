@@ -10,6 +10,7 @@
 import { spawnSync } from 'node:child_process';
 import dotenv from 'dotenv';
 import path from 'node:path';
+import { roleFromUrl } from '../src/db/appRole';
 
 export interface DatabaseTarget {
   /**
@@ -74,6 +75,13 @@ export function resolveDatabaseTarget(): DatabaseTarget {
     throw new Error(
       `DATABASE_MIGRATION_URL is not set. With --remote or NODE_ENV=production it is required (backend/${envFile}).`,
     );
+  }
+  if (
+    strict &&
+    migrationUrl &&
+    roleFromUrl(migrationUrl).role === roleFromUrl(appDatabaseUrl).role
+  ) {
+    throw new Error('DATABASE_URL must name a runtime role other than DATABASE_MIGRATION_URL.');
   }
 
   return {
