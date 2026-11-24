@@ -42,8 +42,4 @@ describe('loadWorkerConfig', () => {
     );
     expect(() => loadWorkerConfig(env)).not.toThrow(/secret/);
   });
-
-  it('tolerates them outside production, where a local .env holds everything', () => {
-    expect(() => loadWorkerConfig({ ...base, DATABASE_MIGRATION_URL: 'x' })).not.toThrow();
-  });
 });

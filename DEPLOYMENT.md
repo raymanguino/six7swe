@@ -364,10 +364,8 @@ Provisioning, in this order (the role has to exist before the worker can connect
    `Job worker started`.
 6. Remove any cron that runs `jobs:refresh` on the backend service.
 
-To rotate the worker password, change both `DATABASE_WORKER_URL` and the worker's
-`DATABASE_URL`, deploy the backend (its pre-deploy sets the password), then redeploy the worker.
-The worker does not wait for the backend's migrations: ship a schema change the refresh needs
-through the backend first.
+To rotate its password, change `DATABASE_WORKER_URL` and the worker's `DATABASE_URL`, deploy the
+backend, then the worker. Ship a schema change the refresh needs through the backend first.
 
 `pnpm jobs:refresh -- --profile <id>` still runs one by hand; on Railway, run it on the worker.
 

@@ -285,11 +285,8 @@ pnpm run jobs:refresh -- --profile 1
 ```
 
 The CLI uses the same pipeline as the HTTP trigger. Scheduled refreshes run on
-the scraper worker (`pnpm worker:dev` locally, `pnpm start:worker` on Railway),
-which refreshes the profiles in `JOB_REFRESH_PROFILE_IDS` every
-`JOB_REFRESH_INTERVAL_HOURS` (DEPLOYMENT.md, "Scraper Worker and Scheduled
-Refreshes"). Refreshes abandoned by a crashed process are marked failed on the
-next startup.
+the scraper worker (`pnpm worker:dev`; DEPLOYMENT.md, section 6). Refreshes
+abandoned by a crashed process are marked failed on the next startup.
 
 ## Project Structure
 
