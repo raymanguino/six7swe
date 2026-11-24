@@ -2,7 +2,8 @@
 
 > **Status:** Required action. Six live credentials were exposed through an
 > unauthenticated endpoint and were read into an AI assistant session.
-> Rotate every item below before deploying.
+> Rotate every item below. Items 4 and 4a take effect only through a deploy:
+> follow `DEPLOYMENT.md`, "Database roles", in order.
 
 ---
 
@@ -31,8 +32,8 @@ invalidate a value that has already been disclosed.
 | 1 | `MINIMAX_API_KEY` | minimax.io | Account → API keys → revoke + regenerate | `backend/.env`, Railway backend variables |
 | 2 | `RESEND_API_KEY` | resend.com | Account → API Keys → revoke + regenerate | `backend/.env`, Railway backend variables |
 | 3 | `SUPABASE_SECRET_KEY` | Supabase project | Project → Settings → API Keys | Railway backend variables (if still set) |
-| 4 | `DATABASE_MIGRATION_URL` (owner `postgres` password) | Supabase project | Project → Settings → Database → reset password | `backend/.env`, Railway backend variables |
-| 4a | `DATABASE_URL` (runtime role `six7swe_app` password) | The URL itself; no dashboard reset | Generate a new password (`openssl rand -hex 32`) and put it in the URL; the next pre-deploy sets it on the role (`DEPLOYMENT.md`, "Database roles") | `backend/.env`, Railway backend variables |
+| 4 | `DATABASE_MIGRATION_URL` (owner `postgres` password) | Supabase project | Project → Settings → Database → reset password, **after** the cutover deploy is healthy (`DEPLOYMENT.md`, "Database roles", step 6): the running app uses the old owner password until then | `backend/.env.remote`, Railway backend variables |
+| 4a | `DATABASE_URL` (runtime role `six7swe_app` password) | The URL itself; no dashboard reset | Generate a new password (`openssl rand -hex 32`) and put it in the URL; the next deploy's pre-deploy sets it on the role; afterwards check the old password is rejected (`DEPLOYMENT.md`, "Database roles") | `backend/.env`, Railway backend variables |
 | 5 | Second Supabase project password | Supabase project (us-west-2) | Project → Settings → Database → reset password | `backend/.env` (remove if unused) |
 | 6 | ~~MCP `x-brain-key`~~ (retired) | MCP edge function | Open-brain MCP server → key management: **revoke** it | Nothing reads it since #213 removed the open-brain MCP client and every `MCP_PORTFOLIO_*` variable. Revoke the key, and delete any `MCP_*` line left in `backend/.env` or Railway |
 
@@ -108,8 +109,9 @@ knowledge service's private `knowledge` schema.)
 ### The fix
 
 Row level security is enabled on every application table, and the `anon` and
-`authenticated` grants are revoked. No policies are created, so the default
-is to deny every row. The default privileges are revoked as well, so a table
+`authenticated` grants are revoked. No policy admits `anon` or `authenticated`;
+one policy per table (`backend_app_access`, `USING (true)`) admits only the
+runtime role, so every other role is denied every row. The default privileges are revoked as well, so a table
 created later by a migration does not inherit the grants back.
 
 Function execution is revoked too, including the default privilege. A function

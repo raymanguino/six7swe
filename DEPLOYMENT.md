@@ -126,26 +126,35 @@ Anything that compromises the `--no-sandbox` scraper Chrome can read the server'
 `DATABASE_MIGRATION_URL`, for `db:migrate`, `db:secure` and `db:reset`. The fallback to
 `DATABASE_URL` is local only: with `--remote` or `NODE_ENV=production` the scripts fail without
 `DATABASE_MIGRATION_URL` or when both URLs name the same role, and the server refuses to start if
-its role is a superuser, bypasses RLS, belongs to `postgres` or owns any object in `public`. Chrome
+its role fails the checks described below (superuser, RLS bypass, membership of `postgres`,
+owning an object in `public`). Chrome
 itself gets only `PATH`, `HOME`, locale, temp and font variables
 (`services/jobFetchers/browser.ts`).
 
 `db:secure` provisions the role from `DATABASE_URL` (user `six7swe_app.<project-ref>` on the
-pooler means role `six7swe_app`), in one transaction: create it if missing, set the URL's
-password (as a SCRAM verifier), check it, roll back if the check fails. The check rejects
-reserved names (`pg_*`, `supabase_*`, `anon`, ...), passwords under 32 characters, and a role
-that is a superuser, bypasses RLS, can create roles or databases or replicate, is a member of any
-role, owns any object in `public`, or can create there. It then grants row access, one RLS policy
-per table for that role, and default privileges for later tables.
+pooler means role `six7swe_app`) in two transactions. The first creates the role if missing, sets
+the URL's password (as a SCRAM verifier) and checks the role, and rolls back if the check fails.
+The check rejects reserved names (`pg_*`, `supabase_*`, `anon`, ...), passwords under 32
+characters, and a role that is a superuser, bypasses RLS, can create roles or databases or
+replicate, is a member of any role (the owner included), owns any object in `public`, or can
+create in `public`. The second transaction grants row access, one RLS policy per table for that
+role, and default privileges for later tables. The first one is already committed when the second
+runs, so a failed grant step can leave the password change applied: fix the cause and redeploy.
 
 Provisioning on Railway. The order matters: the old code cannot connect as a role that does not
 exist yet, so `DATABASE_URL` changes only together with the deploy of the new code.
 
-1. Generate the password: `openssl rand -hex 32` (URL-safe). The URL is the only copy.
+1. Generate the password: `openssl rand -hex 32` (URL-safe). The URL is the only copy. Set it in
+   the Railway dashboard, not with `railway variables --set` on the command line, and do not paste
+   it into chat, tickets or assistant sessions.
 2. Add `DATABASE_MIGRATION_URL` first, set to the current owner URL (user `postgres.<project-ref>`).
    The code deployed before #242 ignores it, so it is safe to add while the old code is running.
+   Do not reset the owner password yet: the running app still connects with it.
 3. Apply `.railway/railway.ts` ([Changing Railway config](#changing-railway-config)). `preserve()`
-   shows no change for a variable that already exists, so only the start command changes.
+   shows no change for a variable that already exists, so only the start command changes. An apply
+   or an auto-deploy can build the new code before step 4. Its pre-deploy then fails with
+   `DATABASE_URL must name a runtime role other than DATABASE_MIGRATION_URL`, which is harmless:
+   the old deployment keeps serving. Step 4 is what makes the deploy succeed.
 4. Change `DATABASE_URL` in the same step that deploys the new code. The **user** changes from the
    owner to `six7swe_app.<project-ref>`, not only the password:
 
@@ -154,15 +163,32 @@ exist yet, so `DATABASE_URL` changes only together with the deploy of the new co
    after:  postgresql://six7swe_app.<project-ref>:<new-password>@aws-0-<region>.pooler.supabase.com:5432/postgres
    ```
 
-   If the new code is deployed while `DATABASE_URL` still names the owner, pre-deploy fails with
-   `DATABASE_URL must name a runtime role other than DATABASE_MIGRATION_URL` and the old
-   deployment keeps serving.
-5. The pre-deploy creates the role before the server starts. Its log says
-   `The backend connects as six7swe_app`. A deploy of this code without the variables fails in
-   pre-deploy and leaves the old deployment serving.
+   If the step 4 deploy fails, restore the previous owner `DATABASE_URL`: a later restart of the
+   old image would otherwise pick up a role that may not exist.
+5. The pre-deploy runs `db:secure`, which creates the role before the server starts and prints
+   `The backend connects as six7swe_app: it reads and writes the rows and owns no table.` The
+   opposite line, `The backend connects as the table owner (postgres). ...`, means the role change
+   did not take effect. A deploy of this code without the variables fails in pre-deploy and leaves
+   the old deployment serving.
+6. Once the deploy is healthy and the log has the `six7swe_app` line, reset the `postgres` owner
+   password in Supabase (Project -> Settings -> Database). The old owner password was exposed
+   through the old `DATABASE_URL`, so treat it as compromised. Then update
+   `DATABASE_MIGRATION_URL` in Railway and in `backend/.env.remote`, and confirm the next
+   pre-deploy still succeeds.
 
 To rotate the runtime password, generate a new one (step 1), put it in `DATABASE_URL` and deploy;
-the pre-deploy sets it on the role (the user stays `six7swe_app.<project-ref>`).
+the user stays `six7swe_app.<project-ref>`. The pre-deploy commits `ALTER ROLE ... PASSWORD`
+before the new container starts, and until that container is healthy the old deployment cannot
+open new connections, so roll out at a quiet time. If the deploy fails after pre-deploy, redeploy,
+or restore the old `DATABASE_URL` and redeploy. After a suspected leak, end the sessions still
+open under the old password:
+
+```sql
+select pg_terminate_backend(pid) from pg_stat_activity where usename like 'six7swe_app%';
+```
+
+Afterwards check that the old runtime password is rejected (connect with the old URL and expect an
+authentication failure).
 
 The first production rollout confirmed that the Supabase pooler accepts `<role>.<project-ref>` for
 the new role, and that the hosted `postgres` role can create roles.
@@ -257,7 +283,8 @@ The database holds only the job hunter's tables. The portfolio's background live
 knowledge service, which keeps its own schemas and is not touched by the reset.
 
 > Take a backup first (`pg_dump "$DATABASE_MIGRATION_URL" -Fc -f backup.dump`) if the hosted database holds
-> anything you want to keep.
+> anything you want to keep. The dump contains user emails: write it outside the repo, restrict
+> its permissions, and delete it when you are done.
 
 ### 3a. Schema on Deploy
 
@@ -276,9 +303,10 @@ the new version starts, so the schema is in place before the code that depends o
 the image keeps dev dependencies: `db:migrate` and `db:secure` run through `tsx`. The frontend
 service does not need a pre-deploy command.
 
-> Railway PR environments inherit this command, and `--remote` points it at
-> `DATABASE_MIGRATION_URL` (or `DATABASE_URL` when that is unset). Do not enable PR environments
-> unless both point at a database other than the hosted one.
+> Railway PR environments inherit this command, and `--remote` requires `DATABASE_MIGRATION_URL`
+> (there is no fallback). A PR environment would run the branch's migrations as the production
+> owner. Do not enable PR environments unless both URLs point at a database other than the hosted
+> one.
 
 Both steps connect as the table owner through `DATABASE_MIGRATION_URL` (see
 [Database roles](#database-roles)), and `db:secure` also provisions the runtime role that
@@ -294,10 +322,9 @@ what that does and why it matters.
 > A migration that drops a table or a column is applied to the hosted database automatically.
 > Take a backup before deploying one.
 
-`backend/.env.remote` holds the remote `DATABASE_URL` and `DATABASE_MIGRATION_URL` and is
-gitignored. Commands run from your machine with `--remote` (`db:migrate`, `db:secure`,
-`db:reset`) need `DATABASE_MIGRATION_URL` there too, or they connect as the runtime role and
-fail on the first DDL statement.
+`backend/.env.remote` is gitignored and needs both `DATABASE_URL` (the runtime role) and
+`DATABASE_MIGRATION_URL` (the owner). Commands run from your machine with `--remote`
+(`db:migrate`, `db:secure`, `db:reset`) require `DATABASE_MIGRATION_URL` and throw without it.
 
 ### 4. Resume PDF
 
