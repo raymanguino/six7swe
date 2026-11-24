@@ -187,12 +187,14 @@ export async function readRoleProblems(
       r.rolsuper, r.rolbypassrls, r.rolcreaterole, r.rolcreatedb, r.rolreplication,
       pg_has_role(r.rolname, ${ownerRole}::name, 'MEMBER') as owner_member,
       exists (select 1 from pg_auth_members m where m.member = r.oid) as member_of_any,
+      -- Every owned object of any kind (table, type, enum, function, operator ...) has an
+      -- ownership row in pg_shdepend, so this covers all catalogs rather than listing them.
       exists (
-        select 1 from pg_class c
-        where c.relnamespace = 'public'::regnamespace and c.relowner = r.oid
-      ) or exists (
-        select 1 from pg_proc p
-        where p.pronamespace = 'public'::regnamespace and p.proowner = r.oid
+        select 1 from pg_shdepend d
+        cross join lateral pg_identify_object(d.classid, d.objid, d.objsubid) o
+        where d.refclassid = 'pg_authid'::regclass and d.refobjid = r.oid and d.deptype = 'o'
+          and d.dbid = (select oid from pg_database where datname = current_database())
+          and (o.schema = 'public' or (o.type = 'schema' and o.identity = 'public'))
       ) as owns_objects,
       has_schema_privilege(r.rolname, 'public', 'CREATE') as can_create
     from pg_roles r

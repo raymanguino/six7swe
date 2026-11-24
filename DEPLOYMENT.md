@@ -126,7 +126,7 @@ Anything that compromises the `--no-sandbox` scraper Chrome can read the server'
 `DATABASE_MIGRATION_URL`, for `db:migrate`, `db:secure` and `db:reset`. The fallback to
 `DATABASE_URL` is local only: with `--remote` or `NODE_ENV=production` the scripts fail without
 `DATABASE_MIGRATION_URL` or when both URLs name the same role, and the server refuses to start if
-its role is a superuser, bypasses RLS, belongs to `postgres` or owns a `public` table. Chrome
+its role is a superuser, bypasses RLS, belongs to `postgres` or owns any object in `public`. Chrome
 itself gets only `PATH`, `HOME`, locale, temp and font variables
 (`services/jobFetchers/browser.ts`).
 

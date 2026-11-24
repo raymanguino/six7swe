@@ -8,14 +8,12 @@ import { UnauthenticatedUser } from './constants';
 import { CORS_METHODS, getCorsOrigin } from './config/cors';
 import { getSafeEnv } from './config/env';
 import { dropMigrationUrl, MIGRATION_URL_WARNING } from './config/migrationUrl';
-import { pgClient } from './db';
-import { assertRuntimeRoleIsSafe } from './db/appRole';
-import { OWNER_ROLE } from './db/security';
 import { assertKnowledgeRetrievalConfigured } from './config/knowledgeRetrieval';
 import * as plugins from './plugins';
 import authPlugin from './plugins/auth';
 import routes from './routes';
 import { PUBLIC_ROUTE } from './routes/access';
+import { assertServerRoleIsSafe } from './services/databaseRole';
 import { reapStaleRefreshes } from './services/jobHunt/standalone';
 import { setRetrievalLogger } from './services/knowledgeRetrieval';
 import Fastify from 'fastify';
@@ -115,7 +113,7 @@ const start = async () => {
     if (process.env.NODE_ENV === 'production') {
       if (startedWithMigrationUrl) fastify.log.warn(MIGRATION_URL_WARNING);
       // Refuse to serve with the table owner's rights (DEPLOYMENT.md, "Database roles").
-      await assertRuntimeRoleIsSafe(pgClient, OWNER_ROLE);
+      await assertServerRoleIsSafe();
     }
 
     // Validate CORS first so a bad config fails before anything touches the database. The plugin
