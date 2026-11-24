@@ -134,7 +134,7 @@ itself gets only `PATH`, `HOME`, locale, temp and font variables
 `db:secure` provisions the role from `DATABASE_URL` (user `six7swe_app.<project-ref>` on the
 pooler means role `six7swe_app`) in two transactions. The first creates the role if missing, sets
 the URL's password (as a SCRAM verifier) and checks the role, rolling back on failure. The check
-rejects reserved names (`pg_*`, `supabase_*`, `anon`, ...), passwords under 32 characters, and a
+rejects reserved names (`pg_*`, `supabase_*`, `anon`, ...), passwords under 32 characters and a
 role that is a superuser, bypasses RLS, can create roles or databases or replicate, is a member of
 any role, owns any object in `public`, or can create there. The second grants row access, one RLS
 policy per table and default privileges for later tables. The first is already committed when the
@@ -144,12 +144,12 @@ Provisioning on Railway. The old code cannot connect as a role that does not exi
 `DATABASE_URL` changes only with the deploy of the new code:
 
 1. Generate the password: `openssl rand -hex 32` (URL-safe). The URL is the only copy. Set it in
-   the Railway dashboard, not with `railway variables --set`, and never paste it into chat,
-   tickets or assistant sessions.
+   the Railway dashboard, not `railway variables --set`; never paste it into chat, tickets or
+   assistant sessions.
 2. Add `DATABASE_MIGRATION_URL`, set to the current owner URL (user `postgres.<project-ref>`). The
-   code from before #242 ignores it, so this is safe. Do not reset the owner password yet.
+   code from before #242 ignores it. Do not reset the owner password yet.
 3. Apply `.railway/railway.ts` ([Changing Railway config](#changing-railway-config)).
-   `preserve()` shows no change for an existing variable; only the start command changes. An apply
+   `preserve()` shows no change for an existing variable; only the start command does. An apply
    or auto-deploy can build the new code before step 4: pre-deploy then fails with
    `DATABASE_URL must name a runtime role other than DATABASE_MIGRATION_URL`, which is harmless
    because the old deployment keeps serving.
@@ -165,9 +165,9 @@ Provisioning on Railway. The old code cannot connect as a role that does not exi
    image would otherwise pick up a role that may not exist.
 5. The pre-deploy log shows the `db:secure` line `The backend connects as six7swe_app: it reads
    and writes the rows and owns no table.` The line `The backend connects as the table owner
-   (postgres). ...` means the role change did not take effect.
+   (postgres). ...` means the change did not take effect.
 6. Once the deploy is healthy, reset the `postgres` owner password in Supabase (Project ->
-   Settings -> Database); the old one was exposed through the old `DATABASE_URL`. Update
+   Settings -> Database); the old one was exposed via the old `DATABASE_URL`. Update
    `DATABASE_MIGRATION_URL` in Railway and `backend/.env.remote`, and confirm the next pre-deploy
    still succeeds.
 
