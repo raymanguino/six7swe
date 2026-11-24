@@ -57,6 +57,7 @@ describe('a renamed runtime role', () => {
     );
     expect(joined).toContain('REVOKE ALL PRIVILEGES ON SCHEMA public FROM "six7swe_app";');
     expect(joined).toContain('ALTER ROLE "six7swe_app" NOLOGIN;');
+    expect(joined).toContain('COMMENT ON ROLE "six7swe_app" IS NULL;');
   });
 
   it('shuts the former role out before the new one is granted', () => {

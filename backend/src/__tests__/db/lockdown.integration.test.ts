@@ -134,6 +134,8 @@ describeWithDatabase('the lockdown against a real database', () => {
   }, 30_000);
 
   it('shuts the old role out when the runtime role is renamed, and only it', async () => {
+    // Another database's runtime role in the same cluster must be left alone.
+    await admin?.unsafe(`comment on role "${bystander.role}" is 'six7swe-runtime:other_db'`);
     const lingering = postgres(urlFor(roleA), quiet);
     try {
       await lingering`select 1`;
@@ -146,9 +148,9 @@ describeWithDatabase('the lockdown against a real database', () => {
     }
 
     const roles = await owner<
-      { rolname: string; login: boolean; insert: boolean; defaults: boolean }[]
+      { rolname: string; login: boolean; insert: boolean; defaults: boolean; mark: string | null }[]
     >`
-      select r.rolname, r.rolcanlogin as login,
+      select r.rolname, r.rolcanlogin as login, shobj_description(r.oid, 'pg_authid') as mark,
         has_table_privilege(r.oid, 'public.items', 'INSERT') as insert,
         exists (
           select 1 from pg_default_acl d cross join lateral aclexplode(d.defaclacl) a
@@ -157,10 +159,18 @@ describeWithDatabase('the lockdown against a real database', () => {
       from pg_roles r where r.rolname in (${roleA.role}, ${bystander.role}) order by 1
     `;
     expect(roles).toEqual([
-      { rolname: roleA.role, login: false, insert: false, defaults: false },
-      // Not marked as a runtime role, so left alone despite its default privileges.
-      { rolname: bystander.role, login: true, insert: false, defaults: true },
+      { rolname: roleA.role, login: false, insert: false, defaults: false, mark: null },
+      // Not marked for this database, so left alone despite its default privileges.
+      {
+        rolname: bystander.role,
+        login: true,
+        insert: false,
+        defaults: true,
+        mark: expect.any(String),
+      },
     ]);
+    // A role marked for something else is never adopted as the runtime role.
+    await expect(applyLockdown(owner, bystander)).rejects.toThrow(/refusing to adopt/);
 
     await expect(asRole(roleA, (sql) => sql`select 1`)).rejects.toThrow(/not permitted to log in/);
     await asRole(roleB, async (sql) => {
@@ -168,7 +178,7 @@ describeWithDatabase('the lockdown against a real database', () => {
     });
   }, 30_000);
 
-  it('reports a routine the owner cannot revoke instead of failing on it', async () => {
+  it('fails on an exposed SECURITY DEFINER routine the owner cannot revoke', async () => {
     // Created by the bystander itself: `GRANT <role> TO current_user` segfaults local Supabase.
     await owner.unsafe(`grant create on schema public to "${bystander.role}"`);
     await asRole(bystander, (sql) =>
@@ -177,9 +187,15 @@ describeWithDatabase('the lockdown against a real database', () => {
       ),
     );
     await owner.unsafe(`revoke create on schema public from "${bystander.role}"`);
+    await expect(applyLockdown(owner, roleB)).rejects.toThrow(
+      `owner ${bystander.role}; executable by anon, authenticated, PUBLIC): as ${bystander.role}, ` +
+        'run REVOKE EXECUTE ON FUNCTION public.foreign_definer() FROM anon, authenticated, PUBLIC;',
+    );
+    // Once it is not a definer, it is only reported.
+    await asRole(bystander, (sql) => sql`alter function public.foreign_definer() security invoker`);
     const result = await applyLockdown(owner, roleB);
     expect(result.skippedFunctions).toEqual([
-      { signature: 'foreign_definer()', owner: bystander.role, extension: null, definer: true },
+      { signature: 'foreign_definer()', owner: bystander.role, extension: null, definer: false },
     ]);
   }, 30_000);
 });

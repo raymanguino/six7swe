@@ -1,5 +1,5 @@
 import type postgres from 'postgres';
-import { isReservedRole, managedRoutineSql, RUNTIME_ROLE_MARKER } from './appRole';
+import { isReservedRole, RUNTIME_ROLE_MARKER } from './appRole';
 import { isSafeIdentifier } from './identifier';
 import { type PublicFunction, type PublicObjects } from './lockdownStatements';
 import { OWNER_ROLE } from './security';
@@ -55,7 +55,9 @@ export async function readPublicObjects(sql: postgres.TransactionSql): Promise<C
         where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e'
         limit 1) as extension,
       p.prosecdef as definer,
-      ${sql.unsafe(managedRoutineSql(OWNER_ROLE))} as managed
+      -- Managed: the owner's and not an extension's, so the owner can revoke it.
+      (p.proowner = ${OWNER_ROLE}::regrole and not exists (select 1 from pg_depend d
+        where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e')) as managed
     from pg_proc p
     join pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'public'
@@ -90,14 +92,14 @@ export function selectFormerRoles(marked: string[], appRole: string | null): str
   return [...new Set(former)].sort();
 }
 
-/** The roles marked as the runtime role (`RUNTIME_ROLE_MARKER`) other than the current one. */
+/** The roles marked as this database's runtime role, other than the current one. */
 export async function readFormerRoles(
   sql: postgres.TransactionSql,
   appRole: string | null,
 ): Promise<string[]> {
   const marked = await sql<{ rolname: string }[]>`
     select rolname from pg_roles
-    where shobj_description(oid, 'pg_authid') = ${RUNTIME_ROLE_MARKER}
+    where shobj_description(oid, 'pg_authid') = ${RUNTIME_ROLE_MARKER} || ':' || current_database()
   `;
   return selectFormerRoles(
     marked.map((row) => row.rolname),
@@ -106,13 +108,16 @@ export async function readFormerRoles(
 }
 
 /**
- * The managed SECURITY DEFINER routines in `public` that `anon`,
- * `authenticated` or `PUBLIC` can still execute; empty when none can. Such a
- * routine runs with the owner's rights for whoever holds the anon key.
+ * The SECURITY DEFINER routines in `public`, managed or not, that `anon`,
+ * `authenticated` or `PUBLIC` can still execute, each with the REVOKE its
+ * owner has to run; empty when none can. Such a routine runs with its owner's
+ * rights for whoever holds the anon key.
  */
 export async function readExposedDefinerRoutines(sql: postgres.Sql): Promise<string[]> {
-  const rows = await sql<{ signature: string; roles: string }[]>`
-    select p.oid::regprocedure::text as signature, concat_ws(', ',
+  const rows = await sql<{ signature: string; owner: string; roles: string }[]>`
+    select format('public.%I(%s)', p.proname, pg_get_function_identity_arguments(p.oid))
+        as signature, pg_get_userbyid(p.proowner) as owner,
+      concat_ws(', ',
       case when has_function_privilege('anon', p.oid, 'EXECUTE') then 'anon' end,
       case when has_function_privilege('authenticated', p.oid, 'EXECUTE') then 'authenticated' end,
       case when exists (
@@ -121,10 +126,16 @@ export async function readExposedDefinerRoutines(sql: postgres.Sql): Promise<str
       ) then 'PUBLIC' end) as roles
     from pg_proc p
     join pg_namespace n on n.oid = p.pronamespace
-    where n.nspname = 'public' and p.prosecdef and ${sql.unsafe(managedRoutineSql(OWNER_ROLE))}
+    where n.nspname = 'public' and p.prosecdef
     order by 1
   `;
-  return rows.filter((row) => row.roles !== '').map((row) => `${row.signature} (${row.roles})`);
+  return rows
+    .filter((row) => row.roles !== '')
+    .map(
+      (row) =>
+        `${row.signature} (owner ${row.owner}; executable by ${row.roles}): as ${row.owner}, run ` +
+        `REVOKE EXECUTE ON FUNCTION ${row.signature} FROM ${row.roles};`,
+    );
 }
 
 /**

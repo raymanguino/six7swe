@@ -118,7 +118,10 @@ describe('buildAppRoleStatements', () => {
   });
 
   it('marks the role, so a later rename can find and shut it out', () => {
-    expect(joined).toContain(`COMMENT ON ROLE "six7swe_app" IS '${RUNTIME_ROLE_MARKER}';`);
+    // Marked for this database only, since roles are cluster-wide.
+    expect(joined).toContain(`m text := '${RUNTIME_ROLE_MARKER}:' || current_database();`);
+    expect(joined).toContain("format('COMMENT ON ROLE %I IS %L', 'six7swe_app', m)");
+    expect(joined).toMatch(/RAISE EXCEPTION 'Role six7swe_app has the comment/);
   });
 
   it('grants no attribute beyond LOGIN', () => {

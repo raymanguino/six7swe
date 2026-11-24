@@ -22,22 +22,12 @@ const RESERVED_ROLE =
   /^(pg_|supabase_|pgsodium)|^(postgres|anon|authenticated|service_role|authenticator|dashboard_user|pgbouncer|cli_login_postgres)$/;
 
 /**
- * The comment `db:secure` puts on the runtime role. A marked role that is no
- * longer the runtime role is shut out (`security.ts`); no other role is.
+ * The comment `db:secure` puts on the runtime role, followed by `:` and the
+ * database name: roles are cluster-wide, so the marker says which database's
+ * runtime role it is. A role marked for this database that is no longer its
+ * runtime role is shut out (`lockdownStatements.ts`); no other role is.
  */
 export const RUNTIME_ROLE_MARKER = 'six7swe-runtime';
-
-/**
- * A predicate on `pg_proc p` for the routines `db:secure` manages: owned by
- * the owner and not part of an extension. It cannot revoke or fix the others,
- * so it reports them instead of revoking or checking them.
- */
-export function managedRoutineSql(ownerRole: string): string {
-  quoteIdentifier(ownerRole);
-  return `(p.proowner = (select oid from pg_roles where rolname = '${ownerRole}')
-    and not exists (select 1 from pg_depend d where d.classid = 'pg_proc'::regclass
-      and d.objid = p.oid and d.deptype = 'e'))`;
-}
 
 /** True for a role Postgres or Supabase relies on, which `db:secure` never manages. */
 export function isReservedRole(role: string): boolean {
@@ -159,8 +149,13 @@ export function buildAppRoleStatements(role: string, verifier: string): string[]
 
   return [
     `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${role}') THEN CREATE ROLE ${quoted} LOGIN; END IF; END $$;`,
+    // Mark it for this database, refusing a role whose comment says it is something else.
+    `DO $$ DECLARE m text := '${RUNTIME_ROLE_MARKER}:' || current_database();
+      c text := shobj_description('${quoted}'::regrole, 'pg_authid');
+    BEGIN IF c IS DISTINCT FROM m AND c IS NOT NULL THEN
+      RAISE EXCEPTION 'Role ${role} has the comment "%", not "%"; refusing to adopt it as the runtime role.', c, m;
+    END IF; EXECUTE format('COMMENT ON ROLE %I IS %L', '${role}', m); END $$;`,
     `ALTER ROLE ${quoted} WITH LOGIN PASSWORD '${verifier}';`,
-    `COMMENT ON ROLE ${quoted} IS '${RUNTIME_ROLE_MARKER}';`,
   ];
 }
 
@@ -224,8 +219,7 @@ export async function readRoleProblems(
       exists (
         select 1 from pg_proc p
         join pg_namespace n on n.oid = p.pronamespace
-        where n.nspname = 'public' and p.prosecdef and ${sql.unsafe(managedRoutineSql(ownerRole))}
-          and has_function_privilege(r.oid, p.oid, 'EXECUTE')
+        where n.nspname = 'public' and p.prosecdef and has_function_privilege(r.oid, p.oid, 'EXECUTE')
       ) as executes_definer
     from pg_roles r
     where r.rolname = ${role}::name

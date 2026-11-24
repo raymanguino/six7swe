@@ -121,7 +121,10 @@ export function buildAppAccessStatements(
     }
     statements.push(...defaultPrivileges((kind) => `REVOKE ALL ON ${kind} FROM ${roles}`));
     statements.push(`REVOKE ALL PRIVILEGES ON SCHEMA public FROM ${roles};`);
-    statements.push(...former.map((role) => `ALTER ROLE ${quoteIdentifier(role)} NOLOGIN;`));
+    for (const role of former.map(quoteIdentifier)) {
+      // The marker goes too, so a later deploy does not shut it out again.
+      statements.push(`ALTER ROLE ${role} NOLOGIN;`, `COMMENT ON ROLE ${role} IS NULL;`);
+    }
   }
 
   if (appRole !== null) {

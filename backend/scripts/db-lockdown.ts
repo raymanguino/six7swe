@@ -51,13 +51,15 @@ async function run(tx: postgres.TransactionSql, statements: string[]): Promise<v
  * 1. The browser roles are shut out (RLS, revokes from anon, authenticated and
  *    PUBLIC, default privileges) and that is committed on its own, so nothing
  *    that goes wrong with the runtime role can reopen the tables.
+ *
+ * The run then fails if anon, authenticated or PUBLIC can still execute any
+ * SECURITY DEFINER routine in `public`, including one the owner cannot revoke.
+ *
  * 2. The runtime role is created or its password reset, former runtime roles
  *    are shut out, the role is granted its rows and then checked. All or
  *    nothing: a failed check rolls the role, its password and its grants back.
  *
- * Then the sessions of the former roles are ended (best effort), and the run
- * fails if anon, authenticated or PUBLIC can still execute a SECURITY DEFINER
- * routine in `public`.
+ * Then the sessions of the former roles are ended (best effort).
  *
  * @param sql A connection as the table owner.
  * @param app The runtime role, or null when the backend connects as the owner.
@@ -73,6 +75,13 @@ export async function applyLockdown(
     return { objects, statements: statements.length };
   });
 
+  const exposed = await readExposedDefinerRoutines(sql);
+  if (exposed.length > 0) {
+    throw new Error(
+      `SECURITY DEFINER routines in public are executable by the browser roles: ${exposed.join('; ')}`,
+    );
+  }
+
   const access = await sql.begin(async (tx) => {
     if (app) {
       await provisionAppRole(tx, app);
@@ -87,13 +96,6 @@ export async function applyLockdown(
   });
 
   const endedSessions = await terminateRoleSessions(sql, access.formerRoles);
-
-  const exposed = await readExposedDefinerRoutines(sql);
-  if (exposed.length > 0) {
-    throw new Error(
-      `SECURITY DEFINER routines in public are executable by the browser roles: ${exposed.join('; ')}.`,
-    );
-  }
 
   return {
     tables: lockdown.objects.tables,
