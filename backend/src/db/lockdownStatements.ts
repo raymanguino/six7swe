@@ -1,5 +1,5 @@
 import { quoteIdentifier } from './identifier';
-import { APP_POLICY, OWNER_ROLE } from './security';
+import { APP_POLICY, BROWSER_ROLES, OWNER_ROLE } from './security';
 
 /**
  * The statements behind the rules in `security.ts`, applied by
@@ -7,9 +7,6 @@ import { APP_POLICY, OWNER_ROLE } from './security';
  * asserted in a test without a database. Each kind of object is revoked or
  * granted in one list statement; an empty list issues none.
  */
-
-/** Roles that reach the database from a browser. */
-const BROWSER_ROLES = 'anon, authenticated';
 
 const APP_TABLE_PRIVILEGES = 'SELECT, INSERT, UPDATE, DELETE';
 

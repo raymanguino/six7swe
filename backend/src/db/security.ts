@@ -31,6 +31,10 @@
  * rules and `db:secure` has to run after every migration.
  */
 
+/** Roles that reach the database from a browser. */
+const PUBLIC_ROLES = ['anon', 'authenticated'] as const;
+export const BROWSER_ROLES = PUBLIC_ROLES.join(', ');
+
 /** The role the migrations connect as, and the owner of the tables. */
 export const OWNER_ROLE = 'postgres';
 
