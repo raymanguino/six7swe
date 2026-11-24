@@ -25,19 +25,26 @@ import type postgres from 'postgres';
  *     `PUBLIC`; revoking it from `anon` alone would leave the grant in
  *     place for `anon` to inherit.
  *
- * The backend is unaffected: it connects as the table owner, and an owner
- * bypasses RLS.
- *
- * The Drizzle schema cannot express any of this. Drizzle ORM 0.33 has no
- * policy or role support, so this file is the source of truth for the
- * database's access rules and `db:secure` has to run after every migration.
+ * A runtime role (`appRole.ts`) is let back in: SELECT, INSERT, UPDATE and
+ * DELETE on tables, USAGE on sequences, one policy per table admitting only it,
+ * and the same as default privileges for later tables. Without one (local
+ * development) the backend is the owner, which bypasses RLS. The role comes
+ * from the environment, so this file, not the Drizzle schema, holds these
+ * rules and `db:secure` has to run after every migration.
  */
 
 /** Roles that reach the database from a browser. */
 const PUBLIC_ROLES = ['anon', 'authenticated'] as const;
 
-/** The role the Drizzle client connects as, and the owner of the tables. */
-const OWNER_ROLE = 'postgres';
+/** The role the migrations connect as, and the owner of the tables. */
+export const OWNER_ROLE = 'postgres';
+
+/** One fixed name, so a change of runtime role replaces the policy. */
+export const APP_POLICY = 'backend_app_access';
+
+const APP_TABLE_PRIVILEGES = 'SELECT, INSERT, UPDATE, DELETE';
+
+const APP_SEQUENCE_PRIVILEGES = 'USAGE, SELECT';
 
 /** Matches an unquoted Postgres identifier. */
 const SAFE_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
@@ -63,11 +70,14 @@ function quoteIdentifier(name: string): string {
  * @param tables Table names in the `public` schema.
  * @param sequences Sequence names in the `public` schema.
  * @param functions Function names in the `public` schema.
+ * @param appRole The backend's runtime role, or null when it connects as the
+ *   owner.
  */
 export function buildSecurityStatements(
   tables: string[],
   sequences: string[] = [],
   functions: string[] = [],
+  appRole: string | null = null,
 ): string[] {
   const statements: string[] = [];
 
@@ -118,6 +128,50 @@ export function buildSecurityStatements(
   // supplies the built-in EXECUTE privilege for a new function.
   statements.push(
     `ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER_ROLE} REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;`,
+  );
+
+  if (appRole !== null) {
+    statements.push(...buildAppGrantStatements(appRole, tables, sequences));
+  }
+
+  return statements;
+}
+
+/**
+ * The grants and policies that let the runtime role read and write the rows.
+ *
+ * Runs after the lockdown, so revoking from the public roles never touches
+ * them. The table grants are revoked first so a privilege granted by hand
+ * (TRUNCATE, say) does not survive.
+ */
+function buildAppGrantStatements(appRole: string, tables: string[], sequences: string[]): string[] {
+  const role = quoteIdentifier(appRole);
+  if (appRole === OWNER_ROLE) {
+    throw new Error(`The runtime role cannot be the table owner (${OWNER_ROLE}).`);
+  }
+
+  const statements = [`GRANT USAGE ON SCHEMA public TO ${role};`];
+
+  for (const table of tables) {
+    const quoted = quoteIdentifier(table);
+    statements.push(`REVOKE ALL PRIVILEGES ON TABLE public.${quoted} FROM ${role};`);
+    statements.push(`GRANT ${APP_TABLE_PRIVILEGES} ON TABLE public.${quoted} TO ${role};`);
+    statements.push(`DROP POLICY IF EXISTS ${APP_POLICY} ON public.${quoted};`);
+    statements.push(
+      `CREATE POLICY ${APP_POLICY} ON public.${quoted} FOR ALL TO ${role} USING (true) WITH CHECK (true);`,
+    );
+  }
+
+  for (const sequence of sequences) {
+    const quoted = quoteIdentifier(sequence);
+    statements.push(`GRANT ${APP_SEQUENCE_PRIVILEGES} ON SEQUENCE public.${quoted} TO ${role};`);
+  }
+
+  statements.push(
+    `ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER_ROLE} IN SCHEMA public GRANT ${APP_TABLE_PRIVILEGES} ON TABLES TO ${role};`,
+  );
+  statements.push(
+    `ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER_ROLE} IN SCHEMA public GRANT ${APP_SEQUENCE_PRIVILEGES} ON SEQUENCES TO ${role};`,
   );
 
   return statements;
@@ -173,14 +227,25 @@ export interface SecurityResult {
  * Locks the application tables down.
  *
  * Idempotent: running it again re-applies the same rules without failing.
+ * The statements run in one transaction, so a table is never left with RLS
+ * on and the runtime role's policy dropped but not yet recreated.
+ *
+ * @param sql A connection as the table owner.
+ * @param appRole The backend's runtime role, or null when it connects as the
+ *   owner.
  */
-export async function applyDatabaseSecurity(sql: postgres.Sql): Promise<SecurityResult> {
+export async function applyDatabaseSecurity(
+  sql: postgres.Sql,
+  appRole: string | null = null,
+): Promise<SecurityResult> {
   const { tables, sequences, functions } = await readPublicObjects(sql);
-  const statements = buildSecurityStatements(tables, sequences, functions);
+  const statements = buildSecurityStatements(tables, sequences, functions, appRole);
 
-  for (const statement of statements) {
-    await sql.unsafe(statement);
-  }
+  await sql.begin(async (tx) => {
+    for (const statement of statements) {
+      await tx.unsafe(statement);
+    }
+  });
 
   return { tables, statements: statements.length };
 }

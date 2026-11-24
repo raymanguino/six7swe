@@ -7,7 +7,7 @@
  * a future change to the statement list cannot quietly reopen the tables.
  */
 
-import { buildSecurityStatements } from '../../db/security';
+import { APP_POLICY, buildSecurityStatements, OWNER_ROLE } from '../../db/security';
 
 describe('the database lockdown', () => {
   const tables = ['profiles', 'users'];
@@ -62,12 +62,90 @@ describe('the database lockdown', () => {
     );
   });
 
-  it('creates no policy, so the default is to deny every row', () => {
+  it('creates no policy without a runtime role, so the default is to deny every row', () => {
     expect(joined).not.toContain('CREATE POLICY');
+    expect(joined).not.toContain('GRANT ');
   });
 
   it('refuses to interpolate an identifier that is not a plain name', () => {
     expect(() => buildSecurityStatements(['users"; DROP TABLE users; --'])).toThrow(
+      /Unsafe SQL identifier/,
+    );
+  });
+});
+
+describe('the runtime role grants', () => {
+  const tables = ['profiles', 'users'];
+  const statements = buildSecurityStatements(tables, ['users_id_seq'], [], 'six7swe_app');
+  const joined = statements.join('\n');
+
+  it('grants row access and nothing else on every table', () => {
+    for (const table of tables) {
+      expect(joined).toContain(
+        `GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public."${table}" TO "six7swe_app";`,
+      );
+    }
+    expect(joined).not.toMatch(/GRANT ALL/);
+    expect(joined).not.toMatch(/TRUNCATE|REFERENCES|TRIGGER/);
+  });
+
+  it('revokes what was granted by hand before granting', () => {
+    const revoke = statements.indexOf(
+      'REVOKE ALL PRIVILEGES ON TABLE public."users" FROM "six7swe_app";',
+    );
+    const grant = statements.indexOf(
+      'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public."users" TO "six7swe_app";',
+    );
+    expect(revoke).toBeGreaterThan(-1);
+    expect(grant).toBeGreaterThan(revoke);
+  });
+
+  it('admits only the runtime role to the rows, so anon still sees nothing', () => {
+    for (const table of tables) {
+      expect(joined).toContain(
+        `CREATE POLICY ${APP_POLICY} ON public."${table}" FOR ALL TO "six7swe_app" USING (true) WITH CHECK (true);`,
+      );
+      expect(joined).toContain(`DROP POLICY IF EXISTS ${APP_POLICY} ON public."${table}";`);
+    }
+    expect(joined).not.toMatch(/CREATE POLICY .* TO (anon|authenticated|PUBLIC)/);
+  });
+
+  it('keeps row level security on', () => {
+    expect(joined).toContain('ALTER TABLE public."users" ENABLE ROW LEVEL SECURITY;');
+    expect(joined).not.toContain('DISABLE ROW LEVEL SECURITY');
+  });
+
+  it('lets the role draw ids from the sequences', () => {
+    expect(joined).toContain(
+      'GRANT USAGE, SELECT ON SEQUENCE public."users_id_seq" TO "six7swe_app";',
+    );
+  });
+
+  it('grants the same on tables and sequences a later migration creates', () => {
+    expect(joined).toContain(
+      'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "six7swe_app";',
+    );
+    expect(joined).toContain(
+      'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO "six7swe_app";',
+    );
+  });
+
+  it('runs after the lockdown, so a revoke never undoes a grant', () => {
+    const lastRevokeFromPublicRoles = statements.reduce(
+      (last, statement, index) =>
+        /FROM (anon|authenticated|PUBLIC);$/.test(statement) ? index : last,
+      -1,
+    );
+    const firstGrant = statements.findIndex((statement) => statement.startsWith('GRANT '));
+    expect(firstGrant).toBeGreaterThan(lastRevokeFromPublicRoles);
+  });
+
+  it('refuses the owner as the runtime role', () => {
+    expect(() => buildSecurityStatements(tables, [], [], OWNER_ROLE)).toThrow(/table owner/);
+  });
+
+  it('refuses a role name that is not a plain identifier', () => {
+    expect(() => buildSecurityStatements(tables, [], [], 'app"; DROP TABLE users; --')).toThrow(
       /Unsafe SQL identifier/,
     );
   });

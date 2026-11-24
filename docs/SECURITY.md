@@ -119,8 +119,9 @@ leaves the function callable, so it has to be revoked from `PUBLIC`. That
 revoke must use the **global** `ALTER DEFAULT PRIVILEGES` form; the
 schema-scoped form leaves the built-in EXECUTE privilege in place.
 
-The backend is unaffected: it connects as the table owner, and an owner
-bypasses RLS.
+The backend connects as a runtime role that owns nothing; `db:secure` creates
+it and admits it with one policy per table (`backend/src/db/appRole.ts`;
+`DEPLOYMENT.md`, "Database roles").
 
 ### Running it
 

@@ -6,9 +6,7 @@ import * as schema from './schema';
 // DATABASE CONNECTION
 // ============================================================
 
-const {
-  DATABASE_URL,
-} = process.env;
+const { DATABASE_URL } = process.env;
 
 if (!DATABASE_URL) {
   throw new Error('DATABASE_URL environment variable is required.');

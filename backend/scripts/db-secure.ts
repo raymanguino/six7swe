@@ -10,8 +10,11 @@
  *
  * This turns row level security on, revokes the public grants, and revokes
  * the default privileges so a table created later does not inherit them.
- * The backend is unaffected: it connects as the table owner, and an owner
- * bypasses RLS.
+ *
+ * It connects as the table owner (`DATABASE_MIGRATION_URL`, or `DATABASE_URL`
+ * when that is unset). When `DATABASE_URL` names another role, it creates that
+ * role (or resets its password to the one in the URL) and grants it read and
+ * write access to the rows, so the backend runs without the owner's rights.
  *
  * It has to run after every migration, because the schema cannot express
  * any of this and a recreated table starts out wide open.
@@ -21,9 +24,8 @@
  *   pnpm run db:secure -- --remote    # the hosted database
  */
 
-import postgres from 'postgres';
-import { applyDatabaseSecurity } from '../src/db/security';
-import { resolveDatabaseTarget, sslOptions } from './db-env';
+import { resolveDatabaseTarget } from './db-env';
+import { describeAppRole, lockDownDatabase } from './db-lockdown';
 
 async function main(): Promise<void> {
   const target = resolveDatabaseTarget();
@@ -31,22 +33,16 @@ async function main(): Promise<void> {
 
   process.stdout.write(`Locking down the ${label} database.\n`);
 
-  const sql = postgres(target.databaseUrl, { ...sslOptions(target.remote), max: 1 });
+  const result = await lockDownDatabase(target);
 
-  try {
-    const result = await applyDatabaseSecurity(sql);
-
-    process.stdout.write(
-      `Locked down ${result.tables.length} table(s): ${result.tables.join(', ')}\n`,
-    );
-    process.stdout.write(`Applied ${result.statements} statement(s).\n`);
-    process.stdout.write(
-      'Row level security is on and the anon and authenticated grants are revoked.\n' +
-        'The backend connects as the table owner and is unaffected.\n',
-    );
-  } finally {
-    await sql.end();
-  }
+  process.stdout.write(
+    `Locked down ${result.tables.length} table(s): ${result.tables.join(', ')}\n`,
+  );
+  process.stdout.write(`Applied ${result.statements} statement(s).\n`);
+  process.stdout.write(
+    'Row level security is on and the anon and authenticated grants are revoked.\n',
+  );
+  process.stdout.write(describeAppRole(result));
 }
 
 main()

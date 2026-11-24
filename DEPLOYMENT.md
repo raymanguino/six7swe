@@ -71,11 +71,15 @@ policy and the watch paths.
    the build fail.
 2. Railway runs a Dockerfile service's start command in exec form, without a shell, so a
    command with `cd` or `&&` does not work there. The image's working directory is
-   `/app/backend`, so commands need no `cd`: the start command is `pnpm start`, and the
+   `/app/backend`, so commands need no `cd`: the start command is
+   `env -u DATABASE_MIGRATION_URL pnpm start`, and the
    pre-deploy command is `pnpm db:deploy`, a package script (pnpm runs scripts in a shell).
    Write any new command for this service, such as a cron command, the same way. Running from
    `backend/` still uses the root `packageManager` (`backend/package.json` has none, so corepack
-   walks up to `/app/package.json`), so build and runtime use the same pnpm version. The runtime
+   walks up to `/app/package.json`), so build and runtime use the same pnpm version.
+   The start command is prefixed with `env -u DATABASE_MIGRATION_URL`, so the server never holds
+   the table owner's connection (see [Database roles](#database-roles)); `env` replaces itself
+   with pnpm, so no process keeps the variable. The runtime
    stage prefetches its own copy into `COREPACK_HOME` at build time, and fails the build if the
    version it resolves differs from the root pin.
    The image sets `NODE_ENV=production`, which arms the guard that refuses to start with
@@ -83,7 +87,8 @@ policy and the watch paths.
 3. Set environment variables on the service. `.railway/railway.ts` lists each secret as
    `preserve()`, which keeps the value set in Railway, so a new variable has to be added there as
    well or the next apply deletes it:
-   - `DATABASE_URL` - PostgreSQL connection string (the job hunter's tables)
+   - `DATABASE_URL` - PostgreSQL connection string for the backend's **runtime role**, which reads and writes the job hunter's rows and owns no table (see [Database roles](#database-roles))
+   - `DATABASE_MIGRATION_URL` - PostgreSQL connection string for the **table owner** (`postgres`), used only by the pre-deploy command. The start command removes it from the server's environment
    - `PORT` - Port (Railway sets this automatically)
    - `NODE_ENV` - Set to `production`
    - `MINIMAX_API_KEY` - MiniMax API key
@@ -112,6 +117,40 @@ policy and the watch paths.
 > Set production values in the Railway dashboard, not in a committed file. `backend/.env` and `backend/.env.*` are gitignored and never deployed.
 
 > **IPv4 only:** Railway does not support outbound IPv6. Use Supabase's IPv4 connection string for `DATABASE_URL`. See [Railway Outbound Networking](https://docs.railway.com/networking/outbound-networking).
+
+#### Database roles
+
+Anything that compromises the `--no-sandbox` scraper Chrome can read the server's environment, so
+`DATABASE_URL` connects as a runtime role that reads and writes rows but owns nothing (no DDL, no
+`TRUNCATE`, no turning RLS off). The owner (`postgres`) connects only through
+`DATABASE_MIGRATION_URL`, for `db:migrate`, `db:secure` and `db:reset`. The fallback to
+`DATABASE_URL` is local only: with `--remote` or `NODE_ENV=production` the scripts fail without
+`DATABASE_MIGRATION_URL` or when both URLs name the same role, and the server refuses to start if
+its role is a superuser, bypasses RLS, belongs to `postgres` or owns any object in `public`. Chrome
+itself gets only `PATH`, `HOME`, locale, temp and font variables
+(`services/jobFetchers/browser.ts`).
+
+`db:secure` provisions the role from `DATABASE_URL` (user `six7swe_app.<project-ref>` on the
+pooler means role `six7swe_app`), in one transaction: create it if missing, set the URL's
+password (as a SCRAM verifier), check it, roll back if the check fails. The check rejects
+reserved names (`pg_*`, `supabase_*`, `anon`, ...), passwords under 32 characters, and a role
+that is a superuser, bypasses RLS, can create roles or databases or replicate, is a member of any
+role, owns any object in `public`, or can create there. It then grants row access, one RLS policy
+per table for that role, and default privileges for later tables.
+
+Provisioning on Railway (to rotate the password, steps 1 and 2 with a new password):
+
+1. Generate the password: `openssl rand -hex 32` (URL-safe). The URL is the only copy.
+2. In the backend's variables, stage both changes together: `DATABASE_MIGRATION_URL` = the
+   current owner URL, and `DATABASE_URL` =
+   `postgresql://six7swe_app.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres`.
+3. Apply `.railway/railway.ts` ([Changing Railway config](#changing-railway-config)) and deploy
+   this change. The pre-deploy creates the role before the server starts; its log says
+   `The backend connects as six7swe_app`. A deploy of this code without the variables fails in
+   pre-deploy and leaves the old deployment serving.
+
+A cron or one-off command in the backend image should be prefixed with
+`env -u DATABASE_MIGRATION_URL` like the start command, unless it is a migration script.
 
 ### 2. Frontend Service
 
@@ -199,7 +238,7 @@ pnpm run db:reset -- --seed             # local database, with dev data
 The database holds only the job hunter's tables. The portfolio's background lives in the
 knowledge service, which keeps its own schemas and is not touched by the reset.
 
-> Take a backup first (`pg_dump "$DATABASE_URL" -Fc -f backup.dump`) if the hosted database holds
+> Take a backup first (`pg_dump "$DATABASE_MIGRATION_URL" -Fc -f backup.dump`) if the hosted database holds
 > anything you want to keep.
 
 ### 3a. Schema on Deploy
@@ -219,9 +258,13 @@ the new version starts, so the schema is in place before the code that depends o
 the image keeps dev dependencies: `db:migrate` and `db:secure` run through `tsx`. The frontend
 service does not need a pre-deploy command.
 
-> Railway PR environments inherit this command, and `--remote` points it at `DATABASE_URL`. Do
-> not enable PR environments unless their `DATABASE_URL` points at a database other than the
-> hosted one.
+> Railway PR environments inherit this command, and `--remote` points it at
+> `DATABASE_MIGRATION_URL` (or `DATABASE_URL` when that is unset). Do not enable PR environments
+> unless both point at a database other than the hosted one.
+
+Both steps connect as the table owner through `DATABASE_MIGRATION_URL` (see
+[Database roles](#database-roles)), and `db:secure` also provisions the runtime role that
+`DATABASE_URL` names.
 
 The two steps are in that order on purpose. `db:migrate` applies the migrations, and a table that
 a migration created starts out with the default Supabase grants, so `db:secure` has to run after
@@ -233,7 +276,10 @@ what that does and why it matters.
 > A migration that drops a table or a column is applied to the hosted database automatically.
 > Take a backup before deploying one.
 
-`backend/.env.remote` holds the remote `DATABASE_URL` and is gitignored.
+`backend/.env.remote` holds the remote `DATABASE_URL` and `DATABASE_MIGRATION_URL` and is
+gitignored. Commands run from your machine with `--remote` (`db:migrate`, `db:secure`,
+`db:reset`) need `DATABASE_MIGRATION_URL` there too, or they connect as the runtime role and
+fail on the first DDL statement.
 
 ### 4. Resume PDF
 
@@ -251,10 +297,11 @@ The frontend downloads the resume from the backend via `GET /resume`, and shows 
 The job-hunter can trigger a refresh over HTTP, but a refresh started that way
 does not survive a backend restart. For scheduled refreshes, add a **Cron** to
 the backend service in Railway. The cron runs inside the backend image, from `/app/backend`,
-without a shell:
+without a shell. Strip the owner's connection the way the start command does (`jobs:refresh`
+also drops it from its own environment before it launches Chrome, and warns that it was set):
 
 ```bash
-pnpm jobs:refresh -- --profile 1
+env -u DATABASE_MIGRATION_URL pnpm jobs:refresh -- --profile 1
 ```
 
 `profileId` is the id of the search profile to refresh. The command uses the
@@ -298,7 +345,9 @@ refresh runs, not at boot.
   `SYS_ADMIN`), so `services/jobFetchers/browser.ts` launches Chrome with `--no-sandbox`.
   Non-root limits what a compromised page can change in the container, but it does not keep
   backend secrets away from a compromised Chrome: the same user can read the Node process's
-  environment. Scraper and secret isolation is tracked in #127.
+  environment. That environment's `DATABASE_URL` connects as a role that owns no table
+  ([Database roles](#database-roles)), and the owner's `DATABASE_MIGRATION_URL` is stripped by
+  the start command. The rest of the scraper and secret isolation is tracked in #127.
 
 If a refresh fails with `Could not find Chrome`, check the build log for the `browsers:install`
 step. A failure that names a missing `.so` file is a library missing from the runtime stage; add

@@ -183,8 +183,8 @@ among them) readable and writable by anyone, without authenticating.
 `db:secure` turns row level security on for every application table and revokes the
 `anon` and `authenticated` grants. No policies are created, so the default is to deny every
 row. Function execution is revoked as well, since a function in an exposed schema is an RPC
-endpoint that the anon key could otherwise call. The backend is unaffected: it connects as the
-table owner, and an owner bypasses RLS.
+endpoint that the anon key could otherwise call. The backend connects as a runtime role that
+`db:secure` creates and admits per table (`DEPLOYMENT.md`, "Database roles").
 
 **Run `db:secure` after every migration.** The Drizzle schema is the source of truth
 for the tables, but Drizzle ORM 0.33 cannot express row level security or role grants, so the

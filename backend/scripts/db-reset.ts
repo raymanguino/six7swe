@@ -1,8 +1,9 @@
 /**
  * Rebuilds the database from scratch.
  *
- * Drops everything in the `public` schema, then replays the migration
- * history from the start. The Supabase-managed schemas (auth, storage,
+ * Connects as the table owner (`DATABASE_MIGRATION_URL`, or `DATABASE_URL`
+ * when that is unset), drops everything in the `public` schema, then replays
+ * the migration history from the start. The Supabase-managed schemas (auth, storage,
  * graphql_public) are left alone, so Supabase Auth users survive a reset.
  * So are the knowledge service's `knowledge` and `knowledge_migrations`
  * schemas: that service owns them and applies its own migrations.
@@ -19,8 +20,8 @@
 
 import readline from 'node:readline/promises';
 import postgres from 'postgres';
-import { applyDatabaseSecurity } from '../src/db/security';
 import { assumesYes, resolveDatabaseTarget, runMigrations, sslOptions, wantsSeed } from './db-env';
+import { describeAppRole, lockDownDatabase } from './db-lockdown';
 
 /**
  * Drops every table and enum in the `public` schema.
@@ -63,20 +64,14 @@ async function dropPublicSchema(sql: postgres.Sql): Promise<string[]> {
 /**
  * Applies the access rules the Drizzle schema cannot express.
  *
- * The schema is the source of truth for the tables, but row level security
- * and the role grants live outside it, so they have to be applied after
- * every migration. See src/db/security.ts.
+ * The schema is the source of truth for the tables, but row level security,
+ * the role grants and the runtime role live outside it, so they have to be
+ * applied after every migration. See src/db/security.ts and src/db/appRole.ts.
  */
 async function lockDownSchema(): Promise<void> {
-  const target = resolveDatabaseTarget();
-  const sql = postgres(target.databaseUrl, { ...sslOptions(target.remote), max: 1 });
-
-  try {
-    const result = await applyDatabaseSecurity(sql);
-    process.stdout.write(`Locked down ${result.tables.length} table(s) with row level security.\n`);
-  } finally {
-    await sql.end();
-  }
+  const result = await lockDownDatabase(resolveDatabaseTarget());
+  process.stdout.write(`Locked down ${result.tables.length} table(s) with row level security.\n`);
+  process.stdout.write(describeAppRole(result));
 }
 
 /**
@@ -147,7 +142,8 @@ async function main(): Promise<void> {
 
   if (wantsSeed) {
     // Imported after the schema is in place: the seed creates the Drizzle
-    // client, which binds to DATABASE_URL when it is first loaded.
+    // client, which binds to DATABASE_URL when it is first loaded. That is the
+    // runtime role when one is set, which the lockdown has just granted.
     const { seedJobHuntData } = await import('./seed-job-hunt');
     const seeded = await seedJobHuntData();
     process.stdout.write(`Seeded ${seeded.users} user(s) and ${seeded.profiles} profile(s).\n`);

@@ -79,7 +79,10 @@ export default defineRailway(() => {
         '/tsconfig.base.json',
       ],
     },
-    start: 'pnpm start',
+    // `env -u` removes the table owner's DATABASE_MIGRATION_URL before pnpm starts, so neither the
+    // server nor the Chrome it launches for the job scraper ever holds it. Exec form splits on
+    // spaces, and `env` is in the image (coreutils).
+    start: 'env -u DATABASE_MIGRATION_URL pnpm start',
     // `db:deploy` migrates, then secures: a table a migration creates starts with the default
     // Supabase grants, so `db:secure` must run after it (docs/SECURITY.md).
     preDeploy: 'pnpm db:deploy',
@@ -89,7 +92,14 @@ export default defineRailway(() => {
     env: {
       NODE_ENV: preserve(),
       PORT: preserve(),
+      // The runtime role (#242): reads and writes the job hunter's rows and owns no table.
+      // `db:secure` creates the role from this URL's user and password (Supabase pooler user
+      // `six7swe_app.<project-ref>`), so set both URLs in Railway before the apply that adds the
+      // second one (DEPLOYMENT.md, "Database roles").
       DATABASE_URL: preserve(),
+      // The table owner (`postgres.<project-ref>`), for the pre-deploy command only. The start
+      // command removes it from the server's environment.
+      DATABASE_MIGRATION_URL: preserve(),
       MINIMAX_API_KEY: preserve(),
       MINIMAX_API_KEY_SECONDARY: preserve(),
       RESEND_API_KEY: preserve(),
