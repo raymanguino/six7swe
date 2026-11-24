@@ -117,7 +117,8 @@ export async function applyLockdown(
     await run(tx, workerStatements);
     if (worker) {
       await assertAppRoleIsSafe(tx, worker.role, OWNER_ROLE).catch((error: unknown) => {
-        throw new Error(`DATABASE_WORKER_URL: ${(error as Error).message}`);
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new Error(`DATABASE_WORKER_URL: ${reason}`);
       });
     }
 
