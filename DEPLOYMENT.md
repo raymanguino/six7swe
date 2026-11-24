@@ -340,23 +340,13 @@ first profile in `JOB_REFRESH_PROFILE_IDS` whose latest refresh (from any proces
 than `JOB_REFRESH_INTERVAL_HOURS` (default 24) ago. The schedule is read from `refresh_status`,
 so a restart does not reset it. It runs as exactly one replica.
 
-Its variables are only what scraping and scoring need:
-
-- `DATABASE_URL` - the worker role, `six7swe_worker.<project-ref>`: read and write on `jobs`,
-  `profile_jobs` and `refresh_status`, read on `profiles` and on `users.id` and `users.auth_id`
-  (not the email), no delete and nothing else (`backend/src/db/workerRole.ts`). A table added
-  to the refresh has to be added there too
-- `MINIMAX_API_KEY`, `MINIMAX_API_KEY_SECONDARY` - scoring
-- `KNOWLEDGE_URL`, `KNOWLEDGE_SERVICE_KEY` - scoring retrieves the owner's background per job
-  (`services/jobHunt/knowledgeSource.ts`); required in production, like on the backend
-- `OWNER_AUTH_ID` - an auth user id, not a credential: only that user's profiles are scored
-  against the knowledge base
-- `JOB_REFRESH_PROFILE_IDS` - comma-separated search profile ids; empty, the worker idles.
-  `JOB_REFRESH_INTERVAL_HOURS` is optional
-
-In production the worker refuses to start if it receives `DATABASE_MIGRATION_URL`,
-`DATABASE_WORKER_URL`, `RESEND_*`, `CONTACT_TO_EMAIL`, `SUPABASE_*` or `KNOWLEDGE_OWNER_KEY`
-(`backend/src/config/worker.ts`), and, like the server, if its role holds owner rights.
+Its `DATABASE_URL` is the worker role (`six7swe_worker`): read and write on `jobs`,
+`profile_jobs` and `refresh_status`, read on `profiles` and `users.id`/`users.auth_id`, nothing
+else (`backend/src/db/workerRole.ts`; a table added to the refresh goes there too). Scoring needs
+`MINIMAX_API_KEY*`, `KNOWLEDGE_URL` and `KNOWLEDGE_SERVICE_KEY` (background retrieval), and
+`OWNER_AUTH_ID` (a user id, not a credential) picks the profiles scored against it. In production
+it refuses to start with a forbidden variable (`backend/src/config/worker.ts`: the owner URL,
+`RESEND_*`, `SUPABASE_*`, `KNOWLEDGE_OWNER_KEY`, ...) or a role other than the worker role.
 
 Provisioning, in this order (the role has to exist before the worker can connect):
 
@@ -364,12 +354,10 @@ Provisioning, in this order (the role has to exist before the worker can connect
 2. On the **backend** service, add `DATABASE_WORKER_URL`: the runtime `DATABASE_URL` with the
    user `six7swe_worker.<project-ref>` and the new password. Code from before #243 ignores it.
 3. Deploy the backend with the new code. The pre-deploy log shows `The scraper worker connects
-   as six7swe_worker: it reaches only the refresh's tables.`; `No DATABASE_WORKER_URL` means the
-   variable is missing.
+   as six7swe_worker`.
 4. Apply `.railway/railway.ts` ([Changing Railway config](#changing-railway-config)). The plan
-   creates `@six7swe/job-worker` and changes the backend's start command. Its `preserve()`
-   variables start out unset, so its first deploy fails with `Invalid worker configuration`,
-   which is harmless.
+   creates `@six7swe/job-worker`, whose first deploy fails (`Invalid worker configuration`) until
+   step 5.
 5. On the worker, set `DATABASE_URL` (the same value as `DATABASE_WORKER_URL`),
    `MINIMAX_API_KEY`, `MINIMAX_API_KEY_SECONDARY`, `KNOWLEDGE_SERVICE_KEY`, `OWNER_AUTH_ID` (the
    backend's values) and `JOB_REFRESH_PROFILE_IDS`, then redeploy it. The log shows
@@ -381,9 +369,7 @@ To rotate the worker password, change both `DATABASE_WORKER_URL` and the worker'
 The worker does not wait for the backend's migrations: ship a schema change the refresh needs
 through the backend first.
 
-`pnpm jobs:refresh -- --profile <id> [--wait]` still runs one refresh by hand; on Railway, run it
-on the worker service, whose environment holds no owner connection. Abandoned refreshes are
-marked failed on the next backend or worker start.
+`pnpm jobs:refresh -- --profile <id>` still runs one by hand; on Railway, run it on the worker.
 
 #### Chrome for the job scraper
 
