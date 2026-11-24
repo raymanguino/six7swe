@@ -7,11 +7,24 @@
  * a future change to the statement list cannot quietly reopen the tables.
  */
 
-import { APP_POLICY, buildSecurityStatements, OWNER_ROLE } from '../../db/security';
+import {
+  APP_POLICY,
+  buildSecurityStatements,
+  OWNER_ROLE,
+  selectFormerRoles,
+} from '../../db/security';
 
 describe('the database lockdown', () => {
   const tables = ['profiles', 'users'];
-  const statements = buildSecurityStatements(tables, ['users_id_seq'], ['search_jobs']);
+  const statements = buildSecurityStatements({
+    tables,
+    sequences: ['users_id_seq'],
+    functions: [
+      { name: 'search_jobs', args: '' },
+      { name: 'search_jobs', args: 'text, integer' },
+      { name: 'tag_match', args: 'character varying, text[]' },
+    ],
+  });
   const joined = statements.join('\n');
 
   it('turns row level security on for every table', () => {
@@ -43,14 +56,34 @@ describe('the database lockdown', () => {
   });
 
   it('revokes function execution, because a public function is an RPC endpoint', () => {
-    expect(joined).toContain('REVOKE ALL PRIVILEGES ON FUNCTION public."search_jobs" FROM anon;');
+    expect(joined).toContain('REVOKE ALL PRIVILEGES ON ROUTINE public."search_jobs"() FROM anon;');
     expect(joined).toContain(
-      'REVOKE ALL PRIVILEGES ON FUNCTION public."search_jobs" FROM authenticated;',
+      'REVOKE ALL PRIVILEGES ON ROUTINE public."search_jobs"() FROM authenticated;',
     );
   });
 
   it('revokes function execution from PUBLIC, which anon would inherit', () => {
-    expect(joined).toContain('REVOKE ALL PRIVILEGES ON FUNCTION public."search_jobs" FROM PUBLIC;');
+    expect(joined).toContain(
+      'REVOKE ALL PRIVILEGES ON ROUTINE public."search_jobs"() FROM PUBLIC;',
+    );
+  });
+
+  it('revokes every overload and function with arguments by its full signature', () => {
+    expect(joined).toContain(
+      'REVOKE ALL PRIVILEGES ON ROUTINE public."search_jobs"(text, integer) FROM PUBLIC;',
+    );
+    expect(joined).toContain(
+      'REVOKE ALL PRIVILEGES ON ROUTINE public."tag_match"(character varying, text[]) FROM anon;',
+    );
+  });
+
+  it('refuses an argument list that could close the signature', () => {
+    expect(() =>
+      buildSecurityStatements({
+        tables: [],
+        functions: [{ name: 'f', args: 'text) FROM anon; DROP TABLE users; --' }],
+      }),
+    ).toThrow(/Unsafe SQL argument list/);
   });
 
   it('revokes the default function privilege so a new function stays closed', () => {
@@ -68,7 +101,7 @@ describe('the database lockdown', () => {
   });
 
   it('refuses to interpolate an identifier that is not a plain name', () => {
-    expect(() => buildSecurityStatements(['users"; DROP TABLE users; --'])).toThrow(
+    expect(() => buildSecurityStatements({ tables: ['users"; DROP TABLE users; --'] })).toThrow(
       /Unsafe SQL identifier/,
     );
   });
@@ -76,7 +109,11 @@ describe('the database lockdown', () => {
 
 describe('the runtime role grants', () => {
   const tables = ['profiles', 'users'];
-  const statements = buildSecurityStatements(tables, ['users_id_seq'], [], 'six7swe_app');
+  const statements = buildSecurityStatements({
+    tables,
+    sequences: ['users_id_seq'],
+    appRole: 'six7swe_app',
+  });
   const joined = statements.join('\n');
 
   it('grants row access and nothing else on every table', () => {
@@ -141,12 +178,77 @@ describe('the runtime role grants', () => {
   });
 
   it('refuses the owner as the runtime role', () => {
-    expect(() => buildSecurityStatements(tables, [], [], OWNER_ROLE)).toThrow(/table owner/);
+    expect(() => buildSecurityStatements({ tables, appRole: OWNER_ROLE })).toThrow(/table owner/);
   });
 
   it('refuses a role name that is not a plain identifier', () => {
-    expect(() => buildSecurityStatements(tables, [], [], 'app"; DROP TABLE users; --')).toThrow(
-      /Unsafe SQL identifier/,
+    expect(() =>
+      buildSecurityStatements({ tables, appRole: 'app"; DROP TABLE users; --' }),
+    ).toThrow(/Unsafe SQL identifier/);
+  });
+});
+
+describe('a renamed runtime role', () => {
+  const statements = buildSecurityStatements({
+    tables: ['users'],
+    appRole: 'six7swe_app_v2',
+    formerRoles: ['six7swe_app'],
+  });
+  const joined = statements.join('\n');
+
+  it('revokes the former role grants, default privileges and login', () => {
+    expect(joined).toContain(
+      'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM "six7swe_app";',
     );
+    expect(joined).toContain(
+      'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM "six7swe_app";',
+    );
+    expect(joined).toContain(
+      'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON TABLES FROM "six7swe_app";',
+    );
+    expect(joined).toContain(
+      'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON SEQUENCES FROM "six7swe_app";',
+    );
+    expect(joined).toContain('ALTER ROLE "six7swe_app" NOLOGIN;');
+  });
+
+  it('shuts the former role out before the new one is granted', () => {
+    const nologin = statements.indexOf('ALTER ROLE "six7swe_app" NOLOGIN;');
+    const firstGrant = statements.findIndex((statement) => statement.startsWith('GRANT '));
+    expect(nologin).toBeGreaterThan(-1);
+    expect(firstGrant).toBeGreaterThan(nologin);
+  });
+
+  it('never shuts out the current runtime role', () => {
+    const same = buildSecurityStatements({
+      tables: ['users'],
+      appRole: 'six7swe_app',
+      formerRoles: ['six7swe_app'],
+    }).join('\n');
+    expect(same).not.toContain('NOLOGIN');
+  });
+
+  it('picks former roles only from roles db:secure could have provisioned', () => {
+    expect(
+      selectFormerRoles(
+        [
+          'anon',
+          'authenticated',
+          'service_role',
+          'postgres',
+          'supabase_admin',
+          'pg_read_all_data',
+          'six7swe_app_v2',
+          'six7swe_app',
+          'Weird"Name',
+          'six7swe_app',
+        ],
+        'six7swe_app_v2',
+      ),
+    ).toEqual(['six7swe_app']);
+  });
+
+  it('treats every non-reserved grantee as former when the backend runs as the owner', () => {
+    expect(selectFormerRoles(['six7swe_app', 'anon'], null)).toEqual(['six7swe_app']);
   });
 });

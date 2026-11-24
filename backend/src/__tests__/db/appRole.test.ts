@@ -138,6 +138,7 @@ describe('describeRoleProblems', () => {
     member_of_any: false,
     owns_objects: false,
     can_create: false,
+    executes_definer: false,
   };
 
   it('accepts a role that only logs in', () => {
@@ -147,7 +148,10 @@ describe('describeRoleProblems', () => {
   it('names every right that would put the owner back behind DATABASE_URL', () => {
     const all = Object.fromEntries(Object.keys(safe).map((key) => [key, true])) as typeof safe;
     const problems = describeRoleProblems('six7swe_app', 'postgres', all);
-    expect(problems).toHaveLength(9);
+    expect(problems).toHaveLength(10);
+    expect(problems).toContain(
+      'six7swe_app can execute a SECURITY DEFINER function in the public schema',
+    );
     expect(problems).toContain('six7swe_app is a member of another role');
     expect(problems).toContain('six7swe_app can start replication');
     expect(problems).toContain('six7swe_app owns objects in the public schema');

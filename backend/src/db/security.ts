@@ -1,4 +1,6 @@
 import type postgres from 'postgres';
+import { isReservedRole } from './appRole';
+import { isSafeIdentifier, quoteIdentifier } from './identifier';
 
 /**
  * Database access lockdown.
@@ -18,12 +20,12 @@ import type postgres from 'postgres';
  *     cannot reach the tables even if a policy were ever added by mistake.
  *   - The default privileges are revoked too. A table created later by
  *     `drizzle-kit migrate` would otherwise inherit the grants again.
- *   - Function execution is revoked, including the default privilege. A
- *     function in the `public` schema is an RPC endpoint for PostgREST, so
- *     one left executable would be callable by the public anon key. The
- *     default grants EXECUTE to `PUBLIC`, so it has to be revoked from
- *     `PUBLIC`; revoking it from `anon` alone would leave the grant in
- *     place for `anon` to inherit.
+ *   - Function execution is revoked, including the default privilege, for
+ *     every routine by its full signature. A function in the `public` schema
+ *     is an RPC endpoint for PostgREST, so one left executable would be
+ *     callable by the public anon key. The default grants EXECUTE to
+ *     `PUBLIC`, so it has to be revoked from `PUBLIC`; revoking it from
+ *     `anon` alone would leave the grant in place for `anon` to inherit.
  *
  * A runtime role (`appRole.ts`) is let back in: SELECT, INSERT, UPDATE and
  * DELETE on tables, USAGE on sequences, one policy per table admitting only it,
@@ -31,6 +33,12 @@ import type postgres from 'postgres';
  * development) the backend is the owner, which bypasses RLS. The role comes
  * from the environment, so this file, not the Drizzle schema, holds these
  * rules and `db:secure` has to run after every migration.
+ *
+ * A previous runtime role is shut out when `DATABASE_URL` moves to a new one:
+ * its table, sequence and schema grants, its default privileges and its LOGIN
+ * are revoked. `db:secure` owns the owner's default privileges in `public`, so
+ * a role that holds one and is neither the runtime role nor a role Postgres or
+ * Supabase relies on is taken to be a former runtime role.
  */
 
 /** Roles that reach the database from a browser. */
@@ -46,45 +54,67 @@ const APP_TABLE_PRIVILEGES = 'SELECT, INSERT, UPDATE, DELETE';
 
 const APP_SEQUENCE_PRIVILEGES = 'USAGE, SELECT';
 
-/** Matches an unquoted Postgres identifier. */
-const SAFE_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
+/**
+ * Matches a routine's argument types as `oidvectortypes` prints them
+ * (`integer, character varying, text[]`). Double quotes are allowed for type
+ * names that need them; parentheses, semicolons and string quotes are not, so
+ * the list cannot close the signature or start another statement.
+ */
+const SAFE_ARGUMENT_TYPES = /^[A-Za-z0-9_ ,."[\]]*$/;
+
+/** A routine in the `public` schema, addressed by its full signature. */
+export interface PublicFunction {
+  name: string;
+  /** The argument types, comma separated; empty for none. */
+  args: string;
+}
+
+/** The objects in `public` and the roles the lockdown applies to. */
+export interface SecurityTargets {
+  /** Table names in the `public` schema. */
+  tables: string[];
+  /** Sequence names in the `public` schema. */
+  sequences?: string[];
+  /** Every routine in the `public` schema, with its argument types. */
+  functions?: PublicFunction[];
+  /** The backend's runtime role, or null when it connects as the owner. */
+  appRole?: string | null;
+  /** Roles that were the runtime role before and are shut out now. */
+  formerRoles?: string[];
+}
 
 /**
- * Quotes an identifier for use in a statement.
- *
- * The names come from the catalog, but they are still interpolated into SQL,
- * so anything that is not a plain identifier is rejected rather than escaped.
+ * The signature a routine is revoked by. A function with arguments cannot be
+ * addressed by name alone, and overloads share a name, so each is revoked by
+ * its own signature.
  */
-function quoteIdentifier(name: string): string {
-  if (!SAFE_IDENTIFIER.test(name)) {
-    throw new Error(`Unsafe SQL identifier: ${name}`);
+function functionSignature(fn: PublicFunction): string {
+  if (!SAFE_ARGUMENT_TYPES.test(fn.args)) {
+    throw new Error(`Unsafe SQL argument list for ${fn.name}: ${fn.args}`);
   }
-  return `"${name}"`;
+  return `public.${quoteIdentifier(fn.name)}(${fn.args})`;
 }
 
 /**
  * Builds the statements that lock a set of tables down.
  *
  * Pure, so the rules can be asserted in a test without a database.
- *
- * @param tables Table names in the `public` schema.
- * @param sequences Sequence names in the `public` schema.
- * @param functions Function names in the `public` schema.
- * @param appRole The backend's runtime role, or null when it connects as the
- *   owner.
  */
-export function buildSecurityStatements(
-  tables: string[],
-  sequences: string[] = [],
-  functions: string[] = [],
-  appRole: string | null = null,
-): string[] {
+export function buildSecurityStatements({
+  tables,
+  sequences = [],
+  functions = [],
+  appRole = null,
+  formerRoles = [],
+}: SecurityTargets): string[] {
   const statements: string[] = [];
 
   for (const table of tables) {
     const quoted = quoteIdentifier(table);
 
-    // No policies are created, so the default is to deny every row.
+    // With RLS on, a role no policy names sees no rows. The only policy is the
+    // runtime role's (`buildAppGrantStatements`), so every other role, and
+    // every role when there is no runtime role, is denied every row.
     statements.push(`ALTER TABLE public.${quoted} ENABLE ROW LEVEL SECURITY;`);
 
     for (const role of PUBLIC_ROLES) {
@@ -99,14 +129,15 @@ export function buildSecurityStatements(
     }
   }
 
+  // ROUTINE covers functions, procedures and aggregates alike.
   for (const fn of functions) {
-    const quoted = quoteIdentifier(fn);
+    const signature = functionSignature(fn);
     for (const role of PUBLIC_ROLES) {
-      statements.push(`REVOKE ALL PRIVILEGES ON FUNCTION public.${quoted} FROM ${role};`);
+      statements.push(`REVOKE ALL PRIVILEGES ON ROUTINE ${signature} FROM ${role};`);
     }
     // The default grants EXECUTE to PUBLIC, which `anon` inherits. Revoking
     // from the named roles alone would leave `anon` able to execute it.
-    statements.push(`REVOKE ALL PRIVILEGES ON FUNCTION public.${quoted} FROM PUBLIC;`);
+    statements.push(`REVOKE ALL PRIVILEGES ON ROUTINE ${signature} FROM PUBLIC;`);
   }
 
   // A table created after this runs must not inherit the grants back.
@@ -130,11 +161,39 @@ export function buildSecurityStatements(
     `ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER_ROLE} REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;`,
   );
 
+  for (const former of formerRoles) {
+    if (former !== appRole) {
+      statements.push(...buildFormerRoleStatements(former));
+    }
+  }
+
   if (appRole !== null) {
     statements.push(...buildAppGrantStatements(appRole, tables, sequences));
   }
 
   return statements;
+}
+
+/**
+ * Shuts a previous runtime role out: no rows, no default privileges on later
+ * tables, and no login. The role itself is kept (it may still own objects or
+ * hold grants elsewhere), so dropping it stays an optional manual step.
+ */
+function buildFormerRoleStatements(formerRole: string): string[] {
+  const role = quoteIdentifier(formerRole);
+  if (formerRole === OWNER_ROLE) {
+    throw new Error(`The table owner (${OWNER_ROLE}) cannot be shut out as a former role.`);
+  }
+
+  return [
+    `REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM ${role};`,
+    `REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM ${role};`,
+    `REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public FROM ${role};`,
+    `ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER_ROLE} IN SCHEMA public REVOKE ALL ON TABLES FROM ${role};`,
+    `ALTER DEFAULT PRIVILEGES FOR ROLE ${OWNER_ROLE} IN SCHEMA public REVOKE ALL ON SEQUENCES FROM ${role};`,
+    `REVOKE ALL PRIVILEGES ON SCHEMA public FROM ${role};`,
+    `ALTER ROLE ${role} NOLOGIN;`,
+  ];
 }
 
 /**
@@ -178,14 +237,32 @@ function buildAppGrantStatements(appRole: string, tables: string[], sequences: s
 }
 
 /**
- * The tables, sequences and functions in the `public` schema.
+ * Picks the former runtime roles out of the grantees of the owner's default
+ * privileges in `public`. The owner, the current runtime role and the roles
+ * Postgres or Supabase rely on are never former roles, and a name that is not
+ * a plain identifier could never have been a runtime role.
+ */
+export function selectFormerRoles(grantees: string[], appRole: string | null): string[] {
+  const former = grantees.filter(
+    (role) =>
+      role !== OWNER_ROLE && role !== appRole && isSafeIdentifier(role) && !isReservedRole(role),
+  );
+  return [...new Set(former)].sort();
+}
+
+/**
+ * The tables, sequences and routines in the `public` schema, and the roles
+ * the owner's default privileges there name.
  *
  * Only `public` is touched. The schemas Supabase manages (`auth`, `storage`,
  * `realtime`, `graphql`) are left alone.
  */
-async function readPublicObjects(
-  sql: postgres.Sql,
-): Promise<{ tables: string[]; sequences: string[]; functions: string[] }> {
+async function readPublicObjects(sql: postgres.TransactionSql): Promise<{
+  tables: string[];
+  sequences: string[];
+  functions: PublicFunction[];
+  defaultGrantees: string[];
+}> {
   const tables = await sql<{ table_name: string }[]>`
     select table_name from information_schema.tables
     where table_schema = 'public' and table_type = 'BASE TABLE'
@@ -198,27 +275,39 @@ async function readPublicObjects(
     order by sequence_name
   `;
 
-  // Only plain functions are revoked by name. A function with arguments
-  // cannot be addressed without its signature, and PostgREST addresses
-  // functions by name, so the name is what matters here.
-  const functions = await sql<{ proname: string }[]>`
-    select p.proname from pg_proc p
+  // Every routine with its argument types, so overloads and functions with
+  // arguments are revoked too: PostgREST calls any of them by name.
+  const functions = await sql<PublicFunction[]>`
+    select p.proname as name, pg_catalog.oidvectortypes(p.proargtypes) as args
+    from pg_proc p
     join pg_namespace n on n.oid = p.pronamespace
-    where n.nspname = 'public' and p.pronargs = 0
-    group by p.proname
-    order by p.proname
+    where n.nspname = 'public'
+    order by 1, 2
+  `;
+
+  const grantees = await sql<{ rolname: string }[]>`
+    select distinct r.rolname
+    from pg_default_acl d
+    cross join lateral aclexplode(d.defaclacl) a
+    join pg_roles r on r.oid = a.grantee
+    where d.defaclrole = (select oid from pg_roles where rolname = ${OWNER_ROLE}::name)
+      and d.defaclnamespace = (select oid from pg_namespace where nspname = 'public')
+    order by r.rolname
   `;
 
   return {
     tables: tables.map((row) => row.table_name),
     sequences: sequences.map((row) => row.sequence_name),
-    functions: functions.map((row) => row.proname),
+    functions: functions.map((row) => ({ name: row.name, args: row.args })),
+    defaultGrantees: grantees.map((row) => row.rolname),
   };
 }
 
 export interface SecurityResult {
   /** The tables that were locked down. */
   tables: string[];
+  /** The former runtime roles that were shut out. */
+  formerRoles: string[];
   /** The statements that were applied. */
   statements: number;
 }
@@ -227,25 +316,30 @@ export interface SecurityResult {
  * Locks the application tables down.
  *
  * Idempotent: running it again re-applies the same rules without failing.
- * The statements run in one transaction, so a table is never left with RLS
+ * It runs inside the caller's transaction, so a table is never left with RLS
  * on and the runtime role's policy dropped but not yet recreated.
  *
- * @param sql A connection as the table owner.
+ * @param sql A transaction as the table owner.
  * @param appRole The backend's runtime role, or null when it connects as the
  *   owner.
  */
 export async function applyDatabaseSecurity(
-  sql: postgres.Sql,
+  sql: postgres.TransactionSql,
   appRole: string | null = null,
 ): Promise<SecurityResult> {
-  const { tables, sequences, functions } = await readPublicObjects(sql);
-  const statements = buildSecurityStatements(tables, sequences, functions, appRole);
-
-  await sql.begin(async (tx) => {
-    for (const statement of statements) {
-      await tx.unsafe(statement);
-    }
+  const { tables, sequences, functions, defaultGrantees } = await readPublicObjects(sql);
+  const formerRoles = selectFormerRoles(defaultGrantees, appRole);
+  const statements = buildSecurityStatements({
+    tables,
+    sequences,
+    functions,
+    appRole,
+    formerRoles,
   });
 
-  return { tables, statements: statements.length };
+  for (const statement of statements) {
+    await sql.unsafe(statement);
+  }
+
+  return { tables, formerRoles, statements: statements.length };
 }
