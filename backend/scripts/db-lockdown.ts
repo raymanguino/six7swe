@@ -3,7 +3,8 @@
  *
  * Connects as the table owner, closes `public` to the browser roles (see
  * src/db/security.ts), then provisions the backend's runtime role when
- * `DATABASE_URL` names one (see src/db/appRole.ts) and lets it in.
+ * `DATABASE_URL` names one (see src/db/appRole.ts) and lets it in, and the
+ * scraper worker's role when `DATABASE_WORKER_URL` is set (src/db/workerRole.ts).
  */
 
 import postgres from 'postgres';
@@ -12,9 +13,15 @@ import {
   provisionAppRole,
   resolveRuntimeRole,
   type RoleCredentials,
+  roleFromUrl,
 } from '../src/db/appRole';
 import { buildAppAccessStatements, buildLockdownStatements } from '../src/db/lockdownStatements';
 import { OWNER_ROLE } from '../src/db/security';
+import {
+  buildWorkerAccessStatements,
+  resolveWorkerRole,
+  WORKER_ROLE_MARKER,
+} from '../src/db/workerRole';
 import {
   readExposedDefinerRoutines,
   readFormerRoles,
@@ -31,7 +38,9 @@ export interface LockdownResult {
   statements: number;
   /** The runtime role that was provisioned, or null when the backend connects as the owner. */
   appRole: string | null;
-  /** The former runtime roles that were shut out. */
+  /** The worker role that was provisioned, or null when no worker is configured. */
+  workerRole: string | null;
+  /** The former runtime and worker roles that were shut out. */
   formerRoles: string[];
   /** The sessions of former roles that were ended. */
   endedSessions: number;
@@ -56,17 +65,20 @@ async function run(tx: postgres.TransactionSql, statements: string[]): Promise<v
  * SECURITY DEFINER routine in `public`, including one the owner cannot revoke.
  *
  * 2. The runtime role is created or its password reset, former runtime roles
- *    are shut out, the role is granted its rows and then checked. All or
- *    nothing: a failed check rolls the role, its password and its grants back.
+ *    are shut out, the role is granted its rows and then checked; then the
+ *    same for the worker role and its tables. All or nothing: a failed check
+ *    rolls both roles, their passwords and their grants back.
  *
  * Then the sessions of the former roles are ended (best effort).
  *
  * @param sql A connection as the table owner.
  * @param app The runtime role, or null when the backend connects as the owner.
+ * @param worker The scraper worker's role, or null when none is configured.
  */
 export async function applyLockdown(
   sql: postgres.Sql,
   app: RoleCredentials | null,
+  worker: RoleCredentials | null = null,
 ): Promise<LockdownResult> {
   const lockdown = await sql.begin(async (tx) => {
     const objects = await readPublicObjects(tx);
@@ -92,7 +104,25 @@ export async function applyLockdown(
     if (app) {
       await assertAppRoleIsSafe(tx, app.role, OWNER_ROLE);
     }
-    return { formerRoles, statements: statements.length };
+
+    if (worker) {
+      await provisionAppRole(tx, worker, WORKER_ROLE_MARKER);
+    }
+    const formerWorkers = await readFormerRoles(tx, worker?.role ?? null, WORKER_ROLE_MARKER);
+    const workerStatements = buildWorkerAccessStatements(
+      lockdown.objects,
+      worker?.role ?? null,
+      formerWorkers,
+    );
+    await run(tx, workerStatements);
+    if (worker) {
+      await assertAppRoleIsSafe(tx, worker.role, OWNER_ROLE);
+    }
+
+    return {
+      formerRoles: [...formerRoles, ...formerWorkers],
+      statements: statements.length + workerStatements.length,
+    };
   });
 
   const endedSessions = await terminateRoleSessions(sql, access.formerRoles);
@@ -101,6 +131,7 @@ export async function applyLockdown(
     tables: lockdown.objects.tables,
     statements: lockdown.statements + access.statements,
     appRole: app?.role ?? null,
+    workerRole: worker?.role ?? null,
     formerRoles: access.formerRoles,
     endedSessions,
     skippedFunctions: lockdown.objects.skippedFunctions,
@@ -116,6 +147,11 @@ export async function lockDownDatabase(target: DatabaseTarget): Promise<Lockdown
   );
   // `DROP POLICY IF EXISTS` raises a notice for every table without the policy yet, which would
   // only clutter the deploy log.
+  const worker = resolveWorkerRole(
+    target.workerDatabaseUrl,
+    roleFromUrl(target.databaseUrl).role,
+    app?.role ?? null,
+  );
   const sql = postgres(target.databaseUrl, {
     ...sslOptions(target.remote),
     max: 1,
@@ -123,7 +159,7 @@ export async function lockDownDatabase(target: DatabaseTarget): Promise<Lockdown
   });
 
   try {
-    return await applyLockdown(sql, app);
+    return await applyLockdown(sql, app, worker);
   } finally {
     await sql.end();
   }
@@ -151,6 +187,11 @@ export function describeAppRole(result: LockdownResult): string {
       ? `The backend connects as ${result.appRole}: it reads and writes the rows and owns no table.`
       : `The backend connects as the table owner (${OWNER_ROLE}). Set DATABASE_MIGRATION_URL to the ` +
           'owner and DATABASE_URL to another role to run it without owner rights.',
+  );
+  lines.push(
+    result.workerRole
+      ? `The scraper worker connects as ${result.workerRole}: it reaches only the refresh's tables.`
+      : 'No DATABASE_WORKER_URL: no scraper worker role was provisioned.',
   );
   return `${lines.join('\n')}\n`;
 }
