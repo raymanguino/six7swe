@@ -11,6 +11,7 @@ import {
   describeRoleProblems,
   resolveRuntimeRole,
   roleFromUrl,
+  RUNTIME_ROLE_MARKER,
   scramSha256Verifier,
 } from '../../db/appRole';
 
@@ -66,6 +67,9 @@ describe('resolveRuntimeRole', () => {
     'service_role',
     'authenticator',
     'dashboard_user',
+    'pgbouncer',
+    'cli_login_postgres',
+    'pgsodium_keyholder',
   ])('refuses the reserved role %s', (role) => {
     expect(() => resolveRuntimeRole(OWNER, app(role), 'postgres', true)).toThrow(/reserved role/);
   });
@@ -111,6 +115,10 @@ describe('buildAppRoleStatements', () => {
   it('sets the password as a verifier, never in plain text', () => {
     expect(joined).toContain(`ALTER ROLE "six7swe_app" WITH LOGIN PASSWORD '${verifier}';`);
     expect(joined).not.toContain('pencil');
+  });
+
+  it('marks the role, so a later rename can find and shut it out', () => {
+    expect(joined).toContain(`COMMENT ON ROLE "six7swe_app" IS '${RUNTIME_ROLE_MARKER}';`);
   });
 
   it('grants no attribute beyond LOGIN', () => {

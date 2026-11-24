@@ -19,7 +19,25 @@ import { isSafeIdentifier, quoteIdentifier } from './identifier';
 
 /** Roles Postgres or Supabase rely on, which must never become the runtime role. */
 const RESERVED_ROLE =
-  /^(pg_|supabase_)|^(postgres|anon|authenticated|service_role|authenticator|dashboard_user)$/;
+  /^(pg_|supabase_|pgsodium)|^(postgres|anon|authenticated|service_role|authenticator|dashboard_user|pgbouncer|cli_login_postgres)$/;
+
+/**
+ * The comment `db:secure` puts on the runtime role. A marked role that is no
+ * longer the runtime role is shut out (`security.ts`); no other role is.
+ */
+export const RUNTIME_ROLE_MARKER = 'six7swe-runtime';
+
+/**
+ * A predicate on `pg_proc p` for the routines `db:secure` manages: owned by
+ * the owner and not part of an extension. It cannot revoke or fix the others,
+ * so it reports them instead of revoking or checking them.
+ */
+export function managedRoutineSql(ownerRole: string): string {
+  quoteIdentifier(ownerRole);
+  return `(p.proowner = (select oid from pg_roles where rolname = '${ownerRole}')
+    and not exists (select 1 from pg_depend d where d.classid = 'pg_proc'::regclass
+      and d.objid = p.oid and d.deptype = 'e'))`;
+}
 
 /** True for a role Postgres or Supabase relies on, which `db:secure` never manages. */
 export function isReservedRole(role: string): boolean {
@@ -142,6 +160,7 @@ export function buildAppRoleStatements(role: string, verifier: string): string[]
   return [
     `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${role}') THEN CREATE ROLE ${quoted} LOGIN; END IF; END $$;`,
     `ALTER ROLE ${quoted} WITH LOGIN PASSWORD '${verifier}';`,
+    `COMMENT ON ROLE ${quoted} IS '${RUNTIME_ROLE_MARKER}';`,
   ];
 }
 
@@ -205,7 +224,7 @@ export async function readRoleProblems(
       exists (
         select 1 from pg_proc p
         join pg_namespace n on n.oid = p.pronamespace
-        where n.nspname = 'public' and p.prosecdef
+        where n.nspname = 'public' and p.prosecdef and ${sql.unsafe(managedRoutineSql(ownerRole))}
           and has_function_privilege(r.oid, p.oid, 'EXECUTE')
       ) as executes_definer
     from pg_roles r

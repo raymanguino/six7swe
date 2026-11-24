@@ -9,14 +9,15 @@
 
 import {
   APP_POLICY,
-  buildSecurityStatements,
+  buildAppAccessStatements,
+  buildLockdownStatements,
   OWNER_ROLE,
-  selectFormerRoles,
 } from '../../db/security';
+import { selectFormerRoles } from '../../db/securityCatalog';
 
 describe('the database lockdown', () => {
   const tables = ['profiles', 'users'];
-  const statements = buildSecurityStatements({
+  const statements = buildLockdownStatements({
     tables,
     sequences: ['users_id_seq'],
     functions: [
@@ -33,106 +34,86 @@ describe('the database lockdown', () => {
     }
   });
 
-  it('revokes the public grants from every table', () => {
-    for (const table of tables) {
-      expect(joined).toContain(`REVOKE ALL PRIVILEGES ON TABLE public."${table}" FROM anon;`);
-      expect(joined).toContain(
-        `REVOKE ALL PRIVILEGES ON TABLE public."${table}" FROM authenticated;`,
-      );
-    }
-  });
-
-  it('revokes the grants from the sequences too', () => {
-    expect(joined).toContain('REVOKE ALL PRIVILEGES ON SEQUENCE public."users_id_seq" FROM anon;');
+  it('revokes the public grants from every table and sequence', () => {
+    expect(joined).toContain(
+      'REVOKE ALL PRIVILEGES ON TABLE public."profiles", public."users" FROM anon, authenticated;',
+    );
+    expect(joined).toContain(
+      'REVOKE ALL PRIVILEGES ON SEQUENCE public."users_id_seq" FROM anon, authenticated;',
+    );
   });
 
   it('revokes the default privileges so a new table stays closed', () => {
     expect(joined).toContain(
-      'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON TABLES FROM anon;',
+      'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated;',
     );
     expect(joined).toContain(
-      'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON SEQUENCES FROM authenticated;',
+      'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon, authenticated;',
     );
   });
 
-  it('revokes function execution, because a public function is an RPC endpoint', () => {
-    expect(joined).toContain('REVOKE ALL PRIVILEGES ON ROUTINE public."search_jobs"() FROM anon;');
+  it('revokes every routine by its full signature, from PUBLIC too', () => {
+    // A public function is an RPC endpoint, and anon inherits PUBLIC's EXECUTE.
     expect(joined).toContain(
-      'REVOKE ALL PRIVILEGES ON ROUTINE public."search_jobs"() FROM authenticated;',
+      'REVOKE ALL PRIVILEGES ON ROUTINE public."search_jobs"(), public."search_jobs"(text, integer), ' +
+        'public."tag_match"(character varying, text[]) FROM anon, authenticated, PUBLIC;',
     );
-  });
-
-  it('revokes function execution from PUBLIC, which anon would inherit', () => {
-    expect(joined).toContain(
-      'REVOKE ALL PRIVILEGES ON ROUTINE public."search_jobs"() FROM PUBLIC;',
-    );
-  });
-
-  it('revokes every overload and function with arguments by its full signature', () => {
-    expect(joined).toContain(
-      'REVOKE ALL PRIVILEGES ON ROUTINE public."search_jobs"(text, integer) FROM PUBLIC;',
-    );
-    expect(joined).toContain(
-      'REVOKE ALL PRIVILEGES ON ROUTINE public."tag_match"(character varying, text[]) FROM anon;',
-    );
-  });
-
-  it('refuses an argument list that could close the signature', () => {
-    expect(() =>
-      buildSecurityStatements({
-        tables: [],
-        functions: [{ name: 'f', args: 'text) FROM anon; DROP TABLE users; --' }],
-      }),
-    ).toThrow(/Unsafe SQL argument list/);
   });
 
   it('revokes the default function privilege so a new function stays closed', () => {
-    // The global form, not the schema-scoped one: the global default is what
-    // supplies the built-in EXECUTE privilege for a new function, so the
-    // schema-scoped revoke leaves it in place.
+    // The global form: the schema-scoped revoke leaves the built-in EXECUTE in place.
     expect(joined).toContain(
       'ALTER DEFAULT PRIVILEGES FOR ROLE postgres REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;',
     );
   });
 
-  it('creates no policy without a runtime role, so the default is to deny every row', () => {
+  it('grants nothing and creates no policy', () => {
     expect(joined).not.toContain('CREATE POLICY');
     expect(joined).not.toContain('GRANT ');
   });
 
-  it('refuses to interpolate an identifier that is not a plain name', () => {
-    expect(() => buildSecurityStatements({ tables: ['users"; DROP TABLE users; --'] })).toThrow(
-      /Unsafe SQL identifier/,
-    );
+  it('issues no list statement for an empty list', () => {
+    const empty = buildLockdownStatements({ tables: [], sequences: [], functions: [] });
+    expect(empty.join('\n')).not.toMatch(/ON (TABLE|SEQUENCE|ROUTINE) /);
+  });
+
+  it('refuses an identifier or argument list that is not plain', () => {
+    expect(() =>
+      buildLockdownStatements({
+        tables: ['users"; DROP TABLE users; --'],
+        sequences: [],
+        functions: [],
+      }),
+    ).toThrow(/Unsafe SQL identifier/);
+    expect(() =>
+      buildLockdownStatements({
+        tables: [],
+        sequences: [],
+        functions: [{ name: 'f', args: 'text) FROM anon; DROP TABLE users; --' }],
+      }),
+    ).toThrow(/Unsafe SQL argument list/);
   });
 });
 
 describe('the runtime role grants', () => {
   const tables = ['profiles', 'users'];
-  const statements = buildSecurityStatements({
-    tables,
-    sequences: ['users_id_seq'],
-    appRole: 'six7swe_app',
-  });
+  const objects = { tables, sequences: ['users_id_seq'] };
+  const statements = buildAppAccessStatements(objects, 'six7swe_app', []);
   const joined = statements.join('\n');
 
   it('grants row access and nothing else on every table', () => {
-    for (const table of tables) {
-      expect(joined).toContain(
-        `GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public."${table}" TO "six7swe_app";`,
-      );
-    }
+    expect(joined).toContain(
+      'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public."profiles", public."users" TO "six7swe_app";',
+    );
     expect(joined).not.toMatch(/GRANT ALL/);
     expect(joined).not.toMatch(/TRUNCATE|REFERENCES|TRIGGER/);
   });
 
   it('revokes what was granted by hand before granting', () => {
     const revoke = statements.indexOf(
-      'REVOKE ALL PRIVILEGES ON TABLE public."users" FROM "six7swe_app";',
+      'REVOKE ALL PRIVILEGES ON TABLE public."profiles", public."users" FROM "six7swe_app";',
     );
-    const grant = statements.indexOf(
-      'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public."users" TO "six7swe_app";',
-    );
+    const grant = statements.findIndex((statement) => statement.startsWith('GRANT SELECT'));
     expect(revoke).toBeGreaterThan(-1);
     expect(grant).toBeGreaterThan(revoke);
   });
@@ -145,10 +126,6 @@ describe('the runtime role grants', () => {
       expect(joined).toContain(`DROP POLICY IF EXISTS ${APP_POLICY} ON public."${table}";`);
     }
     expect(joined).not.toMatch(/CREATE POLICY .* TO (anon|authenticated|PUBLIC)/);
-  });
-
-  it('keeps row level security on', () => {
-    expect(joined).toContain('ALTER TABLE public."users" ENABLE ROW LEVEL SECURITY;');
     expect(joined).not.toContain('DISABLE ROW LEVEL SECURITY');
   });
 
@@ -167,47 +144,34 @@ describe('the runtime role grants', () => {
     );
   });
 
-  it('runs after the lockdown, so a revoke never undoes a grant', () => {
-    const lastRevokeFromPublicRoles = statements.reduce(
-      (last, statement, index) =>
-        /FROM (anon|authenticated|PUBLIC);$/.test(statement) ? index : last,
-      -1,
+  it('revokes nothing from the browser roles, which the lockdown already did', () => {
+    expect(joined).not.toMatch(/FROM (anon|authenticated|PUBLIC)/);
+  });
+
+  it('refuses the owner or a role name that is not a plain identifier', () => {
+    expect(() => buildAppAccessStatements(objects, OWNER_ROLE, [])).toThrow(/table owner/);
+    expect(() => buildAppAccessStatements(objects, 'app"; DROP TABLE users; --', [])).toThrow(
+      /Unsafe SQL identifier/,
     );
-    const firstGrant = statements.findIndex((statement) => statement.startsWith('GRANT '));
-    expect(firstGrant).toBeGreaterThan(lastRevokeFromPublicRoles);
-  });
-
-  it('refuses the owner as the runtime role', () => {
-    expect(() => buildSecurityStatements({ tables, appRole: OWNER_ROLE })).toThrow(/table owner/);
-  });
-
-  it('refuses a role name that is not a plain identifier', () => {
-    expect(() =>
-      buildSecurityStatements({ tables, appRole: 'app"; DROP TABLE users; --' }),
-    ).toThrow(/Unsafe SQL identifier/);
   });
 });
 
 describe('a renamed runtime role', () => {
-  const statements = buildSecurityStatements({
-    tables: ['users'],
-    appRole: 'six7swe_app_v2',
-    formerRoles: ['six7swe_app'],
-  });
+  const statements = buildAppAccessStatements(
+    { tables: ['users'], sequences: [] },
+    'six7swe_app_v2',
+    ['six7swe_app'],
+  );
   const joined = statements.join('\n');
 
   it('revokes the former role grants, default privileges and login', () => {
-    expect(joined).toContain(
-      'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM "six7swe_app";',
-    );
-    expect(joined).toContain(
-      'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM "six7swe_app";',
-    );
+    for (const kind of ['TABLES', 'SEQUENCES', 'ROUTINES']) {
+      expect(joined).toContain(
+        `REVOKE ALL PRIVILEGES ON ALL ${kind} IN SCHEMA public FROM "six7swe_app";`,
+      );
+    }
     expect(joined).toContain(
       'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON TABLES FROM "six7swe_app";',
-    );
-    expect(joined).toContain(
-      'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON SEQUENCES FROM "six7swe_app";',
     );
     expect(joined).toContain('ALTER ROLE "six7swe_app" NOLOGIN;');
   });
@@ -219,36 +183,30 @@ describe('a renamed runtime role', () => {
     expect(firstGrant).toBeGreaterThan(nologin);
   });
 
-  it('never shuts out the current runtime role', () => {
-    const same = buildSecurityStatements({
-      tables: ['users'],
-      appRole: 'six7swe_app',
-      formerRoles: ['six7swe_app'],
-    }).join('\n');
-    expect(same).not.toContain('NOLOGIN');
+  it('never shuts out the current runtime role or the owner', () => {
+    const same = buildAppAccessStatements({ tables: [], sequences: [] }, 'six7swe_app', [
+      'six7swe_app',
+    ]);
+    expect(same.join('\n')).not.toContain('NOLOGIN');
+    expect(() =>
+      buildAppAccessStatements({ tables: [], sequences: [] }, null, [OWNER_ROLE]),
+    ).toThrow(/cannot be shut out/);
   });
 
-  it('picks former roles only from roles db:secure could have provisioned', () => {
-    expect(
-      selectFormerRoles(
-        [
-          'anon',
-          'authenticated',
-          'service_role',
-          'postgres',
-          'supabase_admin',
-          'pg_read_all_data',
-          'six7swe_app_v2',
-          'six7swe_app',
-          'Weird"Name',
-          'six7swe_app',
-        ],
-        'six7swe_app_v2',
-      ),
-    ).toEqual(['six7swe_app']);
-  });
-
-  it('treats every non-reserved grantee as former when the backend runs as the owner', () => {
-    expect(selectFormerRoles(['six7swe_app', 'anon'], null)).toEqual(['six7swe_app']);
+  it('picks former roles only among marked roles db:secure could have provisioned', () => {
+    const marked = [
+      'anon',
+      'postgres',
+      'supabase_admin',
+      'pgbouncer',
+      'cli_login_postgres',
+      'pgsodium_keyholder',
+      'six7swe_app_v2',
+      'six7swe_app',
+      'Weird"Name',
+      'six7swe_app',
+    ];
+    expect(selectFormerRoles(marked, 'six7swe_app_v2')).toEqual(['six7swe_app']);
+    expect(selectFormerRoles(['six7swe_app'], null)).toEqual(['six7swe_app']);
   });
 });
