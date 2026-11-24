@@ -40,3 +40,8 @@ export const OWNER_ROLE = 'postgres';
 
 /** One fixed name, so a change of runtime role replaces the policy. */
 export const APP_POLICY = 'backend_app_access';
+
+const APP_TABLE_PRIVILEGES = 'SELECT, INSERT, UPDATE, DELETE';
+
+const APP_SEQUENCE_PRIVILEGES = 'USAGE, SELECT';
+export { APP_SEQUENCE_PRIVILEGES, APP_TABLE_PRIVILEGES };

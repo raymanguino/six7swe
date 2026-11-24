@@ -1,5 +1,11 @@
 import { quoteIdentifier } from './identifier';
-import { APP_POLICY, BROWSER_ROLES, OWNER_ROLE } from './security';
+import {
+  APP_POLICY,
+  APP_SEQUENCE_PRIVILEGES,
+  APP_TABLE_PRIVILEGES,
+  BROWSER_ROLES,
+  OWNER_ROLE,
+} from './security';
 
 /**
  * The statements behind the rules in `security.ts`, applied by
@@ -7,10 +13,6 @@ import { APP_POLICY, BROWSER_ROLES, OWNER_ROLE } from './security';
  * asserted in a test without a database. Each kind of object is revoked or
  * granted in one list statement; an empty list issues none.
  */
-
-const APP_TABLE_PRIVILEGES = 'SELECT, INSERT, UPDATE, DELETE';
-
-const APP_SEQUENCE_PRIVILEGES = 'USAGE, SELECT';
 
 /**
  * Matches a routine's argument types as `oidvectortypes` prints them
