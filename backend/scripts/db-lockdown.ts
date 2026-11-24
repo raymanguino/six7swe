@@ -13,7 +13,8 @@ import {
   resolveRuntimeRole,
   type RoleCredentials,
 } from '../src/db/appRole';
-import { buildAppAccessStatements, buildLockdownStatements, OWNER_ROLE } from '../src/db/security';
+import { buildAppAccessStatements, buildLockdownStatements } from '../src/db/lockdownStatements';
+import { OWNER_ROLE } from '../src/db/security';
 import {
   readExposedDefinerRoutines,
   readFormerRoles,

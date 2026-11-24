@@ -1,7 +1,8 @@
 import type postgres from 'postgres';
 import { isReservedRole, managedRoutineSql, RUNTIME_ROLE_MARKER } from './appRole';
 import { isSafeIdentifier } from './identifier';
-import { OWNER_ROLE, type PublicFunction, type PublicObjects } from './security';
+import { type PublicFunction, type PublicObjects } from './lockdownStatements';
+import { OWNER_ROLE } from './security';
 
 /**
  * The catalog reads behind the lockdown in `security.ts`. Only `public` is

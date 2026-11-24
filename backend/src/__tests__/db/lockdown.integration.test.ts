@@ -1,47 +1,19 @@
 /**
- * Runs the lockdown against a real Postgres.
- *
- * The statement tests pin the SQL; this one checks what Postgres makes of it:
- * provision and secure (twice, since `db:secure` runs on every deploy), then
- * connect as the runtime role and check it can write rows but not change the
- * schema, that no function is left executable by anon or PUBLIC, that a
- * failed role check keeps the lockdown, and that a renamed runtime role shuts
- * the old one out.
- *
- * It uses the local Supabase Postgres (`LOCKDOWN_TEST_DATABASE_URL` overrides
- * it) and works in a throwaway database, so the development data is never
- * touched. It is skipped when no Supabase Postgres answers, unless
- * `LOCKDOWN_TEST_REQUIRED=1`, which turns the skip into a failure.
+ * Runs the lockdown against a real Postgres, in a throwaway database, to check
+ * what Postgres makes of the SQL the statement tests pin. Skipped when no
+ * Supabase Postgres answers; `LOCKDOWN_TEST_REQUIRED=1` makes that a failure.
  */
 
 import { randomBytes } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
-import path from 'node:path';
 import postgres from 'postgres';
 import { applyLockdown } from '../../../scripts/db-lockdown';
-
-const ADMIN_URL =
-  process.env.LOCKDOWN_TEST_DATABASE_URL ?? 'postgres://postgres:postgres@127.0.0.1:54322/postgres';
-
-/**
- * Connects and checks the `anon` role exists, in a child process: Jest has to
- * decide synchronously whether to skip. Exit 0 ready, 2 not Supabase, else down.
- */
-function probeDatabase(): string | null {
-  const script = `
-    const mod = require('postgres');
-    const sql = (mod.default ?? mod)(process.env.PROBE_URL, { max: 1, connect_timeout: 3, onnotice() {} });
-    sql\`select to_regrole('anon') is not null as anon\`
-      .then(async ([row]) => { await sql.end({ timeout: 1 }); process.exit(row.anon ? 0 : 2); })
-      .catch(() => process.exit(1));`;
-  const result = spawnSync(process.execPath, ['-e', script], {
-    cwd: path.resolve(__dirname, '../../..'),
-    env: { ...process.env, PROBE_URL: ADMIN_URL },
-    timeout: 10_000,
-  });
-  if (result.status === 0) return null;
-  return result.status === 2 ? 'the database has no anon role (not Supabase)' : 'unreachable';
-}
+import {
+  ADMIN_URL,
+  credentials,
+  type Credentials,
+  databaseUrl,
+  probeDatabase,
+} from './lockdownDatabase';
 
 const unavailable = probeDatabase();
 const required = process.env.LOCKDOWN_TEST_REQUIRED === '1';
@@ -50,30 +22,17 @@ const describeWithDatabase = unavailable === null || required ? describe : descr
 describeWithDatabase('the lockdown against a real database', () => {
   const suffix = `${process.pid}_${randomBytes(3).toString('hex')}`;
   const database = `six7swe_lockdown_test_${suffix}`;
-  const roleA = { role: `six7swe_lt_a_${suffix}`, password: randomBytes(32).toString('hex') };
-  const roleB = { role: `six7swe_lt_b_${suffix}`, password: randomBytes(32).toString('hex') };
-  const bystander = { role: `six7swe_lt_bi_${suffix}`, password: randomBytes(32).toString('hex') };
+  const roleA = credentials(`six7swe_lt_a_${suffix}`);
+  const roleB = credentials(`six7swe_lt_b_${suffix}`);
+  const bystander = credentials(`six7swe_lt_bi_${suffix}`);
   const quiet = { max: 1, onnotice: () => undefined };
-
-  const urlFor = (credentials?: { role: string; password: string }): string => {
-    const url = new URL(ADMIN_URL);
-    url.pathname = `/${database}`;
-    if (credentials) {
-      url.username = credentials.role;
-      url.password = credentials.password;
-    }
-    return url.toString();
-  };
+  const urlFor = (as?: Credentials): string => databaseUrl(database, as);
 
   let admin: postgres.Sql | undefined;
   let owner: postgres.Sql;
 
-  /** Runs `fn` connected as a role, always closing the connection. */
-  async function asRole<T>(
-    credentials: { role: string; password: string },
-    fn: (sql: postgres.Sql) => Promise<T>,
-  ): Promise<T> {
-    const sql = postgres(urlFor(credentials), quiet);
+  async function asRole<T>(as: Credentials, fn: (sql: postgres.Sql) => Promise<T>): Promise<T> {
+    const sql = postgres(urlFor(as), quiet);
     try {
       return await fn(sql);
     } finally {
@@ -210,8 +169,7 @@ describeWithDatabase('the lockdown against a real database', () => {
   }, 30_000);
 
   it('reports a routine the owner cannot revoke instead of failing on it', async () => {
-    // The bystander creates it itself: granting the role to the owner instead
-    // crashes the local Supabase Postgres (a segfault in `GRANT role TO current_user`).
+    // Created by the bystander itself: `GRANT <role> TO current_user` segfaults local Supabase.
     await owner.unsafe(`grant create on schema public to "${bystander.role}"`);
     await asRole(bystander, (sql) =>
       sql.unsafe(
