@@ -3,8 +3,8 @@ import {
   APP_POLICY,
   APP_SEQUENCE_PRIVILEGES,
   APP_TABLE_PRIVILEGES,
-  BROWSER_ROLES,
   OWNER_ROLE,
+  PUBLIC_ROLES,
 } from './security';
 
 /**
@@ -13,6 +13,8 @@ import {
  * asserted in a test without a database. Each kind of object is revoked or
  * granted in one list statement; an empty list issues none.
  */
+
+const BROWSER_ROLES = PUBLIC_ROLES.join(', ');
 
 /**
  * Matches a routine's argument types as `oidvectortypes` prints them

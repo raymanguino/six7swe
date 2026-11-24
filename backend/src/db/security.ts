@@ -33,7 +33,6 @@
 
 /** Roles that reach the database from a browser. */
 const PUBLIC_ROLES = ['anon', 'authenticated'] as const;
-export const BROWSER_ROLES = PUBLIC_ROLES.join(', ');
 
 /** The role the migrations connect as, and the owner of the tables. */
 export const OWNER_ROLE = 'postgres';
@@ -44,4 +43,4 @@ export const APP_POLICY = 'backend_app_access';
 const APP_TABLE_PRIVILEGES = 'SELECT, INSERT, UPDATE, DELETE';
 
 const APP_SEQUENCE_PRIVILEGES = 'USAGE, SELECT';
-export { APP_SEQUENCE_PRIVILEGES, APP_TABLE_PRIVILEGES };
+export { APP_SEQUENCE_PRIVILEGES, APP_TABLE_PRIVILEGES, PUBLIC_ROLES };
