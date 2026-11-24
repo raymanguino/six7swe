@@ -274,8 +274,8 @@ The database holds only the job hunter's tables. The portfolio's background live
 knowledge service, which keeps its own schemas and is not touched by the reset.
 
 > Take a backup first (`pg_dump "$DATABASE_MIGRATION_URL" -Fc -f backup.dump`) if the hosted database holds
-> anything you want to keep. The dump contains user emails: write it outside the repo, restrict
-> its permissions, and delete it when you are done.
+> anything you want to keep. It holds user emails: write it outside the repo, restrict its
+> permissions and delete it afterwards.
 
 ### 3a. Schema on Deploy
 
@@ -296,7 +296,7 @@ service does not need a pre-deploy command.
 
 > Railway PR environments inherit this command, and `--remote` requires `DATABASE_MIGRATION_URL`
 > (no fallback), so a PR environment would run the branch's migrations as the production owner.
-> Do not enable them unless both URLs point at a database other than the hosted one.
+> Enable them only if both URLs point elsewhere than the hosted database.
 
 Both steps connect as the table owner through `DATABASE_MIGRATION_URL` (see
 [Database roles](#database-roles)), and `db:secure` also provisions the runtime role that
@@ -314,7 +314,7 @@ what that does and why it matters.
 
 `backend/.env.remote` is gitignored and needs both `DATABASE_URL` (the runtime role) and
 `DATABASE_MIGRATION_URL` (the owner). Commands run from your machine with `--remote`
-(`db:migrate`, `db:secure`, `db:reset`) require `DATABASE_MIGRATION_URL` and throw without it.
+(`db:migrate`, `db:secure`, `db:reset`) throw without `DATABASE_MIGRATION_URL`.
 
 ### 4. Resume PDF
 
