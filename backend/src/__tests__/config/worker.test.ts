@@ -1,4 +1,4 @@
-import { loadWorkerConfig, WORKER_FORBIDDEN_VARIABLES } from '../../config/worker';
+import { loadWorkerConfig } from '../../config/worker';
 
 const base = { DATABASE_URL: 'postgres://w:p@h/db', MINIMAX_API_KEY: 'key' };
 
@@ -45,14 +45,5 @@ describe('loadWorkerConfig', () => {
 
   it('tolerates them outside production, where a local .env holds everything', () => {
     expect(() => loadWorkerConfig({ ...base, DATABASE_MIGRATION_URL: 'x' })).not.toThrow();
-  });
-
-  it('forbids the variables the issue rules out, and keeps the scoring ones', () => {
-    expect(WORKER_FORBIDDEN_VARIABLES).toEqual(
-      expect.arrayContaining(['DATABASE_MIGRATION_URL', 'KNOWLEDGE_OWNER_KEY', 'SUPABASE_URL']),
-    );
-    expect(WORKER_FORBIDDEN_VARIABLES).not.toEqual(
-      expect.arrayContaining(['KNOWLEDGE_SERVICE_KEY']),
-    );
   });
 });

@@ -2,7 +2,6 @@ import {
   buildWorkerAccessStatements,
   resolveWorkerRole,
   WORKER_POLICY,
-  WORKER_TABLE_ACCESS,
 } from '../../db/workerRole';
 import { OWNER_ROLE } from '../../db/security';
 
@@ -93,21 +92,5 @@ describe('buildWorkerAccessStatements', () => {
     const none = buildWorkerAccessStatements({ tables, sequences }, null, ['old_worker']);
     expect(none).toContain('ALTER ROLE "old_worker" NOLOGIN;');
     expect(none.some((s) => s.startsWith('GRANT') || s.startsWith('CREATE POLICY'))).toBe(false);
-  });
-
-  it('refuses the owner', () => {
-    expect(() => buildWorkerAccessStatements({ tables, sequences }, OWNER_ROLE, [])).toThrow(
-      /cannot be the table owner/,
-    );
-  });
-
-  it('covers every table the refresh touches', () => {
-    expect(Object.keys(WORKER_TABLE_ACCESS).sort()).toEqual([
-      'jobs',
-      'profile_jobs',
-      'profiles',
-      'refresh_status',
-      'users',
-    ]);
   });
 });

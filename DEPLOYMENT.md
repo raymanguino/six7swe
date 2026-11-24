@@ -331,16 +331,14 @@ The frontend downloads the resume from the backend via `GET /resume`, and shows 
 
 ### 6. Scraper Worker and Scheduled Refreshes
 
-`@six7swe/job-worker` in `.railway/railway.ts` (#243) is a long-lived service built from the
-backend image and started with `pnpm start:worker` (`backend/src/worker.ts`). It runs the
-scheduled refreshes, and it is where #254 moves user-triggered refreshes so the API stops
-launching Chrome. Until then a refresh started over HTTP still runs in the API process.
+`@six7swe/job-worker` (#243) is a long-lived service built from the backend image and started
+with `pnpm start:worker` (`backend/src/worker.ts`). It runs the scheduled refreshes; #254 moves
+user-triggered refreshes onto it. Until then those still run in the API process.
 
-Every 5 minutes, unless a refresh it started is still running, the worker starts one refresh
-for the first profile in `JOB_REFRESH_PROFILE_IDS` whose latest refresh (from any process) began
-more than `JOB_REFRESH_INTERVAL_HOURS` (default 24) ago. The schedule is read from
-`refresh_status`, so a restart does not reset it, and the worker reaps abandoned refreshes
-before it starts one. It runs as exactly one replica.
+Every 5 minutes, unless its last refresh is still running, the worker starts one refresh for the
+first profile in `JOB_REFRESH_PROFILE_IDS` whose latest refresh (from any process) began more
+than `JOB_REFRESH_INTERVAL_HOURS` (default 24) ago. The schedule is read from `refresh_status`,
+so a restart does not reset it. It runs as exactly one replica.
 
 Its variables are only what scraping and scoring need:
 
@@ -352,7 +350,7 @@ Its variables are only what scraping and scoring need:
 - `KNOWLEDGE_URL`, `KNOWLEDGE_SERVICE_KEY` - scoring retrieves the owner's background per job
   (`services/jobHunt/knowledgeSource.ts`); required in production, like on the backend
 - `OWNER_AUTH_ID` - an auth user id, not a credential: only that user's profiles are scored
-  against the knowledge base. Without it every profile is scored on its own fields
+  against the knowledge base
 - `JOB_REFRESH_PROFILE_IDS` - comma-separated search profile ids; empty, the worker idles.
   `JOB_REFRESH_INTERVAL_HOURS` is optional
 
@@ -378,17 +376,14 @@ Provisioning, in this order (the role has to exist before the worker can connect
    `Job worker started`.
 6. Remove any cron that runs `jobs:refresh` on the backend service.
 
-To rotate the worker password, change it in both `DATABASE_WORKER_URL` and the worker's
+To rotate the worker password, change both `DATABASE_WORKER_URL` and the worker's
 `DATABASE_URL`, deploy the backend (its pre-deploy sets the password), then redeploy the worker.
-The worker deploys independently of the backend's migrations, so deploy a schema change the
-refresh depends on through the backend first.
+The worker does not wait for the backend's migrations: ship a schema change the refresh needs
+through the backend first.
 
-`pnpm jobs:refresh -- --profile <id> [--wait]` still runs one refresh by hand, through the same
-pipeline, and records progress in `refresh_status`. On Railway, run it on the worker service
-(`pnpm jobs:refresh -- --profile 1`), whose environment holds no owner connection.
-
-Refreshes abandoned by a crashed process are marked failed on the next backend or worker start,
-so a stale run never blocks the next one.
+`pnpm jobs:refresh -- --profile <id> [--wait]` still runs one refresh by hand; on Railway, run it
+on the worker service, whose environment holds no owner connection. Abandoned refreshes are
+marked failed on the next backend or worker start.
 
 #### Chrome for the job scraper
 
