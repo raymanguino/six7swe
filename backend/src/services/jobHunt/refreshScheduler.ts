@@ -1,13 +1,20 @@
 import type { RefreshStatus } from '../../db/schema/jobHunt';
 import type { WorkerConfig } from '../../config/worker';
-import { RefreshInProgressError, type JobRefreshService } from './jobRefreshService';
+import {
+  InvalidProfileLocationError,
+  ProfileNotFoundError,
+  RefreshInProgressError,
+  type JobRefreshService,
+} from './jobRefreshService';
 
 /**
  * The scraper worker's scheduled refresh. Each tick starts at most one, and
  * none while the worker's last one runs, so it never runs two Chromes. A
  * profile is due when its latest refresh (from any process, read from
  * `refresh_status`, so a restart keeps the schedule) is older than the
- * interval; one that could not start waits out the interval too.
+ * interval. A missing profile or bad location waits out the interval; any
+ * other start failure is retried on the next tick. Stale rows are reaped once,
+ * at worker startup: a periodic reap could fail a refresh the API still runs.
  */
 
 interface Logger {
@@ -19,7 +26,6 @@ export interface RefreshSchedulerDeps {
   service: Pick<JobRefreshService, 'start'>;
   getLatestRefreshStartedAt(profileId: number): Promise<Date | null>;
   getRefreshStatus(id: number): Promise<Pick<RefreshStatus, 'status'> | null>;
-  reapStaleRefreshes(): Promise<number>;
   logger: Logger;
   now?: () => number;
 }
@@ -56,9 +62,6 @@ export function createRefreshScheduler(
   async function tick(): Promise<number | null> {
     if (config.profileIds.length === 0 || (await stillRunning())) return null;
 
-    const reaped = await deps.reapStaleRefreshes();
-    if (reaped > 0) deps.logger.info({ reaped }, 'Reaped stale refreshes');
-
     for (const profileId of config.profileIds) {
       if (!(await isDue(profileId))) continue;
       try {
@@ -69,7 +72,9 @@ export function createRefreshScheduler(
       } catch (error) {
         // Another process holds the profile's refresh: it is not due, and its row resets the clock.
         if (error instanceof RefreshInProgressError) continue;
-        attempted.set(profileId, now());
+        if (error instanceof ProfileNotFoundError || error instanceof InvalidProfileLocationError) {
+          attempted.set(profileId, now());
+        }
         deps.logger.error({ err: error, profileId }, 'Could not start scheduled refresh');
       }
     }

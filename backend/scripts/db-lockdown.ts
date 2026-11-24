@@ -116,7 +116,9 @@ export async function applyLockdown(
     );
     await run(tx, workerStatements);
     if (worker) {
-      await assertAppRoleIsSafe(tx, worker.role, OWNER_ROLE);
+      await assertAppRoleIsSafe(tx, worker.role, OWNER_ROLE).catch((error: unknown) => {
+        throw new Error(`DATABASE_WORKER_URL: ${(error as Error).message}`);
+      });
     }
 
     return {
@@ -178,7 +180,7 @@ export function describeAppRole(result: LockdownResult): string {
   }
   if (result.formerRoles.length > 0) {
     lines.push(
-      `Shut out the former runtime role(s) ${result.formerRoles.join(', ')}: grants, default ` +
+      `Shut out the former runtime or worker role(s) ${result.formerRoles.join(', ')}: grants, default ` +
         `privileges and LOGIN revoked, ${result.endedSessions} session(s) ended.`,
     );
   }

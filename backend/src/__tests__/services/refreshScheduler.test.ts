@@ -1,4 +1,7 @@
-import { RefreshInProgressError } from '../../services/jobHunt/jobRefreshService';
+import {
+  ProfileNotFoundError,
+  RefreshInProgressError,
+} from '../../services/jobHunt/jobRefreshService';
 import {
   createRefreshScheduler,
   type RefreshSchedulerDeps,
@@ -30,7 +33,6 @@ function setup(options: {
       const status = statuses.get(id);
       return status === undefined ? null : { status };
     },
-    reapStaleRefreshes: jest.fn(async () => 0),
     logger: { info: jest.fn(), error: jest.fn() },
     now: () => NOW,
   };
@@ -43,9 +45,9 @@ function setup(options: {
 
 describe('createRefreshScheduler', () => {
   it('does nothing without profiles', async () => {
-    const { scheduler, deps } = setup({ profileIds: [] });
+    const { scheduler, start } = setup({ profileIds: [] });
     await expect(scheduler.tick()).resolves.toBeNull();
-    expect(deps.reapStaleRefreshes).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
   });
 
   it('starts the first due profile, skipping one refreshed within the interval', async () => {
@@ -81,16 +83,15 @@ describe('createRefreshScheduler', () => {
     expect(start).toHaveBeenCalledTimes(2);
   });
 
-  it('does not retry a profile that failed to start until the interval passes', async () => {
-    const { scheduler, start, deps } = setup({
-      profileIds: [1],
-      start: async () => {
-        throw new Error('invalid geo id');
+  it('waits out the interval after a permanent failure, retries a transient one', async () => {
+    const { scheduler, start } = setup({
+      profileIds: [1, 2],
+      start: async (profileId) => {
+        throw profileId === 1 ? new ProfileNotFoundError(1) : new Error('connection reset');
       },
     });
     await scheduler.tick();
     await scheduler.tick();
-    expect(start).toHaveBeenCalledTimes(1);
-    expect(deps.logger.error).toHaveBeenCalledTimes(1);
+    expect(start.mock.calls.map(([id]) => id)).toEqual([1, 2, 2]);
   });
 });

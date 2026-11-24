@@ -31,13 +31,17 @@ async function main(): Promise<void> {
 
   if (process.env.NODE_ENV === 'production') {
     await role.assertConnectionRoleIsSafe();
+    await role.assertConnectionIsWorkerRole();
   }
+
+  // Once, at startup: a periodic reap could fail a refresh the API process is still running.
+  const reaped = await reapStaleRefreshes();
+  if (reaped > 0) logger.info({ reaped }, 'Reaped stale refreshes');
 
   const scheduler = sched.createRefreshScheduler(config, {
     service: createStandaloneJobRefreshService(),
     getLatestRefreshStartedAt: refreshStatus.getLatestRefreshStartedAt,
     getRefreshStatus: refreshStatus.getRefreshStatus,
-    reapStaleRefreshes: () => reapStaleRefreshes(),
     logger,
   });
 

@@ -1,8 +1,4 @@
-import {
-  buildWorkerAccessStatements,
-  resolveWorkerRole,
-  WORKER_POLICY,
-} from '../../db/workerRole';
+import { buildWorkerAccessStatements, resolveWorkerRole, WORKER_POLICY } from '../../db/workerRole';
 import { OWNER_ROLE } from '../../db/security';
 
 const password = 'a'.repeat(64);
@@ -86,6 +82,9 @@ describe('buildWorkerAccessStatements', () => {
     expect(() =>
       buildWorkerAccessStatements({ tables: ['jobs'], sequences: [] }, 'six7swe_worker', []),
     ).toThrow(/missing from public: profile_jobs/);
+    expect(() =>
+      buildWorkerAccessStatements({ tables, sequences: [] }, 'six7swe_worker', []),
+    ).toThrow(/sequences are missing: jobs_id_seq/);
   });
 
   it('without a worker, shuts former workers out and grants nothing', () => {

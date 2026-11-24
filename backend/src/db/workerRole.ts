@@ -148,11 +148,12 @@ export function buildWorkerAccessStatements(
   // `serial` ids: the tables the worker inserts into need their sequences.
   const inserted = Object.entries(WORKER_TABLE_ACCESS)
     .filter(([, access]) => access.privileges.includes('INSERT'))
-    .map(([table]) => `${table}_id_seq`)
-    .filter((sequence) => sequences.includes(sequence));
-  if (inserted.length > 0) {
-    statements.push(`GRANT USAGE, SELECT ON SEQUENCE ${objectList(inserted)} TO ${role};`);
+    .map(([table]) => `${table}_id_seq`);
+  const missingSequences = inserted.filter((sequence) => !sequences.includes(sequence));
+  if (missingSequences.length > 0) {
+    throw new Error(`The worker role's sequences are missing: ${missingSequences.join(', ')}.`);
   }
+  statements.push(`GRANT USAGE, SELECT ON SEQUENCE ${objectList(inserted)} TO ${role};`);
 
   return statements;
 }
