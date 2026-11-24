@@ -161,6 +161,8 @@ export default defineRailway(() => {
       OWNER_AUTH_ID: preserve(),
       // Comma-separated search profile ids refreshed on schedule; empty, the worker idles.
       JOB_REFRESH_PROFILE_IDS: preserve(),
+      // Hours between a profile's scheduled refreshes; declared so an apply keeps it (not secret).
+      JOB_REFRESH_INTERVAL_HOURS: '24',
     },
   });
 
