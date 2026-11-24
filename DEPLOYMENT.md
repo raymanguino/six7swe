@@ -72,7 +72,7 @@ policy and the watch paths.
 2. Railway runs a Dockerfile service's start command in exec form, without a shell, so a
    command with `cd` or `&&` does not work there. The image's working directory is
    `/app/backend`, so commands need no `cd`: the start command is
-   `env -u DATABASE_MIGRATION_URL pnpm start`, and the
+   `env -u DATABASE_MIGRATION_URL -u DATABASE_WORKER_URL pnpm start`, and the
    pre-deploy command is `pnpm db:deploy`, a package script (pnpm runs scripts in a shell).
    Write any new command for this service, such as a cron command, the same way. Running from
    `backend/` still uses the root `packageManager` (`backend/package.json` has none, so corepack
@@ -89,6 +89,7 @@ policy and the watch paths.
    well or the next apply deletes it:
    - `DATABASE_URL` - PostgreSQL connection string for the backend's **runtime role**, which reads and writes the job hunter's rows and owns no table (see [Database roles](#database-roles))
    - `DATABASE_MIGRATION_URL` - PostgreSQL connection string for the **table owner** (`postgres`), used only by the pre-deploy command. The start command removes it from the server's environment
+   - `DATABASE_WORKER_URL` - PostgreSQL connection string for the **scraper worker's role** (`six7swe_worker`), used only by the pre-deploy's `db:secure` to provision it (see [Scraper worker](#6-scraper-worker-and-scheduled-refreshes)). Unset, no worker role is provisioned and a former one is shut out. The start command removes it
    - `PORT` - Port (Railway sets this automatically)
    - `NODE_ENV` - Set to `production`
    - `MINIMAX_API_KEY` - MiniMax API key
@@ -184,8 +185,9 @@ select pg_terminate_backend(pid) from pg_stat_activity where usename like 'six7s
 The first production rollout confirmed that the Supabase pooler accepts `<role>.<project-ref>` and
 that the hosted `postgres` role can create roles.
 
-A cron or one-off command in the backend image should be prefixed with
-`env -u DATABASE_MIGRATION_URL` like the start command, unless it is a migration script.
+A one-off command on the backend service should be prefixed with
+`env -u DATABASE_MIGRATION_URL -u DATABASE_WORKER_URL` like the start command, unless it is a
+migration script. Scheduled refreshes run on the scraper worker, not as a cron on this service.
 
 ### 2. Frontend Service
 
@@ -327,23 +329,66 @@ The frontend downloads the resume from the backend via `GET /resume`, and shows 
 1. Upload the resume and supporting documents on the owner's Knowledge page (`/hunter/knowledge`). Chat, the fit check and the job matcher answer from them through retrieval; an upload or delete reaches every backend replica within about 30 s (the caches are keyed to the corpus `/version`), with no restart
 2. The landing page's content and contact details are static: edit `frontend/src/content/`. The contact form delivers to `CONTACT_TO_EMAIL`
 
-### 6. Job Refreshes (optional)
+### 6. Scraper Worker and Scheduled Refreshes
 
-The job-hunter can trigger a refresh over HTTP, but a refresh started that way
-does not survive a backend restart. For scheduled refreshes, add a **Cron** to
-the backend service in Railway. The cron runs inside the backend image, from `/app/backend`,
-without a shell. Strip the owner's connection the way the start command does (`jobs:refresh`
-also drops it from its own environment before it launches Chrome, and warns that it was set):
+`@six7swe/job-worker` in `.railway/railway.ts` (#243) is a long-lived service built from the
+backend image and started with `pnpm start:worker` (`backend/src/worker.ts`). It runs the
+scheduled refreshes, and it is where #254 moves user-triggered refreshes so the API stops
+launching Chrome. Until then a refresh started over HTTP still runs in the API process.
 
-```bash
-env -u DATABASE_MIGRATION_URL pnpm jobs:refresh -- --profile 1
-```
+Every 5 minutes, unless a refresh it started is still running, the worker starts one refresh
+for the first profile in `JOB_REFRESH_PROFILE_IDS` whose latest refresh (from any process) began
+more than `JOB_REFRESH_INTERVAL_HOURS` (default 24) ago. The schedule is read from
+`refresh_status`, so a restart does not reset it, and the worker reaps abandoned refreshes
+before it starts one. It runs as exactly one replica.
 
-`profileId` is the id of the search profile to refresh. The command uses the
-same pipeline as the HTTP trigger and records progress in `refresh_status`.
+Its variables are only what scraping and scoring need:
 
-Refreshes abandoned by a crashed process are marked failed on the next backend
-startup, so a stale run never blocks the next one.
+- `DATABASE_URL` - the worker role, `six7swe_worker.<project-ref>`: read and write on `jobs`,
+  `profile_jobs` and `refresh_status`, read on `profiles` and on `users.id` and `users.auth_id`
+  (not the email), no delete and nothing else (`backend/src/db/workerRole.ts`). A table added
+  to the refresh has to be added there too
+- `MINIMAX_API_KEY`, `MINIMAX_API_KEY_SECONDARY` - scoring
+- `KNOWLEDGE_URL`, `KNOWLEDGE_SERVICE_KEY` - scoring retrieves the owner's background per job
+  (`services/jobHunt/knowledgeSource.ts`); required in production, like on the backend
+- `OWNER_AUTH_ID` - an auth user id, not a credential: only that user's profiles are scored
+  against the knowledge base. Without it every profile is scored on its own fields
+- `JOB_REFRESH_PROFILE_IDS` - comma-separated search profile ids; empty, the worker idles.
+  `JOB_REFRESH_INTERVAL_HOURS` is optional
+
+In production the worker refuses to start if it receives `DATABASE_MIGRATION_URL`,
+`DATABASE_WORKER_URL`, `RESEND_*`, `CONTACT_TO_EMAIL`, `SUPABASE_*` or `KNOWLEDGE_OWNER_KEY`
+(`backend/src/config/worker.ts`), and, like the server, if its role holds owner rights.
+
+Provisioning, in this order (the role has to exist before the worker can connect):
+
+1. Generate the worker password: `openssl rand -hex 32`. Set it in the Railway dashboard only.
+2. On the **backend** service, add `DATABASE_WORKER_URL`: the runtime `DATABASE_URL` with the
+   user `six7swe_worker.<project-ref>` and the new password. Code from before #243 ignores it.
+3. Deploy the backend with the new code. The pre-deploy log shows `The scraper worker connects
+   as six7swe_worker: it reaches only the refresh's tables.`; `No DATABASE_WORKER_URL` means the
+   variable is missing.
+4. Apply `.railway/railway.ts` ([Changing Railway config](#changing-railway-config)). The plan
+   creates `@six7swe/job-worker` and changes the backend's start command. Its `preserve()`
+   variables start out unset, so its first deploy fails with `Invalid worker configuration`,
+   which is harmless.
+5. On the worker, set `DATABASE_URL` (the same value as `DATABASE_WORKER_URL`),
+   `MINIMAX_API_KEY`, `MINIMAX_API_KEY_SECONDARY`, `KNOWLEDGE_SERVICE_KEY`, `OWNER_AUTH_ID` (the
+   backend's values) and `JOB_REFRESH_PROFILE_IDS`, then redeploy it. The log shows
+   `Job worker started`.
+6. Remove any cron that runs `jobs:refresh` on the backend service.
+
+To rotate the worker password, change it in both `DATABASE_WORKER_URL` and the worker's
+`DATABASE_URL`, deploy the backend (its pre-deploy sets the password), then redeploy the worker.
+The worker deploys independently of the backend's migrations, so deploy a schema change the
+refresh depends on through the backend first.
+
+`pnpm jobs:refresh -- --profile <id> [--wait]` still runs one refresh by hand, through the same
+pipeline, and records progress in `refresh_status`. On Railway, run it on the worker service
+(`pnpm jobs:refresh -- --profile 1`), whose environment holds no owner connection.
+
+Refreshes abandoned by a crashed process are marked failed on the next backend or worker start,
+so a stale run never blocks the next one.
 
 #### Chrome for the job scraper
 

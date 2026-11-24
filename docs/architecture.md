@@ -405,6 +405,8 @@ imports:
 |---|---|---|
 | `DATABASE_URL` | backend | PostgreSQL connection string (the job hunter's tables), as a runtime role that owns no table |
 | `DATABASE_MIGRATION_URL` | backend (pre-deploy) | The table owner's connection, for `db:migrate`, `db:secure` and `db:reset` only; falls back to `DATABASE_URL`, and the start command strips it from the server |
+| `DATABASE_WORKER_URL` | backend (pre-deploy) | The scraper worker role's connection; `db:secure` provisions the role from it. The job-worker's `DATABASE_URL` has the same value |
+| `JOB_REFRESH_PROFILE_IDS`, `JOB_REFRESH_INTERVAL_HOURS` | job-worker | Profiles refreshed on schedule (comma-separated; empty: none) and how often (default 24) |
 | `MINIMAX_API_KEY` | backend | AI provider key |
 | `RESEND_API_KEY` | backend | Contact form delivery |
 | `RESEND_FROM_EMAIL` | backend | Sender address for outbound mail |
@@ -433,6 +435,11 @@ imports:
 - **Production** — build the frontend to `frontend/dist` and serve it from a
   static host or behind a reverse proxy; deploy the backend to Railway with
   `DATABASE_URL` pointing at Supabase's IPv4 connection string.
-- **Refreshes** — schedule `pnpm jobs:refresh -- --profile <id>` as a Railway
-  Cron so a refresh survives a process restart. The HTTP trigger remains
-  available for manual runs.
+- **Refreshes** — the scraper worker (`@six7swe/job-worker`, `backend/src/worker.ts`) runs
+  scheduled refreshes: a long-lived process built from the backend image, with only
+  `DATABASE_URL` (the worker role: read and write on `jobs`, `profile_jobs` and
+  `refresh_status`, read on `profiles` and on `users.id`/`users.auth_id`, nothing else),
+  `MINIMAX_API_KEY*`, the knowledge retrieval variables and `OWNER_AUTH_ID`. It starts one
+  refresh at a time, for a profile in `JOB_REFRESH_PROFILE_IDS` whose last refresh is older than
+  the interval. `pnpm jobs:refresh -- --profile <id>` still runs one by hand, and the HTTP
+  trigger still runs in the API process until #254 moves it to the worker.
