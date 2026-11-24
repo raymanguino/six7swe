@@ -94,8 +94,9 @@ export default defineRailway(() => {
       PORT: preserve(),
       // The runtime role (#242): reads and writes the job hunter's rows and owns no table.
       // `db:secure` creates the role from this URL's user and password (Supabase pooler user
-      // `six7swe_app.<project-ref>`), so set both URLs in Railway before the apply that adds the
-      // second one (DEPLOYMENT.md, "Database roles").
+      // `six7swe_app.<project-ref>`). `DATABASE_URL` stays on its current value until the deploy of
+      // the new code (DEPLOYMENT.md, "Database roles", step 4); add `DATABASE_MIGRATION_URL` before
+      // the apply.
       DATABASE_URL: preserve(),
       // The table owner (`postgres.<project-ref>`), for the pre-deploy command only. The start
       // command removes it from the server's environment.
