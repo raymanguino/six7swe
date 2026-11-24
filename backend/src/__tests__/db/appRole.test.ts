@@ -11,6 +11,7 @@ import {
   describeRoleProblems,
   resolveRuntimeRole,
   roleFromUrl,
+  RUNTIME_ROLE_MARKER,
   scramSha256Verifier,
 } from '../../db/appRole';
 
@@ -66,6 +67,9 @@ describe('resolveRuntimeRole', () => {
     'service_role',
     'authenticator',
     'dashboard_user',
+    'pgbouncer',
+    'cli_login_postgres',
+    'pgsodium_keyholder',
   ])('refuses the reserved role %s', (role) => {
     expect(() => resolveRuntimeRole(OWNER, app(role), 'postgres', true)).toThrow(/reserved role/);
   });
@@ -113,6 +117,13 @@ describe('buildAppRoleStatements', () => {
     expect(joined).not.toContain('pencil');
   });
 
+  it('marks the role, so a later rename can find and shut it out', () => {
+    // Marked for this database only, since roles are cluster-wide.
+    expect(joined).toContain(`m text := '${RUNTIME_ROLE_MARKER}:' || current_database();`);
+    expect(joined).toContain("format('COMMENT ON ROLE %I IS %L', 'six7swe_app', m)");
+    expect(joined).toMatch(/RAISE EXCEPTION 'Role six7swe_app has the comment/);
+  });
+
   it('grants no attribute beyond LOGIN', () => {
     expect(joined).not.toMatch(/SUPERUSER|BYPASSRLS|CREATEROLE|CREATEDB|IN ROLE/);
   });
@@ -138,6 +149,7 @@ describe('describeRoleProblems', () => {
     member_of_any: false,
     owns_objects: false,
     can_create: false,
+    executes_definer: false,
   };
 
   it('accepts a role that only logs in', () => {
@@ -147,7 +159,10 @@ describe('describeRoleProblems', () => {
   it('names every right that would put the owner back behind DATABASE_URL', () => {
     const all = Object.fromEntries(Object.keys(safe).map((key) => [key, true])) as typeof safe;
     const problems = describeRoleProblems('six7swe_app', 'postgres', all);
-    expect(problems).toHaveLength(9);
+    expect(problems).toHaveLength(10);
+    expect(problems).toContain(
+      'six7swe_app can execute a SECURITY DEFINER function in the public schema',
+    );
     expect(problems).toContain('six7swe_app is a member of another role');
     expect(problems).toContain('six7swe_app can start replication');
     expect(problems).toContain('six7swe_app owns objects in the public schema');

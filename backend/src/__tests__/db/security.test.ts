@@ -7,7 +7,22 @@
  * a future change to the statement list cannot quietly reopen the tables.
  */
 
-import { APP_POLICY, buildSecurityStatements, OWNER_ROLE } from '../../db/security';
+import { buildAppAccessStatements, buildLockdownStatements } from '../../db/lockdownStatements';
+import { APP_POLICY, OWNER_ROLE } from '../../db/security';
+
+/** Both transactions' statements, for argument-less functions and no former role. */
+function buildSecurityStatements(
+  tables: string[],
+  sequences: string[] = [],
+  functions: string[] = [],
+  appRole: string | null = null,
+): string[] {
+  const routines = functions.map((name) => ({ name, args: '' }));
+  return [
+    ...buildLockdownStatements({ tables, sequences, functions: routines }),
+    ...buildAppAccessStatements({ tables, sequences }, appRole, []),
+  ];
+}
 
 describe('the database lockdown', () => {
   const tables = ['profiles', 'users'];
@@ -21,36 +36,30 @@ describe('the database lockdown', () => {
   });
 
   it('revokes the public grants from every table', () => {
-    for (const table of tables) {
-      expect(joined).toContain(`REVOKE ALL PRIVILEGES ON TABLE public."${table}" FROM anon;`);
-      expect(joined).toContain(
-        `REVOKE ALL PRIVILEGES ON TABLE public."${table}" FROM authenticated;`,
-      );
-    }
+    expect(joined).toContain(
+      'REVOKE ALL PRIVILEGES ON TABLE public."profiles", public."users" FROM anon, authenticated;',
+    );
   });
 
   it('revokes the grants from the sequences too', () => {
-    expect(joined).toContain('REVOKE ALL PRIVILEGES ON SEQUENCE public."users_id_seq" FROM anon;');
+    expect(joined).toContain(
+      'REVOKE ALL PRIVILEGES ON SEQUENCE public."users_id_seq" FROM anon, authenticated;',
+    );
   });
 
   it('revokes the default privileges so a new table stays closed', () => {
     expect(joined).toContain(
-      'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON TABLES FROM anon;',
+      'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated;',
     );
     expect(joined).toContain(
-      'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON SEQUENCES FROM authenticated;',
+      'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon, authenticated;',
     );
   });
 
-  it('revokes function execution, because a public function is an RPC endpoint', () => {
-    expect(joined).toContain('REVOKE ALL PRIVILEGES ON FUNCTION public."search_jobs" FROM anon;');
+  it('revokes function execution from the browser roles and PUBLIC, which anon would inherit', () => {
     expect(joined).toContain(
-      'REVOKE ALL PRIVILEGES ON FUNCTION public."search_jobs" FROM authenticated;',
+      'REVOKE ALL PRIVILEGES ON ROUTINE public."search_jobs"() FROM anon, authenticated, PUBLIC;',
     );
-  });
-
-  it('revokes function execution from PUBLIC, which anon would inherit', () => {
-    expect(joined).toContain('REVOKE ALL PRIVILEGES ON FUNCTION public."search_jobs" FROM PUBLIC;');
   });
 
   it('revokes the default function privilege so a new function stays closed', () => {
@@ -80,22 +89,18 @@ describe('the runtime role grants', () => {
   const joined = statements.join('\n');
 
   it('grants row access and nothing else on every table', () => {
-    for (const table of tables) {
-      expect(joined).toContain(
-        `GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public."${table}" TO "six7swe_app";`,
-      );
-    }
+    expect(joined).toContain(
+      'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public."profiles", public."users" TO "six7swe_app";',
+    );
     expect(joined).not.toMatch(/GRANT ALL/);
     expect(joined).not.toMatch(/TRUNCATE|REFERENCES|TRIGGER/);
   });
 
   it('revokes what was granted by hand before granting', () => {
     const revoke = statements.indexOf(
-      'REVOKE ALL PRIVILEGES ON TABLE public."users" FROM "six7swe_app";',
+      'REVOKE ALL PRIVILEGES ON TABLE public."profiles", public."users" FROM "six7swe_app";',
     );
-    const grant = statements.indexOf(
-      'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public."users" TO "six7swe_app";',
-    );
+    const grant = statements.findIndex((statement) => statement.startsWith('GRANT SELECT'));
     expect(revoke).toBeGreaterThan(-1);
     expect(grant).toBeGreaterThan(revoke);
   });

@@ -1,5 +1,6 @@
 import { createHash, createHmac, pbkdf2Sync, randomBytes } from 'node:crypto';
 import type postgres from 'postgres';
+import { isSafeIdentifier, quoteIdentifier } from './identifier';
 
 /**
  * The backend's runtime database role.
@@ -16,12 +17,22 @@ import type postgres from 'postgres';
  * connection. The grants and policies are in `security.ts`.
  */
 
-/** Matches an unquoted Postgres identifier. */
-const SAFE_ROLE = /^[a-z_][a-z0-9_]*$/;
-
 /** Roles Postgres or Supabase rely on, which must never become the runtime role. */
 const RESERVED_ROLE =
-  /^(pg_|supabase_)|^(postgres|anon|authenticated|service_role|authenticator|dashboard_user)$/;
+  /^(pg_|supabase_|pgsodium)|^(postgres|anon|authenticated|service_role|authenticator|dashboard_user|pgbouncer|cli_login_postgres)$/;
+
+/**
+ * The comment `db:secure` puts on the runtime role, followed by `:` and the
+ * database name: roles are cluster-wide, so the marker says which database's
+ * runtime role it is. A role marked for this database that is no longer its
+ * runtime role is shut out (`lockdownStatements.ts`); no other role is.
+ */
+export const RUNTIME_ROLE_MARKER = 'six7swe-runtime';
+
+/** True for a role Postgres or Supabase relies on, which `db:secure` never manages. */
+export function isReservedRole(role: string): boolean {
+  return RESERVED_ROLE.test(role);
+}
 
 /** The shortest runtime role password accepted (`openssl rand -hex 32` gives 64). */
 export const MIN_APP_PASSWORD_LENGTH = 32;
@@ -53,7 +64,7 @@ export function roleFromUrl(url: string): RoleCredentials {
   }
 
   const role = user.split('.')[0] ?? '';
-  if (!SAFE_ROLE.test(role)) {
+  if (!isSafeIdentifier(role)) {
     throw new Error("The database URL's role is not a plain lower-case identifier.");
   }
   return { role, password };
@@ -88,7 +99,7 @@ export function resolveRuntimeRole(
   if (owner.role !== ownerRole) {
     throw new Error(`DATABASE_MIGRATION_URL must connect as ${ownerRole}, not ${owner.role}.`);
   }
-  if (RESERVED_ROLE.test(app.role)) {
+  if (isReservedRole(app.role)) {
     throw new Error(`DATABASE_URL names the reserved role ${app.role}; pick a role of its own.`);
   }
   if (app.password.length < MIN_APP_PASSWORD_LENGTH) {
@@ -131,16 +142,20 @@ export function scramSha256Verifier(password: string, salt: Buffer = randomBytes
  * them. `readRoleProblems` checks the result.
  */
 export function buildAppRoleStatements(role: string, verifier: string): string[] {
-  if (!SAFE_ROLE.test(role)) {
-    throw new Error(`Unsafe SQL identifier: ${role}`);
-  }
+  const quoted = quoteIdentifier(role);
   if (!/^SCRAM-SHA-256\$[A-Za-z0-9+/=:$]+$/.test(verifier)) {
     throw new Error('The password verifier is not a SCRAM-SHA-256 verifier.');
   }
 
   return [
-    `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${role}') THEN CREATE ROLE "${role}" LOGIN; END IF; END $$;`,
-    `ALTER ROLE "${role}" WITH LOGIN PASSWORD '${verifier}';`,
+    `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${role}') THEN CREATE ROLE ${quoted} LOGIN; END IF; END $$;`,
+    // Mark it for this database, refusing a role whose comment says it is something else.
+    `DO $$ DECLARE m text := '${RUNTIME_ROLE_MARKER}:' || current_database();
+      c text := shobj_description('${quoted}'::regrole, 'pg_authid');
+    BEGIN IF c IS DISTINCT FROM m AND c IS NOT NULL THEN
+      RAISE EXCEPTION 'Role ${role} has the comment "%", not "%"; refusing to adopt it as the runtime role.', c, m;
+    END IF; EXECUTE format('COMMENT ON ROLE %I IS %L', '${role}', m); END $$;`,
+    `ALTER ROLE ${quoted} WITH LOGIN PASSWORD '${verifier}';`,
   ];
 }
 
@@ -155,6 +170,7 @@ export interface RoleCheckRow {
   member_of_any: boolean;
   owns_objects: boolean;
   can_create: boolean;
+  executes_definer: boolean;
 }
 
 /**
@@ -172,6 +188,9 @@ export function describeRoleProblems(role: string, ownerRole: string, row: RoleC
     [row.member_of_any, 'is a member of another role'],
     [row.owns_objects, 'owns objects in the public schema'],
     [row.can_create, 'can create objects in the public schema'],
+    // A SECURITY DEFINER function runs with its owner's rights, so being able
+    // to call one is a way to the owner's rights.
+    [row.executes_definer, 'can execute a SECURITY DEFINER function in the public schema'],
   ];
   return checks.filter(([bad]) => bad).map(([, problem]) => `${role} ${problem}`);
 }
@@ -196,7 +215,12 @@ export async function readRoleProblems(
           and d.dbid = (select oid from pg_database where datname = current_database())
           and (o.schema = 'public' or (o.type = 'schema' and o.identity = 'public'))
       ) as owns_objects,
-      has_schema_privilege(r.rolname, 'public', 'CREATE') as can_create
+      has_schema_privilege(r.rolname, 'public', 'CREATE') as can_create,
+      exists (
+        select 1 from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public' and p.prosecdef and has_function_privilege(r.oid, p.oid, 'EXECUTE')
+      ) as executes_definer
     from pg_roles r
     where r.rolname = ${role}::name
   `;
@@ -204,27 +228,36 @@ export async function readRoleProblems(
 }
 
 /**
- * Creates the runtime role or resets its password, then checks it, all in one
- * transaction: a failed check rolls the role and the password change back, and
- * the deploy fails rather than run the backend with owner rights.
+ * Creates the runtime role or resets its password. Runs inside the lockdown's
+ * transaction; `assertAppRoleIsSafe` checks the role once the grants are in
+ * place, and a failed check rolls the role and the password change back.
  *
- * @param sql A connection as the table owner.
+ * @param sql A transaction as the table owner.
  */
 export async function provisionAppRole(
-  sql: postgres.Sql,
+  sql: postgres.TransactionSql,
   app: RoleCredentials,
-  ownerRole: string,
 ): Promise<void> {
   const statements = buildAppRoleStatements(app.role, scramSha256Verifier(app.password));
-  await sql.begin(async (tx) => {
-    for (const statement of statements) {
-      await tx.unsafe(statement);
-    }
-    const problems = await readRoleProblems(tx, app.role, ownerRole);
-    if (problems.length > 0) {
-      throw new Error(`The runtime role must not hold owner rights: ${problems.join('; ')}.`);
-    }
-  });
+  for (const statement of statements) {
+    await sql.unsafe(statement);
+  }
+}
+
+/**
+ * Throws when the runtime role holds owner rights or a way to them, so the
+ * deploy fails rather than run the backend with them. Runs after the lockdown,
+ * whose function revokes are what take a SECURITY DEFINER function out of reach.
+ */
+export async function assertAppRoleIsSafe(
+  sql: postgres.TransactionSql,
+  role: string,
+  ownerRole: string,
+): Promise<void> {
+  const problems = await readRoleProblems(sql, role, ownerRole);
+  if (problems.length > 0) {
+    throw new Error(`The runtime role must not hold owner rights: ${problems.join('; ')}.`);
+  }
 }
 
 /**

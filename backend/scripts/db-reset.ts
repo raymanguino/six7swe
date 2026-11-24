@@ -20,6 +20,7 @@
 
 import readline from 'node:readline/promises';
 import postgres from 'postgres';
+import { quoteIdentifier } from '../src/db/identifier';
 import { assumesYes, resolveDatabaseTarget, runMigrations, sslOptions, wantsSeed } from './db-env';
 import { describeAppRole, lockDownDatabase } from './db-lockdown';
 
@@ -49,12 +50,12 @@ async function dropPublicSchema(sql: postgres.Sql): Promise<string[]> {
   const dropped: string[] = [];
 
   for (const { tablename } of tables) {
-    await sql.unsafe(`drop table if exists public."${tablename}" cascade`);
+    await sql.unsafe(`drop table if exists public.${quoteIdentifier(tablename)} cascade`);
     dropped.push(tablename);
   }
 
   for (const { typname } of enums) {
-    await sql.unsafe(`drop type if exists public."${typname}" cascade`);
+    await sql.unsafe(`drop type if exists public.${quoteIdentifier(typname)} cascade`);
     dropped.push(typname);
   }
 
