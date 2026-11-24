@@ -31,7 +31,8 @@ invalidate a value that has already been disclosed.
 | 1 | `MINIMAX_API_KEY` | minimax.io | Account → API keys → revoke + regenerate | `backend/.env`, Railway backend variables |
 | 2 | `RESEND_API_KEY` | resend.com | Account → API Keys → revoke + regenerate | `backend/.env`, Railway backend variables |
 | 3 | `SUPABASE_SECRET_KEY` | Supabase project | Project → Settings → API Keys | Railway backend variables (if still set) |
-| 4 | `DATABASE_URL` (password) | Supabase project | Project → Settings → Database → reset password | `backend/.env`, Railway backend variables |
+| 4 | `DATABASE_MIGRATION_URL` (owner `postgres` password) | Supabase project | Project → Settings → Database → reset password | `backend/.env`, Railway backend variables |
+| 4a | `DATABASE_URL` (runtime role `six7swe_app` password) | The URL itself; no dashboard reset | Generate a new password (`openssl rand -hex 32`) and put it in the URL; the next pre-deploy sets it on the role (`DEPLOYMENT.md`, "Database roles") | `backend/.env`, Railway backend variables |
 | 5 | Second Supabase project password | Supabase project (us-west-2) | Project → Settings → Database → reset password | `backend/.env` (remove if unused) |
 | 6 | ~~MCP `x-brain-key`~~ (retired) | MCP edge function | Open-brain MCP server → key management: **revoke** it | Nothing reads it since #213 removed the open-brain MCP client and every `MCP_PORTFOLIO_*` variable. Revoke the key, and delete any `MCP_*` line left in `backend/.env` or Railway |
 
@@ -132,8 +133,9 @@ pnpm run db:secure -- --remote    # the hosted database
 
 **This must run after every migration.** The Drizzle schema is the
 source of truth for the tables, but Drizzle ORM 0.33 cannot express row level
-security or role grants, so the rules live in `backend/src/db/security.ts`
-and have to be applied separately. `db:reset` applies them automatically, and
+security, role grants or the runtime role, so the rules live in
+`backend/src/db/security.ts` (the runtime role in `backend/src/db/appRole.ts`;
+see `DEPLOYMENT.md`, "Database roles") and have to be applied separately. `db:reset` applies them automatically, and
 the backend's Railway `preDeployCommand` (`.railway/railway.ts`) runs `db:deploy`,
 which runs `db:migrate` followed by `db:secure`.
 
