@@ -23,6 +23,11 @@ export interface DatabaseTarget {
    * its role when it differs from the owner's (see src/db/appRole.ts).
    */
   appDatabaseUrl: string;
+  /**
+   * The scraper worker's connection, `DATABASE_WORKER_URL`; undefined when no
+   * worker is deployed. `db:secure` provisions its role (src/db/workerRole.ts).
+   */
+  workerDatabaseUrl: string | undefined;
   /** True when the hosted database was selected. */
   remote: boolean;
   /** True when the backend must run as a separate runtime role (remote or production). */
@@ -87,6 +92,7 @@ export function resolveDatabaseTarget(): DatabaseTarget {
   return {
     databaseUrl: migrationUrl || appDatabaseUrl,
     appDatabaseUrl,
+    workerDatabaseUrl: process.env.DATABASE_WORKER_URL || undefined,
     remote: wantsRemote,
     strict,
   };

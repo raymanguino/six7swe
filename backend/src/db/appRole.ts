@@ -141,7 +141,11 @@ export function scramSha256Verifier(password: string, salt: Buffer = randomBytes
  * membership); they are not named because Supabase's `postgres` may not set
  * them. `readRoleProblems` checks the result.
  */
-export function buildAppRoleStatements(role: string, verifier: string): string[] {
+export function buildAppRoleStatements(
+  role: string,
+  verifier: string,
+  marker: string = RUNTIME_ROLE_MARKER,
+): string[] {
   const quoted = quoteIdentifier(role);
   if (!/^SCRAM-SHA-256\$[A-Za-z0-9+/=:$]+$/.test(verifier)) {
     throw new Error('The password verifier is not a SCRAM-SHA-256 verifier.');
@@ -150,10 +154,10 @@ export function buildAppRoleStatements(role: string, verifier: string): string[]
   return [
     `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${role}') THEN CREATE ROLE ${quoted} LOGIN; END IF; END $$;`,
     // Mark it for this database, refusing a role whose comment says it is something else.
-    `DO $$ DECLARE m text := '${RUNTIME_ROLE_MARKER}:' || current_database();
+    `DO $$ DECLARE m text := '${marker}:' || current_database();
       c text := shobj_description('${quoted}'::regrole, 'pg_authid');
     BEGIN IF c IS DISTINCT FROM m AND c IS NOT NULL THEN
-      RAISE EXCEPTION 'Role ${role} has the comment "%", not "%"; refusing to adopt it as the runtime role.', c, m;
+      RAISE EXCEPTION 'Role ${role} has the comment "%", not "%"; refusing to adopt it.', c, m;
     END IF; EXECUTE format('COMMENT ON ROLE %I IS %L', '${role}', m); END $$;`,
     `ALTER ROLE ${quoted} WITH LOGIN PASSWORD '${verifier}';`,
   ];
@@ -237,8 +241,9 @@ export async function readRoleProblems(
 export async function provisionAppRole(
   sql: postgres.TransactionSql,
   app: RoleCredentials,
+  marker: string = RUNTIME_ROLE_MARKER,
 ): Promise<void> {
-  const statements = buildAppRoleStatements(app.role, scramSha256Verifier(app.password));
+  const statements = buildAppRoleStatements(app.role, scramSha256Verifier(app.password), marker);
   for (const statement of statements) {
     await sql.unsafe(statement);
   }

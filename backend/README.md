@@ -284,9 +284,9 @@ pnpm run jobs:refresh -- --profile 1 --wait
 pnpm run jobs:refresh -- --profile 1
 ```
 
-The CLI uses the same pipeline as the HTTP trigger. Schedule it as a Railway
-Cron so a refresh survives a process restart. Refreshes abandoned by a crashed
-process are marked failed on the next startup.
+The CLI uses the same pipeline as the HTTP trigger. Scheduled refreshes run on
+the scraper worker (`pnpm worker:dev`; DEPLOYMENT.md, section 6). Refreshes
+abandoned by a crashed process are marked failed on the next startup.
 
 ## Project Structure
 

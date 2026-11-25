@@ -92,14 +92,18 @@ export function selectFormerRoles(marked: string[], appRole: string | null): str
   return [...new Set(former)].sort();
 }
 
-/** The roles marked as this database's runtime role, other than the current one. */
+/**
+ * The roles marked as this database's runtime role (or, with the worker's
+ * marker, its worker role), other than the current one.
+ */
 export async function readFormerRoles(
   sql: postgres.TransactionSql,
   appRole: string | null,
+  marker: string = RUNTIME_ROLE_MARKER,
 ): Promise<string[]> {
   const marked = await sql<{ rolname: string }[]>`
     select rolname from pg_roles
-    where shobj_description(oid, 'pg_authid') = ${RUNTIME_ROLE_MARKER} || ':' || current_database()
+    where shobj_description(oid, 'pg_authid') = ${marker} || ':' || current_database()
   `;
   return selectFormerRoles(
     marked.map((row) => row.rolname),

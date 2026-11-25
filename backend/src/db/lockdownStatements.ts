@@ -47,7 +47,7 @@ export function functionSignature(fn: PublicFunction): string {
 }
 
 /** A comma-separated list of `public` objects. */
-function objectList(names: string[]): string {
+export function objectList(names: string[]): string {
   return names.map((name) => `public.${quoteIdentifier(name)}`).join(', ');
 }
 
@@ -96,6 +96,45 @@ export function buildLockdownStatements({ tables, sequences, functions }: Public
 }
 
 /**
+ * Every privilege a role holds in `public` (tables, sequences, routines and
+ * the owner's default privileges for later objects), revoked. Clears the
+ * slate before a role is granted exactly what it should have.
+ */
+export function revokeEverythingInPublic(roles: string): string[] {
+  return [
+    ...['TABLES', 'SEQUENCES', 'ROUTINES'].map(
+      (kind) => `REVOKE ALL PRIVILEGES ON ALL ${kind} IN SCHEMA public FROM ${roles};`,
+    ),
+    ...defaultPrivileges((kind) => `REVOKE ALL ON ${kind} FROM ${roles}`),
+  ];
+}
+
+/**
+ * The statements that shut former roles out: their grants, their default
+ * privileges and their LOGIN go; the role itself is kept, so dropping it stays
+ * an optional manual step.
+ *
+ * @param keep The current role, which is never shut out.
+ */
+export function buildFormerRoleStatements(formerRoles: string[], keep: string | null): string[] {
+  const former = formerRoles.filter((role) => role !== keep);
+  if (former.includes(OWNER_ROLE)) {
+    throw new Error(`The table owner (${OWNER_ROLE}) cannot be shut out as a former role.`);
+  }
+  if (former.length === 0) {
+    return [];
+  }
+  const roles = former.map(quoteIdentifier).join(', ');
+  const statements = revokeEverythingInPublic(roles);
+  statements.push(`REVOKE ALL PRIVILEGES ON SCHEMA public FROM ${roles};`);
+  for (const role of former.map(quoteIdentifier)) {
+    // The marker goes too, so a later deploy does not shut it out again.
+    statements.push(`ALTER ROLE ${role} NOLOGIN;`, `COMMENT ON ROLE ${role} IS NULL;`);
+  }
+  return statements;
+}
+
+/**
  * The statements that shut former runtime roles out and let the current one
  * in. A former role loses its grants, its default privileges and its LOGIN;
  * the role itself is kept, so dropping it stays an optional manual step.
@@ -108,24 +147,7 @@ export function buildAppAccessStatements(
   appRole: string | null,
   formerRoles: string[],
 ): string[] {
-  const statements: string[] = [];
-
-  const former = formerRoles.filter((role) => role !== appRole);
-  if (former.includes(OWNER_ROLE)) {
-    throw new Error(`The table owner (${OWNER_ROLE}) cannot be shut out as a former role.`);
-  }
-  if (former.length > 0) {
-    const roles = former.map(quoteIdentifier).join(', ');
-    for (const kind of ['TABLES', 'SEQUENCES', 'ROUTINES']) {
-      statements.push(`REVOKE ALL PRIVILEGES ON ALL ${kind} IN SCHEMA public FROM ${roles};`);
-    }
-    statements.push(...defaultPrivileges((kind) => `REVOKE ALL ON ${kind} FROM ${roles}`));
-    statements.push(`REVOKE ALL PRIVILEGES ON SCHEMA public FROM ${roles};`);
-    for (const role of former.map(quoteIdentifier)) {
-      // The marker goes too, so a later deploy does not shut it out again.
-      statements.push(`ALTER ROLE ${role} NOLOGIN;`, `COMMENT ON ROLE ${role} IS NULL;`);
-    }
-  }
+  const statements = buildFormerRoleStatements(formerRoles, appRole);
 
   if (appRole !== null) {
     statements.push(...buildAppGrantStatements(appRole, tables, sequences));

@@ -20,6 +20,23 @@ const restartPolicy = {
   restartPolicyMaxRetries: 10,
 } as const;
 
+// The backend image, which the backend and the scraper worker both run. The Dockerfile's runtime
+// stage installs Chrome's shared libraries, so the image that is built is the image that runs.
+const backendImage = {
+  builder: 'DOCKERFILE' as const,
+  dockerfilePath: 'backend/Dockerfile',
+  // The backend, the shared package it builds, and the root files the Dockerfile copies.
+  watchPatterns: [
+    '/backend/**',
+    '/packages/knowledge-types/**',
+    '/.dockerignore',
+    '/package.json',
+    '/pnpm-lock.yaml',
+    '/pnpm-workspace.yaml',
+    '/tsconfig.base.json',
+  ],
+};
+
 export default defineRailway(() => {
   const frontend = service('@six7swe/frontend', {
     source: repo,
@@ -65,24 +82,12 @@ export default defineRailway(() => {
     // Dockerfile service's start command in exec form, without a shell, so neither command uses
     // `cd` or `&&`; the image's working directory is already /app/backend. `db:deploy` is a
     // package script, and pnpm runs scripts in a shell.
-    build: {
-      builder: 'DOCKERFILE',
-      dockerfilePath: 'backend/Dockerfile',
-      // The backend, the shared package it builds, and the root files the Dockerfile copies.
-      watchPatterns: [
-        '/backend/**',
-        '/packages/knowledge-types/**',
-        '/.dockerignore',
-        '/package.json',
-        '/pnpm-lock.yaml',
-        '/pnpm-workspace.yaml',
-        '/tsconfig.base.json',
-      ],
-    },
-    // `env -u` removes the table owner's DATABASE_MIGRATION_URL before pnpm starts, so neither the
-    // server nor the Chrome it launches for the job scraper ever holds it. Exec form splits on
-    // spaces, and `env` is in the image (coreutils).
-    start: 'env -u DATABASE_MIGRATION_URL pnpm start',
+    build: backendImage,
+    // `env -u` removes the table owner's DATABASE_MIGRATION_URL and the worker role's
+    // DATABASE_WORKER_URL (both for the pre-deploy only) before pnpm starts, so neither the server
+    // nor the Chrome it launches for the job scraper ever holds them. Exec form splits on spaces,
+    // and `env` is in the image (coreutils).
+    start: 'env -u DATABASE_MIGRATION_URL -u DATABASE_WORKER_URL pnpm start',
     // `db:deploy` migrates, then secures: a table a migration creates starts with the default
     // Supabase grants, so `db:secure` must run after it (docs/SECURITY.md).
     preDeploy: 'pnpm db:deploy',
@@ -101,6 +106,9 @@ export default defineRailway(() => {
       // The table owner (`postgres.<project-ref>`), for the pre-deploy command only. The start
       // command removes it from the server's environment.
       DATABASE_MIGRATION_URL: preserve(),
+      // The job-worker's DATABASE_URL (#243), here so the pre-deploy's `db:secure` provisions
+      // its role. Set it in Railway before the apply that adds it.
+      DATABASE_WORKER_URL: preserve(),
       MINIMAX_API_KEY: preserve(),
       MINIMAX_API_KEY_SECONDARY: preserve(),
       RESEND_API_KEY: preserve(),
@@ -128,6 +136,33 @@ export default defineRailway(() => {
       // calls the knowledge service over the private network with its owner key.
       OWNER_AUTH_ID: preserve(),
       KNOWLEDGE_OWNER_KEY: preserve(),
+    },
+  });
+
+  // The scraper worker (#243, `backend/src/worker.ts`): only the variables scraping and scoring
+  // need (it refuses to start with the forbidden ones in config/worker.ts), no pre-deploy, no
+  // domain. Exactly one replica: its schedule assumes no second worker.
+  const jobWorker = service('@six7swe/job-worker', {
+    source: repo,
+    build: backendImage,
+    start: 'pnpm start:worker',
+    deploy: { ...restartPolicy },
+    replicas: { 'us-west2': 1 },
+    env: {
+      NODE_ENV: 'production',
+      // The worker role: the same value as the backend's DATABASE_WORKER_URL.
+      DATABASE_URL: preserve(),
+      MINIMAX_API_KEY: preserve(),
+      MINIMAX_API_KEY_SECONDARY: preserve(),
+      // Scoring retrieves the owner's background (services/jobHunt/knowledgeSource.ts). OWNER_AUTH_ID
+      // (a user id, not a credential) decides which profiles are scored against it.
+      KNOWLEDGE_URL: 'http://six7sweknowledge.railway.internal:3100',
+      KNOWLEDGE_SERVICE_KEY: preserve(),
+      OWNER_AUTH_ID: preserve(),
+      // Comma-separated search profile ids refreshed on schedule; empty, the worker idles.
+      JOB_REFRESH_PROFILE_IDS: preserve(),
+      // Hours between a profile's scheduled refreshes; declared so an apply keeps it (not secret).
+      JOB_REFRESH_INTERVAL_HOURS: '24',
     },
   });
 
@@ -209,7 +244,7 @@ export default defineRailway(() => {
     // SDK's types (railway 3.17) do not declare it yet, so it is passed as a variable rather than
     // an object literal, which skips the excess-property check.
     variables: { managed: true },
-    resources: [frontend, backend, knowledge],
+    resources: [frontend, backend, jobWorker, knowledge],
   };
   return project('six7swe', definition);
 });

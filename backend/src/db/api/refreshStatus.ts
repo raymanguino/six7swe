@@ -85,6 +85,22 @@ export async function getActiveRefreshForProfile(
 }
 
 /**
+ * When the profile's latest refresh (of any outcome, from any process) was
+ * started; null when it never had one. The scraper worker's schedule reads
+ * it, so a restart does not reset the clock and a user-triggered refresh
+ * counts as a run.
+ */
+export async function getLatestRefreshStartedAt(profileId: number): Promise<Date | null> {
+  const [row] = await db
+    .select({ createdAt: refreshStatus.createdAt })
+    .from(refreshStatus)
+    .where(eq(refreshStatus.profileId, profileId))
+    .orderBy(sql`${refreshStatus.id} desc`)
+    .limit(1);
+  return row?.createdAt ?? null;
+}
+
+/**
  * Marks refreshes that have been running longer than `olderThan` as FAILED.
  *
  * A process restart mid-refresh leaves a row stuck in IN_PROGRESS forever.
