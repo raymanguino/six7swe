@@ -21,14 +21,20 @@ async function main(): Promise<void> {
   // Only reachable outside production, where a local .env may carry the owner's URL.
   dropMigrationUrl();
 
-  const [{ createStandaloneRefreshScheduler, reapStaleRefreshes }, { assertWorkerRoleIsSafe }] =
-    await Promise.all([import('./services/jobHunt/standalone'), import('./services/databaseRole')]);
+  const [
+    { createStandaloneRefreshScheduler, reapStaleRefreshes, startStaleRefreshReaper },
+    { assertWorkerRoleIsSafe },
+  ] = await Promise.all([
+    import('./services/jobHunt/standalone'),
+    import('./services/databaseRole'),
+  ]);
 
   if (process.env.NODE_ENV === 'production') await assertWorkerRoleIsSafe();
 
-  // Once, at startup: a periodic reap could fail a refresh the API process is still running.
+  // Heartbeat-based, so it never fails a refresh another process is still running.
   const reaped = await reapStaleRefreshes();
   if (reaped > 0) logger.info({ reaped }, 'Reaped stale refreshes');
+  startStaleRefreshReaper(logger);
 
   const scheduler = createStandaloneRefreshScheduler(config, logger);
 
@@ -53,7 +59,7 @@ async function main(): Promise<void> {
   const stop = (signal: string): void => {
     logger.info({ signal }, 'Job worker stopping');
     if (timer) clearTimeout(timer);
-    // A refresh cut off here stays active until the stale-refresh reaper marks it failed.
+    // A refresh cut off here stops heartbeating, so stale-claim recovery marks it failed.
     process.exit(0);
   };
   process.once('SIGTERM', () => stop('SIGTERM'));

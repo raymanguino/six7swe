@@ -354,6 +354,17 @@ The fetch callback is **awaited**, so `COMPLETED` is only written once the
 last batch has actually been scored and stored. Any failure marks the refresh
 `FAILED` rather than leaving it `IN_PROGRESS`.
 
+`refresh_status` is also a queue (#253; `services/jobHunt/refreshQueue.ts`). A
+`PENDING` row with no claim is queued; a worker claims the oldest with
+`for update skip locked`, so two replicas never claim the same row. A run started
+in process (`start`/`rescore`) inserts its row already claimed. Every claimed run
+records its claimant (`claimed_by`) and moves `heartbeat_at` every minute while
+it runs, and every write it makes is fenced by its claim. Stale-claim recovery
+(`reapStaleRefreshes`, at API and worker startup and every 5 minutes) fails
+claims whose heartbeat is older than `JOB_REFRESH_STALE_MINUTES`, so a long
+scoring phase is never reaped, whichever process runs it. Rows queued for over
+6 hours are failed too.
+
 Jobs are re-scored when their content hash changed, so an edited posting is not
 left with a stale score forever.
 
@@ -416,7 +427,7 @@ imports:
 | `SUPABASE_JWKS_URL` | backend | Explicit JWKS endpoint (optional) |
 | `SUPABASE_JWT_SECRET` | backend | Legacy HS256 mode (optional) |
 | `AUTH_DEV_BYPASS` | backend | Dev-only user impersonation |
-| `JOB_REFRESH_STALE_MINUTES` | backend | Abandoned refresh threshold (default 30) |
+| `JOB_REFRESH_STALE_MINUTES` | backend | Minutes without a heartbeat before a refresh is failed as abandoned (default 30, at least 3) |
 | `OWNER_AUTH_ID` | backend, knowledge | Supabase subject that owns the knowledge base |
 | `KNOWLEDGE_URL` | backend | Knowledge service base URL, used by retrieval (chat, fitcheck, `/resume`, job hunter) and the owner proxy (private network on Railway); required in production |
 | `KNOWLEDGE_SERVICE_KEY` | backend, knowledge | Service credential for retrieval, `/version`, `/resume.pdf` and example clicks; required in production |

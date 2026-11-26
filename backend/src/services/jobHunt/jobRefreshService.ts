@@ -1,5 +1,3 @@
-import { randomBytes } from 'node:crypto';
-import { hostname } from 'node:os';
 import type { RetrievedChunkDto } from '@six7swe/knowledge-types';
 import type { FastifyBaseLogger } from 'fastify';
 import type { JobService, JobInput } from '../../db/api/job';
@@ -19,7 +17,6 @@ import {
   isScoreStale,
   nextRefreshState,
   selectJobsToScore,
-  ActiveRefreshExistsError,
   INITIAL_REFRESH_STATE,
   type RefreshEvent,
   type RefreshState,
@@ -36,6 +33,15 @@ import {
   type JobKnowledgeAccess,
   type JobKnowledgeSource,
 } from './knowledgeSource';
+import {
+  ClaimLostError,
+  processClaimant,
+  recordActiveRefresh,
+  startHeartbeat,
+  REFRESH_HEARTBEAT_MS,
+} from './refreshQueue';
+
+export { RefreshInProgressError } from './refreshQueue';
 
 /** How many jobs are scored at the same time. */
 const DEFAULT_MATCH_CONCURRENCY = 3;
@@ -53,14 +59,6 @@ export interface JobRefreshService {
    * row, when no match is stale.
    */
   rescore(input: { profileId: number }): Promise<{ refreshStatusId: number | null }>;
-}
-
-/** Thrown when a profile already has a refresh running. */
-export class RefreshInProgressError extends Error {
-  constructor(profileId: number) {
-    super(`A refresh is already running for profile ${profileId}`);
-    this.name = 'RefreshInProgressError';
-  }
 }
 
 /** Thrown when the profile does not exist. */
@@ -121,8 +119,10 @@ export interface JobRefreshServiceOptions {
   knowledge: JobKnowledgeAccess;
   logger: FastifyBaseLogger;
   matchConcurrency?: number;
-  /** Who this service's runs are claimed by (`refresh_status.claimed_by`). */
+  /** Who this process's runs are claimed by; this process's id by default. */
   claimant?: string;
+  /** How often a running refresh heartbeats (`REFRESH_HEARTBEAT_MS` by default). */
+  heartbeatMs?: number;
 }
 
 /** What every job in a run is scored against. */
@@ -152,6 +152,19 @@ interface ScoredBatch {
 type EvaluationResult = { ok: true; row: InsertProfileJobInput } | { ok: false };
 
 /**
+ * A running refresh's hold on its row. Once the claim is lost (a heartbeat or
+ * a fenced write finds the row reaped), the run must stop at its next
+ * checkpoint: the replacement refresh owns the profile's matches now.
+ */
+interface RunClaim {
+  readonly refreshId: number;
+  /** Throws {@link ClaimLostError} once the claim is lost. */
+  assertHeld(): void;
+  /** Records that the claim is lost. */
+  lose(): void;
+}
+
+/**
  * Runs the job refresh pipeline.
  *
  * The pipeline used to live inside the HTTP handler, where an error thrown
@@ -174,7 +187,8 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
     knowledge,
     logger,
     matchConcurrency = DEFAULT_MATCH_CONCURRENCY,
-    claimant = `${hostname()}:${process.pid}:${randomBytes(4).toString('hex')}`.slice(0, 128),
+    claimant = processClaimant(),
+    heartbeatMs = REFRESH_HEARTBEAT_MS,
   } = options;
 
   async function loadProfile(profileId: number): Promise<Profile> {
@@ -211,7 +225,7 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
     // Runs in the background so the request returns straight away. runPipeline
     // records failures on the refresh row; the catch is a last resort so no
     // rejection is ever left unhandled.
-    runPipeline(refreshId, profile).catch((error: unknown) => {
+    runClaimed(refreshId, (claim) => runPipeline(claim, profile)).catch((error: unknown) => {
       logger.error({ err: error, refreshId, profileId }, 'Job refresh crashed');
     });
 
@@ -246,7 +260,7 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
     const refreshId = await claimRefresh(profileId);
 
     // Like a refresh, failures land on the row; the catch is a last resort.
-    runRescore(refreshId, profile, source).catch((error: unknown) => {
+    runClaimed(refreshId, (claim) => runRescore(claim, profile, source)).catch((error: unknown) => {
       logger.error({ err: error, refreshId, profileId }, 'Job rescore crashed');
     });
 
@@ -255,37 +269,66 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
 
   /**
    * Inserts the refresh row that makes this run the profile's only active
-   * one. Refreshes and rescores share it, so they never score at once.
+   * one, claimed by this process. Refreshes and rescores share it, so they
+   * never score at once; two of them would score the same jobs twice and race
+   * on the status row.
    */
   async function claimRefresh(profileId: number): Promise<number> {
-    // Guard against two refreshes for the same profile running at once:
-    // they would score the same jobs twice and race on the status row.
-    //
-    // The read below is only a fast path. The insert is the real gate: a
-    // partial unique index makes the database reject a second active refresh
-    // for the same profile, so two concurrent requests cannot both start one.
-    const active = await refreshStatusService.getActiveRefreshForProfile(profileId);
-    if (active) {
-      throw new RefreshInProgressError(profileId);
-    }
+    const refresh = await recordActiveRefresh(refreshStatusService, profileId, () =>
+      refreshStatusService.newProfileRefreshStatus(profileId, claimant),
+    );
+    return refresh.id;
+  }
 
+  /**
+   * Runs a claimed refresh while heartbeating it, so stale-claim recovery
+   * never fails it however long it runs, in this process or any other. A
+   * beat that finds the row reaped marks the claim lost, and the run stops
+   * at its next checkpoint ({@link RunClaim.assertHeld}) instead of scoring
+   * on alongside the replacement refresh. A fetch already in progress is not
+   * interrupted; its results are dropped when it reports them.
+   */
+  async function runClaimed(
+    refreshId: number,
+    run: (claim: RunClaim) => Promise<void>,
+  ): Promise<void> {
+    const controller = new AbortController();
+    const claim: RunClaim = {
+      refreshId,
+      assertHeld: () => {
+        if (controller.signal.aborted) throw new ClaimLostError(refreshId);
+      },
+      lose: () => controller.abort(),
+    };
+    const stop = startHeartbeat(refreshStatusService, refreshId, claimant, {
+      logger,
+      onLost: claim.lose,
+      intervalMs: heartbeatMs,
+    });
     try {
-      const refresh = await refreshStatusService.newProfileRefreshStatus(profileId, claimant);
-      return refresh.id;
-    } catch (error) {
-      if (error instanceof ActiveRefreshExistsError) {
-        // Another request inserted between the check above and this insert.
-        throw new RefreshInProgressError(profileId);
-      }
-      throw error;
+      await run(claim);
+    } finally {
+      stop();
     }
   }
 
-  function makeTransition(refreshId: number) {
+  /** Writes the run's row; throws {@link ClaimLostError}, ending the run, once it is not ours. */
+  async function write(
+    claim: RunClaim,
+    options: Parameters<RefreshStatusService['updateRefreshStatus']>[2],
+  ): Promise<void> {
+    claim.assertHeld();
+    if (!(await refreshStatusService.updateRefreshStatus(claim.refreshId, claimant, options))) {
+      claim.lose();
+      throw new ClaimLostError(claim.refreshId);
+    }
+  }
+
+  function makeTransition(claim: RunClaim) {
     let state: RefreshState = { ...INITIAL_REFRESH_STATE };
     return async (event: RefreshEvent, description?: string): Promise<void> => {
       state = nextRefreshState(state, event);
-      await refreshStatusService.updateRefreshStatus(refreshId, claimant, {
+      await write(claim, {
         status: state.status,
         step: state.step,
         ...(description === undefined ? {} : { description }),
@@ -294,15 +337,16 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
   }
 
   /**
-   * Ends a run as FAILED. If even that write fails, the row stays active
-   * until the stale-refresh reaper ends it, so the error is logged rather
-   * than thrown out of a background run.
+   * Ends a run as FAILED, unless it lost its claim (the row is no longer
+   * ours to write). If the write fails, stale-claim recovery ends the row once
+   * the heartbeat stops, so the error is logged, not thrown.
    */
   async function markFailed(
     transition: (event: RefreshEvent, description?: string) => Promise<void>,
     context: { refreshId: number; profileId: number },
     error: unknown,
   ): Promise<void> {
+    if (error instanceof ClaimLostError) return;
     try {
       await transition({ type: 'FAILED' }, errorMessage(error));
     } catch (writeError) {
@@ -331,8 +375,9 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
     }
   }
 
-  async function runPipeline(refreshId: number, profile: Profile): Promise<void> {
-    const transition = makeTransition(refreshId);
+  async function runPipeline(claim: RunClaim, profile: Profile): Promise<void> {
+    const { refreshId } = claim;
+    const transition = makeTransition(claim);
 
     let scored = 0;
     let failed = 0;
@@ -358,15 +403,15 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
         query.keywords,
         query.geoId,
         async (fetchedJobs: Array<JobInput>) => {
+          claim.assertHeld();
           await transition({ type: 'JOBS_FETCHED' });
-          const result = await scoreFetchedJobs(profile, background, fetchedJobs);
+          const result = await scoreFetchedJobs(claim, profile, background, fetchedJobs);
           scored += result.scored;
           failed += result.failed;
         },
         async (status: string) => {
-          await refreshStatusService.updateRefreshStatus(refreshId, claimant, {
-            description: status,
-          });
+          claim.assertHeld();
+          await write(claim, { description: status });
         },
       );
 
@@ -381,14 +426,16 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
   }
 
   async function runRescore(
-    refreshId: number,
+    claim: RunClaim,
     profile: Profile,
     source: JobKnowledgeSource,
   ): Promise<void> {
-    const transition = makeTransition(refreshId);
+    const { refreshId } = claim;
+    const transition = makeTransition(claim);
     try {
       await transition({ type: 'STARTED' }, 'Checking for stale matches.');
       const background = await loadBackground(source);
+      claim.assertHeld();
 
       const keys = await profileJobService.getMatchKeysForProfile(profile.id);
       const staleIds = keys
@@ -403,7 +450,7 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
       // The current job rows: the posting text to score, and the hash the
       // row records for that text.
       const staleJobs = await jobService.getJobsByIds(staleIds);
-      const result = await scoreJobs(profile, background, staleJobs);
+      const result = await scoreJobs(claim, profile, background, staleJobs);
 
       if (result.scored === 0 && result.failed > 0) {
         throw new Error(
@@ -422,6 +469,7 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
   }
 
   async function scoreFetchedJobs(
+    claim: RunClaim,
     profile: Profile,
     background: RunBackground,
     fetchedJobs: Array<JobInput>,
@@ -436,15 +484,18 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
     // changed or their score is stale against the current knowledge version.
     const toScore = selectJobsToScore(savedJobs, matchKeys, background.version);
 
-    return scoreJobs(profile, background, toScore);
+    return scoreJobs(claim, profile, background, toScore);
   }
 
   /**
    * Retrieves background for each job, scores it and stores the matches.
    * Each row records the corpus version its chunks came from, so a corpus
    * change during the run leaves that row stale rather than mislabelled.
+   * A lost claim ends the batch: no further job is scored and nothing is
+   * stored.
    */
   async function scoreJobs(
+    claim: RunClaim,
     profile: Profile,
     background: RunBackground,
     toScore: readonly JobToScore[],
@@ -454,6 +505,7 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
       matchConcurrency,
       async (job): Promise<EvaluationResult> => {
         try {
+          claim.assertHeld();
           // A job whose background cannot be retrieved fails on its own,
           // rather than being scored as if the candidate had none.
           const retrieved = background.source
@@ -468,6 +520,7 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
               chunks,
             }),
           });
+          claim.assertHeld();
 
           logger.info(
             {
@@ -501,6 +554,8 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
             },
           };
         } catch (error) {
+          // A lost claim ends the whole run, not just this job.
+          if (error instanceof ClaimLostError) throw error;
           // One job failing to score must not abandon the rest of the batch.
           logger.error(
             { err: error, profileId: profile.id, jobId: job.id },
@@ -515,6 +570,7 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
       .filter((entry): entry is { ok: true; row: InsertProfileJobInput } => entry.ok)
       .map((entry) => entry.row);
 
+    claim.assertHeld();
     await profileJobService.bulkInsertProfileJobs(rows);
 
     return { scored: rows.length, failed: evaluations.length - rows.length };

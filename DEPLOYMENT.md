@@ -101,7 +101,7 @@ policy and the watch paths.
    - `CORS_ORIGINS` - **Required in production.** Comma-separated browser origins allowed to call the API, e.g. `https://ray-manguino.dev,https://six7swe.up.railway.app` (scheme and host, no path). The literal lives in `.railway/railway.ts`, so an apply sets it. Unset or invalid makes the server refuse to start rather than allow every origin. Only `NODE_ENV=development` or `test` allows every origin
    - `SUPABASE_URL` - Supabase project URL; the JWKS endpoint is derived from it. Required for the job-hunter routes
    - `SUPABASE_JWKS_URL` - Optional explicit JWKS endpoint
-   - `JOB_REFRESH_STALE_MINUTES` - Optional; how long a refresh may run before it is considered abandoned (default 30)
+   - `JOB_REFRESH_STALE_MINUTES` - Optional; how long a refresh may go without a heartbeat before it is considered abandoned (default 30, at least 3)
    - `OWNER_AUTH_ID` - The knowledge base owner's Supabase auth user id; the same value as on the knowledge service. Only this user gets the Knowledge page (`/hunter/knowledge`); everyone else gets 403 on `/knowledge/*`
    - `KNOWLEDGE_URL` - Written in `railway.ts` as `http://six7sweknowledge.railway.internal:3100`, the knowledge service's private address. **Required in production** with `KNOWLEDGE_SERVICE_KEY`: chat, the fit check, `/resume` and the job hunter all retrieve from the knowledge service, and the server refuses to start without them
    - `KNOWLEDGE_SERVICE_KEY` - The knowledge service's `KNOWLEDGE_SERVICE_KEY` (same value); opens retrieval, `/version` and `/resume.pdf`

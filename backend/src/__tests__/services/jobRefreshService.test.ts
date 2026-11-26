@@ -5,8 +5,15 @@ import {
   InvalidProfileLocationError,
 } from '../../services/jobHunt/jobRefreshService';
 import { ActiveRefreshExistsError } from '../../domain/jobHunt';
-import type { Profile } from '../../db/schema/jobHunt';
+import type { Job, Profile } from '../../db/schema/jobHunt';
+import type { JobInput } from '../../db/api/job';
 import type { FastifyBaseLogger } from 'fastify';
+import type { JobKnowledgeSource } from '../../services/jobHunt/knowledgeSource';
+import { matchJob } from '../../services/ai/jobMatch';
+
+jest.mock('../../services/ai/jobMatch', () => ({ matchJob: jest.fn() }));
+
+const matchJobMock = matchJob as jest.MockedFunction<typeof matchJob>;
 
 /**
  * Guards the refresh single-flight contract.
@@ -159,5 +166,235 @@ describe('job refresh geo id validation', () => {
     const service = buildService(stubs);
 
     await expect(service.start({ profileId: 1 })).resolves.toEqual({ refreshStatusId: 42 });
+  });
+});
+
+describe('job refresh heartbeat', () => {
+  it('claims the row as this service and heartbeats it until the run ends', async () => {
+    let finishFetch: () => void = () => undefined;
+    const fetchDone = new Promise<void>((resolve) => {
+      finishFetch = resolve;
+    });
+    const heartbeats: Array<[number, string]> = [];
+    let beat: () => void = () => undefined;
+    const beaten = new Promise<void>((resolve) => {
+      beat = resolve;
+    });
+    const updates: string[] = [];
+    const newProfileRefreshStatus = jest.fn().mockResolvedValue({ id: 42 });
+
+    const service = createJobRefreshService({
+      // A long run that writes no status while it lasts, like a scoring phase.
+      jobFetchService: { runJobFetch: () => fetchDone },
+      jobService: {} as never,
+      profileJobService: {} as never,
+      profileService: { getProfileById: jest.fn().mockResolvedValue(makeProfile()) } as never,
+      refreshStatusService: {
+        getActiveRefreshForProfile: jest.fn().mockResolvedValue(null),
+        newProfileRefreshStatus,
+        updateRefreshStatus: async (_id: number, by: string, options: { status?: string }) => {
+          if (options.status) updates.push(`${by}:${options.status}`);
+          return true;
+        },
+        heartbeatRefresh: async (id: number, claimedBy: string) => {
+          heartbeats.push([id, claimedBy]);
+          beat();
+          return true;
+        },
+      } as never,
+      knowledge: { source: null, ownerAuthId: null },
+      logger,
+      claimant: 'api-replica-1',
+      heartbeatMs: 5,
+    });
+
+    await service.start({ profileId: 1 });
+    expect(newProfileRefreshStatus).toHaveBeenCalledWith(1, 'api-replica-1');
+
+    await beaten;
+    expect(heartbeats[0]).toEqual([42, 'api-replica-1']);
+
+    finishFetch();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(updates).toContain('api-replica-1:COMPLETED');
+    const afterRun = heartbeats.length;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(heartbeats).toHaveLength(afterRun);
+  });
+});
+
+describe('job refresh claim fencing', () => {
+  it('stops writing once the row is no longer its claim', async () => {
+    const writes: Array<{ status?: string }> = [];
+    let ended: () => void = () => undefined;
+    const runEnded = new Promise<void>((resolve) => {
+      ended = resolve;
+    });
+    const service = createJobRefreshService({
+      jobFetchService: { runJobFetch: async () => ended() },
+      jobService: {} as never,
+      profileJobService: {} as never,
+      profileService: { getProfileById: jest.fn().mockResolvedValue(makeProfile()) } as never,
+      refreshStatusService: {
+        getActiveRefreshForProfile: jest.fn().mockResolvedValue(null),
+        newProfileRefreshStatus: jest.fn().mockResolvedValue({ id: 42 }),
+        // Reaped: every fenced write matches no row.
+        updateRefreshStatus: async (_id: number, _by: string, options: { status?: string }) => {
+          writes.push(options);
+          return false;
+        },
+      } as never,
+      knowledge: { source: null, ownerAuthId: null },
+      logger,
+    });
+
+    await service.start({ profileId: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // The first write (STARTED) found the claim gone: no fetch, no FAILED write.
+    expect(writes).toEqual([expect.objectContaining({ status: 'IN_PROGRESS' })]);
+    await expect(Promise.race([runEnded.then(() => 'fetched'), 'not fetched'])).resolves.toBe(
+      'not fetched',
+    );
+  });
+});
+
+describe('job refresh claim loss', () => {
+  const OWNER_SUB = 'owner-sub';
+  const MATCH = {
+    score: 80,
+    band: 'TOP' as const,
+    analysis: 'Strong fit',
+    matchedSkills: ['TypeScript'],
+    gaps: [],
+    summary: 'Good match',
+  };
+
+  function makeJob(id: number): Job {
+    return {
+      id,
+      sourceId: 'LINKEDIN',
+      sourceJobId: `src-${id}`,
+      link: `https://example.com/jobs/${id}`,
+      company: 'Acme',
+      position: `Engineer ${id}`,
+      description: 'Build TypeScript services',
+      location: 'Remote',
+      datePosted: null,
+      hash: `hash-${id}`,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+  }
+
+  const jobs = [1, 2, 3, 4].map(makeJob);
+
+  function makeKnowledge(version: number): JobKnowledgeSource {
+    return {
+      getVersion: jest.fn().mockResolvedValue(version),
+      retrieve: jest.fn().mockResolvedValue({ version, chunks: [] }),
+      getBackgroundSummary: jest.fn().mockResolvedValue([]),
+      getSummary: jest.fn().mockResolvedValue({ documentCount: 1, updatedAt: null }),
+    };
+  }
+
+  /**
+   * A run whose heartbeat finds the row reaped while the second of four jobs
+   * is being scored: the first job scores normally, and the second's
+   * evaluation only returns once the loss has been reported.
+   */
+  function build() {
+    let reportLoss: () => void = () => undefined;
+    const lost = new Promise<void>((resolve) => {
+      reportLoss = resolve;
+    });
+    let endRun: () => void = () => undefined;
+    const runEnded = new Promise<void>((resolve) => {
+      endRun = resolve;
+    });
+    const statuses: string[] = [];
+    const bulkInsertProfileJobs = jest.fn(async () => []);
+
+    matchJobMock.mockReset();
+    matchJobMock
+      .mockResolvedValueOnce(MATCH)
+      .mockImplementationOnce(async () => {
+        await lost;
+        // Lets the heartbeat's loss handler run before the evaluation returns.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        return MATCH;
+      })
+      .mockResolvedValue(MATCH);
+
+    const service = createJobRefreshService({
+      jobFetchService: {
+        runJobFetch: async (_keywords, _geo, onJobsFetched) => {
+          await onJobsFetched(jobs as unknown as JobInput[]);
+        },
+      },
+      jobService: {
+        bulkInsertJobs: async () => jobs,
+        getJobsByIds: async (ids: number[]) => jobs.filter((job) => ids.includes(job.id)),
+      } as never,
+      profileJobService: {
+        // Every job was scored against an older corpus, so a rescore redoes them all.
+        getMatchKeysForProfile: async () =>
+          jobs.map((job) => ({ jobId: job.id, jobHash: 'old', knowledgeVersion: 1 })),
+        bulkInsertProfileJobs,
+      } as never,
+      profileService: {
+        getProfileById: async () => makeProfile(),
+        getProfileOwnerAuthId: async () => OWNER_SUB,
+      } as never,
+      refreshStatusService: {
+        getActiveRefreshForProfile: async () => null,
+        newProfileRefreshStatus: async () => ({ id: 42 }),
+        updateRefreshStatus: async (_id: number, _by: string, options: { status?: string }) => {
+          if (options.status) statuses.push(options.status);
+          return true;
+        },
+        heartbeatRefresh: async () => {
+          // Holds the claim until the second job is being scored, then finds it reaped.
+          if (matchJobMock.mock.calls.length < 2) return true;
+          reportLoss();
+          return false;
+        },
+      } as never,
+      knowledge: { source: makeKnowledge(2), ownerAuthId: OWNER_SUB },
+      logger: {
+        ...logger,
+        error: (_obj: object, msg: string) => {
+          if (msg === 'Job refresh failed' || msg === 'Job rescore failed') endRun();
+        },
+      } as unknown as FastifyBaseLogger,
+      matchConcurrency: 1,
+      heartbeatMs: 5,
+    });
+
+    return { service, runEnded, statuses, bulkInsertProfileJobs };
+  }
+
+  it('stops scoring a refresh and stores nothing once the claim is lost', async () => {
+    const { service, runEnded, statuses, bulkInsertProfileJobs } = build();
+
+    await service.start({ profileId: 1 });
+    await runEnded;
+
+    // Jobs 3 and 4 are never evaluated.
+    expect(matchJobMock).toHaveBeenCalledTimes(2);
+    expect(bulkInsertProfileJobs).not.toHaveBeenCalled();
+    expect(statuses).not.toContain('FAILED');
+    expect(statuses).not.toContain('COMPLETED');
+  });
+
+  it('stops a rescore the same way', async () => {
+    const { service, runEnded, statuses, bulkInsertProfileJobs } = build();
+
+    await expect(service.rescore({ profileId: 1 })).resolves.toEqual({ refreshStatusId: 42 });
+    await runEnded;
+
+    expect(matchJobMock).toHaveBeenCalledTimes(2);
+    expect(bulkInsertProfileJobs).not.toHaveBeenCalled();
+    expect(statuses).not.toContain('FAILED');
+    expect(statuses).not.toContain('COMPLETED');
   });
 });
