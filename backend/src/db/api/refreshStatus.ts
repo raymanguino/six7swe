@@ -123,13 +123,21 @@ export async function claimNextRefresh(claimedBy: string): Promise<RefreshStatus
  * is no longer an active claim of `claimedBy` (it finished, or recovery
  * failed it), in which case the runner should stop heartbeating.
  */
+/** A heartbeat's own query limit: well under the 60 s beat interval. */
+const HEARTBEAT_STATEMENT_TIMEOUT_MS = 30_000;
+
 export async function heartbeatRefresh(id: number, claimedBy: string): Promise<boolean> {
-  const rows = await db
-    .update(refreshStatus)
-    .set({ heartbeatAt: new Date() })
-    .where(heldBy(id, claimedBy))
-    .returning({ id: refreshStatus.id });
-  return rows.length > 0;
+  // Bounded in the database, so a slow beat fails, and frees its connection,
+  // instead of blocking every later beat (they run one at a time).
+  return db.transaction(async (tx) => {
+    await tx.execute(sql.raw(`set local statement_timeout = ${HEARTBEAT_STATEMENT_TIMEOUT_MS}`));
+    const rows = await tx
+      .update(refreshStatus)
+      .set({ heartbeatAt: new Date() })
+      .where(heldBy(id, claimedBy))
+      .returning({ id: refreshStatus.id });
+    return rows.length > 0;
+  });
 }
 
 export async function getRefreshStatus(
