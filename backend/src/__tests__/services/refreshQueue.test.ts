@@ -121,12 +121,22 @@ describe('refresh heartbeat', () => {
     expect(onLost).not.toHaveBeenCalled();
   });
 
-  it('skips a tick while a beat is still in flight', async () => {
-    const service = { heartbeatRefresh: jest.fn(() => new Promise<boolean>(() => undefined)) };
+  it('gives up a hung beat so the next tick beats again', async () => {
+    const service = {
+      heartbeatRefresh: jest
+        .fn()
+        .mockReturnValueOnce(new Promise<boolean>(() => undefined))
+        .mockResolvedValue(true),
+    };
     const stop = startHeartbeat(service, 5, 'me', { logger, onLost, intervalMs: 1_000 });
 
     await jest.advanceTimersByTimeAsync(3_000);
-    expect(service.heartbeatRefresh).toHaveBeenCalledTimes(1);
+    expect(service.heartbeatRefresh).toHaveBeenCalledTimes(3);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn.mock.calls[0][0]).toMatchObject({
+      err: expect.objectContaining({ message: expect.stringContaining('timed out') }),
+    });
+    expect(onLost).not.toHaveBeenCalled();
     stop();
   });
 

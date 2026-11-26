@@ -116,8 +116,9 @@ export interface HeartbeatOptions {
  * Heartbeats refresh `id` every `intervalMs` until the returned stop function
  * is called, or until the row is no longer this claimant's active claim, when
  * it stops and calls `onLost`. A failed beat is only logged and the next one
- * tries again. The timer is unref'd, so it never keeps a process alive on its
- * own.
+ * tries again. A beat that has not answered in half an interval is given up
+ * (logged as failed), so a hung database call cannot stop the heartbeat for
+ * good. The timers are unref'd, so they never keep a process alive on their own.
  */
 export function startHeartbeat(
   service: Pick<RefreshStatusService, 'heartbeatRefresh'>,
@@ -137,11 +138,21 @@ export function startHeartbeat(
     if (inFlight) return;
     inFlight = true;
     let lost = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<never>((_, reject) => {
+      timeout = setTimeout(
+        () => reject(new Error(`Refresh heartbeat timed out after ${intervalMs / 2} ms`)),
+        intervalMs / 2,
+      );
+      timeout.unref();
+    });
     try {
-      lost = !(await service.heartbeatRefresh(id, claimedBy)) && !stopped;
+      const held = await Promise.race([service.heartbeatRefresh(id, claimedBy), timedOut]);
+      lost = !held && !stopped;
     } catch (error) {
       if (!stopped) logger.warn({ err: error, refreshId: id }, 'Refresh heartbeat failed');
     } finally {
+      clearTimeout(timeout);
       inFlight = false;
     }
     if (lost) {
