@@ -238,7 +238,11 @@ export async function getRefreshStatus(
       return reply.code(404).send({ error: 'Refresh status not found' });
     }
 
-    return reply.code(200).send({ refreshStatus });
+    // The claim columns (which process runs it) stay internal.
+    const { id, status, step, description, createdAt, updatedAt } = refreshStatus;
+    return reply
+      .code(200)
+      .send({ refreshStatus: { id, profileId, status, step, description, createdAt, updatedAt } });
   } catch (error) {
     if (error instanceof ProfileNotFoundError) {
       return reply.code(404).send({ error: 'Refresh status not found' });
