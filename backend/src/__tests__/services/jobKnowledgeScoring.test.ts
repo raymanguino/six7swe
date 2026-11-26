@@ -122,13 +122,15 @@ function terminalStatus(failTerminalWrite: boolean): { update: jest.Mock; done: 
   const done = new Promise<string>((r) => {
     resolve = r;
   });
-  const update = jest.fn(async (_id: number, patch: { status?: string; description?: string }) => {
-    if (patch.status === 'COMPLETED' || patch.status === 'FAILED') {
-      resolve(`${patch.status}: ${patch.description ?? ''}`);
-      if (failTerminalWrite) throw new Error('database unavailable');
-    }
-    return true;
-  });
+  const update = jest.fn(
+    async (_id: number, _by: string, patch: { status?: string; description?: string }) => {
+      if (patch.status === 'COMPLETED' || patch.status === 'FAILED') {
+        resolve(`${patch.status}: ${patch.description ?? ''}`);
+        if (failTerminalWrite) throw new Error('database unavailable');
+      }
+      return true;
+    },
+  );
   return { update, done };
 }
 

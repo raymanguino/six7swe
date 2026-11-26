@@ -112,6 +112,13 @@ export const refreshStatus = pgTable('refresh_status', {
   description: varchar('description', { length: 512 }),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
+  // The queue (#253). A PENDING row with no claim is queued; a claimed row is
+  // being run by the process `claimed_by` names, which moves `heartbeat_at`
+  // while it runs. Recovery fails a claim whose heartbeat has gone stale
+  // (`db/api/refreshStatus.ts`), so a live run is never reaped.
+  claimedBy: varchar('claimed_by', { length: 128 }),
+  claimedAt: timestamp('claimed_at'),
+  heartbeatAt: timestamp('heartbeat_at'),
 }, (table) => ({
   // At most one refresh may be active for a profile at a time.
   //
@@ -126,6 +133,10 @@ export const refreshStatus = pgTable('refresh_status', {
   activeProfileUnique: uniqueIndex('refresh_status_active_profile_unique')
     .on(table.profileId)
     .where(sql`${table.status} in ('PENDING', 'IN_PROGRESS')`),
+  // The claim reads the oldest queued row.
+  queuedIdx: index('refresh_status_queued_idx')
+    .on(table.id)
+    .where(sql`${table.status} = 'PENDING' and ${table.claimedAt} is null`),
 }));
 
 /** A knowledge document cited as evidence for a match. */
