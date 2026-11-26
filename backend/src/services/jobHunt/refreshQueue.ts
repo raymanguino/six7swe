@@ -101,19 +101,31 @@ interface HeartbeatLogger {
   warn(obj: object, msg: string): void;
 }
 
+export interface HeartbeatOptions {
+  logger: HeartbeatLogger;
+  /**
+   * Called once when a beat finds the row is no longer this claimant's
+   * active claim (it was reaped). The run must stop: its work would overlap
+   * the replacement refresh.
+   */
+  onLost: () => void;
+  intervalMs?: number;
+}
+
 /**
  * Heartbeats refresh `id` every `intervalMs` until the returned stop function
- * is called, or until the row is no longer this claimant's active claim. A
- * failed beat is logged and the next one tries again. The timer is unref'd,
- * so it never keeps a process alive on its own.
+ * is called, or until the row is no longer this claimant's active claim, when
+ * it stops and calls `onLost`. A failed beat is only logged and the next one
+ * tries again. The timer is unref'd, so it never keeps a process alive on its
+ * own.
  */
 export function startHeartbeat(
   service: Pick<RefreshStatusService, 'heartbeatRefresh'>,
   id: number,
   claimedBy: string,
-  logger: HeartbeatLogger,
-  intervalMs: number = REFRESH_HEARTBEAT_MS,
+  options: HeartbeatOptions,
 ): () => void {
+  const { logger, onLost, intervalMs = REFRESH_HEARTBEAT_MS } = options;
   let stopped = false;
   let inFlight = false;
   const stop = (): void => {
@@ -124,13 +136,17 @@ export function startHeartbeat(
     // A slow beat is not overlapped by the next one.
     if (inFlight) return;
     inFlight = true;
+    let lost = false;
     try {
-      const held = await service.heartbeatRefresh(id, claimedBy);
-      if (!held) stop();
+      lost = !(await service.heartbeatRefresh(id, claimedBy)) && !stopped;
     } catch (error) {
       if (!stopped) logger.warn({ err: error, refreshId: id }, 'Refresh heartbeat failed');
     } finally {
       inFlight = false;
+    }
+    if (lost) {
+      stop();
+      onLost();
     }
   };
   const timer = setInterval(() => void beat(), intervalMs);

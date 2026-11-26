@@ -70,16 +70,18 @@ describe('refresh queue', () => {
 
 describe('refresh heartbeat', () => {
   const logger = { warn: jest.fn() };
+  const onLost = jest.fn();
 
   beforeEach(() => {
     jest.useFakeTimers();
     logger.warn.mockReset();
+    onLost.mockReset();
   });
   afterEach(() => jest.useRealTimers());
 
   it('beats every interval until stopped', async () => {
     const service = { heartbeatRefresh: jest.fn().mockResolvedValue(true) };
-    const stop = startHeartbeat(service, 5, 'me', logger, 1_000);
+    const stop = startHeartbeat(service, 5, 'me', { logger, onLost, intervalMs: 1_000 });
 
     await jest.advanceTimersByTimeAsync(3_000);
     expect(service.heartbeatRefresh).toHaveBeenCalledTimes(3);
@@ -88,19 +90,40 @@ describe('refresh heartbeat', () => {
     stop();
     await jest.advanceTimersByTimeAsync(3_000);
     expect(service.heartbeatRefresh).toHaveBeenCalledTimes(3);
+    expect(onLost).not.toHaveBeenCalled();
   });
 
-  it('stops once the row is no longer its claim', async () => {
+  it('stops and reports the loss once the row is no longer its claim', async () => {
     const service = { heartbeatRefresh: jest.fn().mockResolvedValue(false) };
-    startHeartbeat(service, 5, 'me', logger, 1_000);
+    startHeartbeat(service, 5, 'me', { logger, onLost, intervalMs: 1_000 });
 
     await jest.advanceTimersByTimeAsync(5_000);
     expect(service.heartbeatRefresh).toHaveBeenCalledTimes(1);
+    expect(onLost).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not report a loss found after it was stopped', async () => {
+    let answer: (held: boolean) => void = () => undefined;
+    const service = {
+      heartbeatRefresh: jest.fn(
+        () =>
+          new Promise<boolean>((resolve) => {
+            answer = resolve;
+          }),
+      ),
+    };
+    const stop = startHeartbeat(service, 5, 'me', { logger, onLost, intervalMs: 1_000 });
+
+    await jest.advanceTimersByTimeAsync(1_000);
+    stop();
+    answer(false);
+    await jest.advanceTimersByTimeAsync(1_000);
+    expect(onLost).not.toHaveBeenCalled();
   });
 
   it('skips a tick while a beat is still in flight', async () => {
     const service = { heartbeatRefresh: jest.fn(() => new Promise<boolean>(() => undefined)) };
-    const stop = startHeartbeat(service, 5, 'me', logger, 1_000);
+    const stop = startHeartbeat(service, 5, 'me', { logger, onLost, intervalMs: 1_000 });
 
     await jest.advanceTimersByTimeAsync(3_000);
     expect(service.heartbeatRefresh).toHaveBeenCalledTimes(1);
@@ -111,11 +134,12 @@ describe('refresh heartbeat', () => {
     const service = {
       heartbeatRefresh: jest.fn().mockRejectedValueOnce(new Error('blip')).mockResolvedValue(true),
     };
-    const stop = startHeartbeat(service, 5, 'me', logger, 1_000);
+    const stop = startHeartbeat(service, 5, 'me', { logger, onLost, intervalMs: 1_000 });
 
     await jest.advanceTimersByTimeAsync(2_000);
     expect(logger.warn).toHaveBeenCalledTimes(1);
     expect(service.heartbeatRefresh).toHaveBeenCalledTimes(2);
+    expect(onLost).not.toHaveBeenCalled();
     stop();
   });
 });
