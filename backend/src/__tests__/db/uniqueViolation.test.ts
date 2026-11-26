@@ -122,13 +122,13 @@ describe('newProfileRefreshStatus with a wrapped unique violation', () => {
   it('reports an active refresh', async () => {
     insertRejects(wrapped('23505'));
 
-    await expect(newProfileRefreshStatus(3)).rejects.toBeInstanceOf(ActiveRefreshExistsError);
+    await expect(newProfileRefreshStatus(3, 'api')).rejects.toBeInstanceOf(ActiveRefreshExistsError);
   });
 
   it('rethrows a wrapped error that is not a unique violation', async () => {
     const error = wrapped('23503');
     insertRejects(error);
 
-    await expect(newProfileRefreshStatus(3)).rejects.toBe(error);
+    await expect(newProfileRefreshStatus(3, 'api')).rejects.toBe(error);
   });
 });

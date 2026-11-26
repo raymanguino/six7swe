@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+import { hostname } from 'node:os';
 import type { RetrievedChunkDto } from '@six7swe/knowledge-types';
 import type { FastifyBaseLogger } from 'fastify';
 import type { JobService, JobInput } from '../../db/api/job';
@@ -119,6 +121,8 @@ export interface JobRefreshServiceOptions {
   knowledge: JobKnowledgeAccess;
   logger: FastifyBaseLogger;
   matchConcurrency?: number;
+  /** Who this service's runs are claimed by (`refresh_status.claimed_by`). */
+  claimant?: string;
 }
 
 /** What every job in a run is scored against. */
@@ -170,6 +174,7 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
     knowledge,
     logger,
     matchConcurrency = DEFAULT_MATCH_CONCURRENCY,
+    claimant = `${hostname()}:${process.pid}:${randomBytes(4).toString('hex')}`.slice(0, 128),
   } = options;
 
   async function loadProfile(profileId: number): Promise<Profile> {
@@ -265,7 +270,7 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
     }
 
     try {
-      const refresh = await refreshStatusService.newProfileRefreshStatus(profileId);
+      const refresh = await refreshStatusService.newProfileRefreshStatus(profileId, claimant);
       return refresh.id;
     } catch (error) {
       if (error instanceof ActiveRefreshExistsError) {
@@ -280,7 +285,7 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
     let state: RefreshState = { ...INITIAL_REFRESH_STATE };
     return async (event: RefreshEvent, description?: string): Promise<void> => {
       state = nextRefreshState(state, event);
-      await refreshStatusService.updateRefreshStatus(refreshId, {
+      await refreshStatusService.updateRefreshStatus(refreshId, claimant, {
         status: state.status,
         step: state.step,
         ...(description === undefined ? {} : { description }),
@@ -359,7 +364,9 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
           failed += result.failed;
         },
         async (status: string) => {
-          await refreshStatusService.updateRefreshStatus(refreshId, { description: status });
+          await refreshStatusService.updateRefreshStatus(refreshId, claimant, {
+            description: status,
+          });
         },
       );
 

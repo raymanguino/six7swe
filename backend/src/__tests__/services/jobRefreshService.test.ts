@@ -80,7 +80,7 @@ describe('job refresh single-flight', () => {
     const result = await service.start({ profileId: 1 });
 
     expect(result).toEqual({ refreshStatusId: 42 });
-    expect(stubs.newProfileRefreshStatus).toHaveBeenCalledWith(1);
+    expect(stubs.newProfileRefreshStatus).toHaveBeenCalledWith(1, expect.any(String));
   });
 
   it('rejects a second refresh while one is already active', async () => {

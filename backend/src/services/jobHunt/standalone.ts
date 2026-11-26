@@ -73,14 +73,22 @@ export function staleRefreshMinutes(raw: string | undefined): number {
     : DEFAULT_STALE_MINUTES;
 }
 
+/** How long a refresh may stay queued with no worker claiming it before it is failed. */
+const QUEUED_REFRESH_MAX_MS = 6 * 3_600_000;
+
 /**
- * Marks refreshes abandoned by a previous process as failed.
+ * Marks refreshes abandoned by a previous process as failed, and refreshes
+ * left queued for {@link QUEUED_REFRESH_MAX_MS}.
  *
  * Without this a restart during a refresh leaves the row IN_PROGRESS forever.
  */
 export async function reapStaleRefreshes(
   staleMinutes = staleRefreshMinutes(process.env.JOB_REFRESH_STALE_MINUTES),
 ): Promise<number> {
-  const cutoff = new Date(Date.now() - staleMinutes * 60_000);
-  return refreshStatusService.failStaleRefreshes(cutoff);
+  const staleMs = staleMinutes * 60_000;
+  const now = Date.now();
+  return refreshStatusService.failStaleRefreshes(
+    new Date(now - staleMs),
+    new Date(now - Math.max(QUEUED_REFRESH_MAX_MS, 2 * staleMs)),
+  );
 }
