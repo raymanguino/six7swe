@@ -161,3 +161,92 @@ describe('job refresh geo id validation', () => {
     await expect(service.start({ profileId: 1 })).resolves.toEqual({ refreshStatusId: 42 });
   });
 });
+
+describe('job refresh heartbeat', () => {
+  it('claims the row as this service and heartbeats it until the run ends', async () => {
+    let finishFetch: () => void = () => undefined;
+    const fetchDone = new Promise<void>((resolve) => {
+      finishFetch = resolve;
+    });
+    const heartbeats: Array<[number, string]> = [];
+    let beat: () => void = () => undefined;
+    const beaten = new Promise<void>((resolve) => {
+      beat = resolve;
+    });
+    const updates: string[] = [];
+    const newProfileRefreshStatus = jest.fn().mockResolvedValue({ id: 42 });
+
+    const service = createJobRefreshService({
+      // A long run that writes no status while it lasts, like a scoring phase.
+      jobFetchService: { runJobFetch: () => fetchDone },
+      jobService: {} as never,
+      profileJobService: {} as never,
+      profileService: { getProfileById: jest.fn().mockResolvedValue(makeProfile()) } as never,
+      refreshStatusService: {
+        getActiveRefreshForProfile: jest.fn().mockResolvedValue(null),
+        newProfileRefreshStatus,
+        updateRefreshStatus: async (_id: number, by: string, options: { status?: string }) => {
+          if (options.status) updates.push(`${by}:${options.status}`);
+          return true;
+        },
+        heartbeatRefresh: async (id: number, claimedBy: string) => {
+          heartbeats.push([id, claimedBy]);
+          beat();
+          return true;
+        },
+      } as never,
+      knowledge: { source: null, ownerAuthId: null },
+      logger,
+      claimant: 'api-replica-1',
+      heartbeatMs: 5,
+    });
+
+    await service.start({ profileId: 1 });
+    expect(newProfileRefreshStatus).toHaveBeenCalledWith(1, 'api-replica-1');
+
+    await beaten;
+    expect(heartbeats[0]).toEqual([42, 'api-replica-1']);
+
+    finishFetch();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(updates).toContain('api-replica-1:COMPLETED');
+    const afterRun = heartbeats.length;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(heartbeats).toHaveLength(afterRun);
+  });
+});
+
+describe('job refresh claim fencing', () => {
+  it('stops writing once the row is no longer its claim', async () => {
+    const writes: Array<{ status?: string }> = [];
+    let ended: () => void = () => undefined;
+    const runEnded = new Promise<void>((resolve) => {
+      ended = resolve;
+    });
+    const service = createJobRefreshService({
+      jobFetchService: { runJobFetch: async () => ended() },
+      jobService: {} as never,
+      profileJobService: {} as never,
+      profileService: { getProfileById: jest.fn().mockResolvedValue(makeProfile()) } as never,
+      refreshStatusService: {
+        getActiveRefreshForProfile: jest.fn().mockResolvedValue(null),
+        newProfileRefreshStatus: jest.fn().mockResolvedValue({ id: 42 }),
+        // Reaped: every fenced write matches no row.
+        updateRefreshStatus: async (_id: number, _by: string, options: { status?: string }) => {
+          writes.push(options);
+          return false;
+        },
+      } as never,
+      knowledge: { source: null, ownerAuthId: null },
+      logger,
+    });
+
+    await service.start({ profileId: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // The first write (STARTED) found the claim gone: no fetch, no FAILED write.
+    expect(writes).toEqual([expect.objectContaining({ status: 'IN_PROGRESS' })]);
+    await expect(Promise.race([runEnded.then(() => 'fetched'), 'not fetched'])).resolves.toBe(
+      'not fetched',
+    );
+  });
+});
