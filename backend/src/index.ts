@@ -14,7 +14,7 @@ import authPlugin from './plugins/auth';
 import routes from './routes';
 import { PUBLIC_ROUTE } from './routes/access';
 import { assertServerRoleIsSafe } from './services/databaseRole';
-import { reapStaleRefreshes, startStaleRefreshReaper } from './services/jobHunt/standalone';
+import { startStaleRefreshReaper } from './services/jobHunt/staleRefreshReaper';
 import { setRetrievalLogger } from './services/knowledgeRetrieval';
 import Fastify from 'fastify';
 import path from 'path';
@@ -124,11 +124,7 @@ const start = async () => {
 
     // Refreshes abandoned by a crashed process (no heartbeat for
     // JOB_REFRESH_STALE_MINUTES) would otherwise stay active forever.
-    const reaped = await reapStaleRefreshes();
-    if (reaped > 0) {
-      fastify.log.warn({ reaped }, 'Marked stale job refreshes as failed');
-    }
-    startStaleRefreshReaper(fastify.log);
+    await startStaleRefreshReaper(fastify.log);
 
     await fastify.listen({ port, host });
     fastify.log.info(`Server listening on port ${port}`);

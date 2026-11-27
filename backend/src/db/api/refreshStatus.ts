@@ -41,6 +41,7 @@ function heldBy(id: number, claimedBy: string) {
 async function insertActiveRefresh(
   profileId: number,
   claim: Pick<RefreshStatusType, 'claimedBy' | 'claimedAt' | 'heartbeatAt'>,
+  description = '',
 ): Promise<RefreshStatusType> {
   // Every refresh_status time is written from here, never by the database's
   // now(), so they all compare in UTC whatever the session time zone.
@@ -54,7 +55,7 @@ async function insertActiveRefresh(
         updatedAt: now,
         status: 'PENDING',
         step: 'PENDING',
-        description: '',
+        description,
         ...claim,
       })
       .returning();
@@ -90,8 +91,15 @@ export async function newProfileRefreshStatus(
  * profile already has an active (queued or running) refresh.
  */
 export async function enqueueRefresh(profileId: number): Promise<RefreshStatusType> {
-  return insertActiveRefresh(profileId, { claimedBy: null, claimedAt: null, heartbeatAt: null });
+  return insertActiveRefresh(
+    profileId,
+    { claimedBy: null, claimedAt: null, heartbeatAt: null },
+    QUEUED_DESCRIPTION,
+  );
 }
+
+/** What a queued row reports until a worker starts it, so a missing worker shows. */
+export const QUEUED_DESCRIPTION = 'Queued; waiting for the job worker to start it.';
 
 /**
  * Claims the oldest queued refresh for `claimedBy`, or returns null when none
@@ -207,7 +215,9 @@ export async function failStaleRefreshes(olderThan: Date, queuedBefore: Date): P
     .set({
       status: 'FAILED',
       step: 'PENDING',
-      description: 'Refresh did not complete; the process running it stopped before it finished.',
+      description: sql`case when ${refreshStatus.claimedAt} is null and ${refreshStatus.status} = 'PENDING'
+        then 'No job worker started this refresh. Try again later.'
+        else 'Refresh did not complete; the process running it stopped before it finished.' end`,
       updatedAt: new Date(),
     })
     .where(

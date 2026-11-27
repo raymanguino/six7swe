@@ -1,8 +1,6 @@
 import 'dotenv/config';
-import {
-  createStandaloneJobRefreshService,
-  reapStaleRefreshes,
-} from '../src/services/jobHunt/standalone';
+import { createStandaloneJobRefreshService } from '../src/services/jobHunt/standalone';
+import { reapStaleRefreshes } from '../src/services/jobHunt/staleRefreshReaper';
 import * as refreshStatusService from '../src/db/api/refreshStatus';
 import type { RefreshUpdateStatus } from '../src/db/schema/jobHunt';
 import { dropMigrationUrl, MIGRATION_URL_WARNING } from '../src/config/migrationUrl';
