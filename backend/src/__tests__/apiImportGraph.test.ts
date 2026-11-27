@@ -16,7 +16,12 @@ const srcRoot = path.join(backendRoot, 'src');
 
 const compilerOptions = ((): ts.CompilerOptions => {
   const configPath = path.join(backendRoot, 'tsconfig.json');
-  const { config } = ts.readConfigFile(configPath, (file) => readFileSync(file, 'utf8'));
+  const { config, error } = ts.readConfigFile(configPath, (file) => readFileSync(file, 'utf8'));
+  if (error) {
+    throw new Error(
+      `Cannot read ${configPath}: ${ts.flattenDiagnosticMessageText(error.messageText, '\n')}`,
+    );
+  }
   return ts.parseJsonConfigFileContent(config, ts.sys, backendRoot).options;
 })();
 
@@ -92,6 +97,14 @@ describe('the API import graph', () => {
     const graph = importGraph(path.join(srcRoot, 'index.ts'));
     // Sanity: the walk followed the API's plugins and routes.
     expect(graph.modules).toContain(path.join(srcRoot, 'plugins', 'jobRefreshService.ts'));
+    expect(reachesScraper(graph)).toBe(false);
+  });
+
+  it('keeps the jobs:refresh CLI off the scraper too, since it only queues', () => {
+    const graph = importGraph(path.join(backendRoot, 'scripts', 'jobs-refresh.ts'));
+    expect(graph.modules).toContain(
+      path.join(srcRoot, 'services', 'jobHunt', 'refreshQueueClient.ts'),
+    );
     expect(reachesScraper(graph)).toBe(false);
   });
 
