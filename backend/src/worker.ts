@@ -22,19 +22,19 @@ async function main(): Promise<void> {
   dropMigrationUrl();
 
   const [
-    { createStandaloneRefreshScheduler, reapStaleRefreshes, startStaleRefreshReaper },
+    { createStandaloneRefreshScheduler },
+    { startStaleRefreshReaper },
     { assertWorkerRoleIsSafe },
   ] = await Promise.all([
     import('./services/jobHunt/standalone'),
+    import('./services/jobHunt/staleRefreshReaper'),
     import('./services/databaseRole'),
   ]);
 
   if (process.env.NODE_ENV === 'production') await assertWorkerRoleIsSafe();
 
   // Heartbeat-based, so it never fails a refresh another process is still running.
-  const reaped = await reapStaleRefreshes();
-  if (reaped > 0) logger.info({ reaped }, 'Reaped stale refreshes');
-  startStaleRefreshReaper(logger);
+  await startStaleRefreshReaper(logger);
 
   const scheduler = createStandaloneRefreshScheduler(config, logger);
 

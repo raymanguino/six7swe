@@ -62,7 +62,12 @@ describeWithDatabase('the refresh queue against a real database', () => {
   it('queues a refresh unclaimed and keeps one active refresh per profile', async () => {
     const profileId = await newProfile();
     const queued = await api.enqueueRefresh(profileId);
-    expect(queued).toMatchObject({ status: 'PENDING', claimedBy: null, heartbeatAt: null });
+    expect(queued).toMatchObject({
+      status: 'PENDING',
+      claimedBy: null,
+      heartbeatAt: null,
+      description: api.QUEUED_DESCRIPTION,
+    });
 
     await expect(api.enqueueRefresh(profileId)).rejects.toBeInstanceOf(ActiveRefreshExistsError);
     await expect(api.newProfileRefreshStatus(profileId, 'api')).rejects.toBeInstanceOf(
@@ -184,6 +189,9 @@ describeWithDatabase('the refresh queue against a real database', () => {
     for (const row of [dead, unbeaten, abandoned, legacy]) {
       expect(await status(row.id)).toBe('FAILED');
     }
+    // A row no worker claimed says so; a dead run says its process stopped.
+    expect((await api.getRefreshStatus(abandoned.id))?.description).toMatch(/No job worker/);
+    expect((await api.getRefreshStatus(dead.id))?.description).toMatch(/process running it/);
     expect(await status(live.id)).toBe('IN_PROGRESS');
     expect(await status(queued.id)).toBe('PENDING');
     expect(await status(done.id)).toBe('COMPLETED');
