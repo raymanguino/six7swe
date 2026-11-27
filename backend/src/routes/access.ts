@@ -3,8 +3,9 @@
  *
  * Routes are private by default. A route becomes public only by explicitly
  * opting in, so adding an endpoint can never accidentally expose it to the
- * public internet. The authentication hook in `src/index.ts` reads
- * `request.routeOptions.config.public` to decide whether to enforce auth.
+ * public internet. Both read `request.routeOptions.config.public`: the auth
+ * plugin (`src/plugins/auth.ts`) skips token verification for public routes,
+ * and the preHandler in `src/index.ts` skips the 401 check.
  */
 
 declare module 'fastify' {

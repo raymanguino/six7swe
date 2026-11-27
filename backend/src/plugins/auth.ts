@@ -45,16 +45,19 @@ async function resolveDevUser(): Promise<ContextUser> {
 /**
  * Resolves the authenticated user for each request.
  *
- * The user is written into the request context, where the route guard reads
- * it. Public routes skip verification entirely. A missing or invalid token leaves the context unauthenticated rather
- * than throwing, so public routes keep working for signed-out visitors.
+ * The user is written into the request context, where the route guard in
+ * `src/index.ts` reads it. Public routes and unmatched URLs always get the
+ * unauthenticated user. On private routes a missing or invalid token also
+ * leaves the context unauthenticated, and the guard answers 401; other
+ * failures, such as a database error, propagate as a 500.
  */
 async function authPlugin(fastify: FastifyInstance): Promise<void> {
   fastify.addHook('onRequest', async (req: FastifyRequest, _reply: FastifyReply) => {
-    // A public route never reads the user (checked for /chat, /fitcheck,
-    // /contact, /resume and /mcp/public), so a token sent to one is not
-    // verified and cannot create a local user row.
-    if (req.routeOptions.config?.public === true) {
+    // Public routes get no identity: the token is neither verified nor used to
+    // create a user row. A public handler must not read the request-context
+    // user; it always sees UnauthenticatedUser. An unmatched URL has no
+    // `routeOptions.url` and ends in a 404, so it needs no identity either.
+    if (req.routeOptions.url === undefined || req.routeOptions.config?.public === true) {
       requestContext.set('user', UnauthenticatedUser);
       return;
     }

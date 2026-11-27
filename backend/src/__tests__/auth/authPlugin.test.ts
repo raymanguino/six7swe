@@ -6,8 +6,10 @@ import { PRIVATE_ROUTE, PUBLIC_ROUTE } from '../../routes/access';
 const mockResolveUserFromToken = jest.fn();
 const mockFindOrCreateUserByAuthId = jest.fn();
 
+const mockGetAuthConfig = jest.fn();
+
 jest.mock('../../config/auth', () => ({
-  getAuthConfig: () => ({ devBypass: false }),
+  getAuthConfig: () => mockGetAuthConfig(),
   isAuthConfigured: () => true,
 }));
 
@@ -22,6 +24,8 @@ jest.mock('../../db/api/user', () => ({
 }));
 
 import authPlugin from '../../plugins/auth';
+import { registerChatRoute } from '../../routes/chatRateLimit';
+import { AuthError } from '../../services/auth/supabaseAuth';
 
 describe('auth plugin token verification', () => {
   let app: FastifyInstance;
@@ -29,6 +33,8 @@ describe('auth plugin token verification', () => {
   beforeEach(async () => {
     mockResolveUserFromToken.mockReset();
     mockFindOrCreateUserByAuthId.mockReset();
+    mockGetAuthConfig.mockReset();
+    mockGetAuthConfig.mockReturnValue({ devBypass: false });
     mockResolveUserFromToken.mockResolvedValue({ authId: 'auth-1', email: 'a@example.com' });
     mockFindOrCreateUserByAuthId.mockResolvedValue({
       id: 7,
@@ -43,6 +49,7 @@ describe('auth plugin token verification', () => {
     await app.register(authPlugin);
     app.get('/public-thing', PUBLIC_ROUTE, async () => ({ user: requestContext.get('user') }));
     app.get('/private-thing', PRIVATE_ROUTE, async () => ({ user: requestContext.get('user') }));
+    await registerChatRoute(app, async () => ({ user: requestContext.get('user') }));
   });
 
   afterEach(async () => {
@@ -66,5 +73,41 @@ describe('auth plugin token verification', () => {
     expect(response.json()).toEqual({ user: { id: 7, email: 'a@example.com', authId: 'auth-1' } });
     expect(mockResolveUserFromToken).toHaveBeenCalledWith('valid-token');
     expect(mockFindOrCreateUserByAuthId).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats a route registered by registerChatRoute as public', async () => {
+    const response = await app.inject({ method: 'POST', url: '/chat', headers, payload: {} });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ user: UnauthenticatedUser });
+    expect(mockResolveUserFromToken).not.toHaveBeenCalled();
+    expect(mockFindOrCreateUserByAuthId).not.toHaveBeenCalled();
+  });
+
+  it('does not create the dev user on a public route under the dev bypass', async () => {
+    mockGetAuthConfig.mockReturnValue({ devBypass: true });
+
+    const response = await app.inject({ method: 'GET', url: '/public-thing', headers });
+
+    expect(response.json()).toEqual({ user: UnauthenticatedUser });
+    expect(mockFindOrCreateUserByAuthId).not.toHaveBeenCalled();
+  });
+
+  it('leaves the user unauthenticated when a private route token is rejected', async () => {
+    mockResolveUserFromToken.mockRejectedValue(new AuthError('bad token'));
+
+    const response = await app.inject({ method: 'GET', url: '/private-thing', headers });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ user: UnauthenticatedUser });
+    expect(mockFindOrCreateUserByAuthId).not.toHaveBeenCalled();
+  });
+
+  it('does no auth work for an unmatched URL', async () => {
+    const response = await app.inject({ method: 'GET', url: '/no-such-route', headers });
+
+    expect(response.statusCode).toBe(404);
+    expect(mockResolveUserFromToken).not.toHaveBeenCalled();
+    expect(mockFindOrCreateUserByAuthId).not.toHaveBeenCalled();
   });
 });
