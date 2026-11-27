@@ -264,7 +264,8 @@ function buildJobRefresh(options: JobRefreshServiceOptions) {
     await runClaimed(refreshId, async (claim) => {
       let profile: Profile;
       try {
-        // Checked again: the profile may have changed since it was queued.
+        // The run uses the profile as it is now (its latest keywords and location),
+        // and fails only if it was deleted or its location is no longer valid.
         profile = await loadRefreshableProfile(profileId);
       } catch (error) {
         logger.error({ err: error, refreshId, profileId }, 'Job refresh failed');
