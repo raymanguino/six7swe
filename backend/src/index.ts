@@ -21,7 +21,7 @@ import path from 'path';
 
 // The table owner's connection is for the migration scripts only. The start command's `env -u`
 // keeps it out of this process; this drop (after the hoisted imports) is a backstop, so later
-// code and the Chrome the scraper launches cannot read it.
+// code cannot read it.
 const startedWithMigrationUrl = dropMigrationUrl();
 
 const fastify = Fastify({

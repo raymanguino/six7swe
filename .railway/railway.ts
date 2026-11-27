@@ -84,9 +84,9 @@ export default defineRailway(() => {
     // package script, and pnpm runs scripts in a shell.
     build: backendImage,
     // `env -u` removes the table owner's DATABASE_MIGRATION_URL and the worker role's
-    // DATABASE_WORKER_URL (both for the pre-deploy only) before pnpm starts, so neither the server
-    // nor the Chrome it launches for the job scraper ever holds them. Exec form splits on spaces,
-    // and `env` is in the image (coreutils).
+    // DATABASE_WORKER_URL (both for the pre-deploy only) before pnpm starts, so the server never
+    // holds them (it launches no Chrome). Exec form splits on spaces, and `env` is in
+    // the image (coreutils).
     start: 'env -u DATABASE_MIGRATION_URL -u DATABASE_WORKER_URL pnpm start',
     // `db:deploy` migrates, then secures: a table a migration creates starts with the default
     // Supabase grants, so `db:secure` must run after it (docs/SECURITY.md).
@@ -163,7 +163,8 @@ export default defineRailway(() => {
       KNOWLEDGE_URL: 'http://six7sweknowledge.railway.internal:3100',
       KNOWLEDGE_SERVICE_KEY: preserve(),
       OWNER_AUTH_ID: preserve(),
-      // Comma-separated search profile ids refreshed on schedule; empty, the worker idles.
+      // Comma-separated search profile ids refreshed on schedule; empty, the worker runs only the
+      // refreshes users queue through the API.
       JOB_REFRESH_PROFILE_IDS: preserve(),
       // Hours between a profile's scheduled refreshes; declared so an apply keeps it (not secret).
       JOB_REFRESH_INTERVAL_HOURS: '24',

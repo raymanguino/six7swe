@@ -13,6 +13,7 @@ import {
 } from '../../services/jobHunt/jobRefreshService';
 import {
   knowledgeForAuthId,
+  knowledgeForProfile,
   type JobKnowledgeSource,
 } from '../../services/jobHunt/knowledgeSource';
 
@@ -33,21 +34,6 @@ function profileIdParam(request: FastifyRequest): number | null {
 const KNOWLEDGE_NOT_AVAILABLE = { configured: false } as const;
 
 /**
- * The knowledge source for a profile, or null when its user is not the
- * knowledge owner (or the service is not configured). Decided from the
- * profile's user row, the same way background runs decide it.
- */
-async function knowledgeForProfile(
-  request: FastifyRequest,
-  profileId: number,
-): Promise<JobKnowledgeSource | null> {
-  const access = request.server.jobKnowledge;
-  if (!access.source) return null;
-  const authId = await request.server.profileService.getProfileOwnerAuthId(profileId);
-  return knowledgeForAuthId(access, authId);
-}
-
-/**
  * The current knowledge corpus version, or null when the service does not
  * answer. A listing must not fail because of it: the matches are still worth
  * showing, just without staleness.
@@ -65,7 +51,7 @@ async function currentKnowledgeVersion(
 }
 
 /** The authenticated user's local id. Routes here are private, so it is set. */
-function currentUserId(_request: FastifyRequest): number {
+function currentUserId(): number {
   const user = requestContext.get('user');
   if (!user || user === UnauthenticatedUser) {
     throw new Error('Unauthenticated');
@@ -86,7 +72,7 @@ function currentUserId(_request: FastifyRequest): number {
 async function assertOwnsProfile(request: FastifyRequest, profileId: number): Promise<void> {
   const owns = await request.server.profileService.profileBelongsToUser(
     profileId,
-    currentUserId(request),
+    currentUserId(),
   );
   if (!owns) {
     throw new ProfileNotFoundError(profileId);
@@ -94,10 +80,11 @@ async function assertOwnsProfile(request: FastifyRequest, profileId: number): Pr
 }
 
 /**
- * Starts a refresh for a profile.
+ * Queues a refresh for a profile.
  *
  * The pipeline itself lives in `services/jobHunt/jobRefreshService`; this
- * handler only starts it and hands back the id of the refresh row to poll.
+ * handler only queues it for the scraper worker and hands back the id of the
+ * refresh row to poll.
  */
 export async function runRefreshJobsForProfile(
   request: FastifyRequest,
@@ -111,7 +98,7 @@ export async function runRefreshJobsForProfile(
 
     await assertOwnsProfile(request, profileId);
 
-    const { refreshStatusId } = await request.server.jobRefreshService.start({ profileId });
+    const { refreshStatusId } = await request.server.jobRefreshService.enqueue({ profileId });
 
     return reply.code(202).send({ refreshStatusId });
   } catch (error) {
@@ -127,7 +114,7 @@ export async function runRefreshJobsForProfile(
           'This profile has no valid LinkedIn geo id. Set it to a numeric region id before refreshing.',
       });
     }
-    request.log.error({ err: error }, 'Error running job fetch');
+    request.log.error({ err: error }, 'Error queueing a job refresh');
     return reply.code(500).send({ error: 'Failed to run job fetch.' });
   }
 }
@@ -271,7 +258,7 @@ export async function getJobsForProfile(
 
     const [matches, source] = await Promise.all([
       request.server.profileJobService.getJobsForProfile(profileId),
-      knowledgeForProfile(request, profileId),
+      knowledgeForProfile(request.server.jobKnowledge, request.server.profileService, profileId),
     ]);
 
     if (!source) {
