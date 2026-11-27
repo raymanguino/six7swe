@@ -1,5 +1,6 @@
 import type { RetrievedChunkDto, RetrieveResponse } from '@six7swe/knowledge-types';
 import { loadKnowledgeConfig } from '../../config/knowledge';
+import type { ProfileService } from '../../db/api/profile';
 import { getKnowledgeRetrievalConfig } from '../../config/knowledgeRetrieval';
 import type { KnowledgeDocumentSource } from '../../domain/chatEval';
 import {
@@ -129,6 +130,16 @@ export function knowledgeForAuthId(
     access.ownerAuthId,
   );
   return owner ? access.source : null;
+}
+
+/** {@link knowledgeForAuthId} for a profile, read from its user row. */
+export async function knowledgeForProfile(
+  access: JobKnowledgeAccess,
+  profiles: Pick<ProfileService, 'getProfileOwnerAuthId'>,
+  profileId: number,
+): Promise<JobKnowledgeSource | null> {
+  if (!access.source) return null;
+  return knowledgeForAuthId(access, await profiles.getProfileOwnerAuthId(profileId));
 }
 
 /** The process-wide access built from the environment. */

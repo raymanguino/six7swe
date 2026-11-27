@@ -1,26 +1,26 @@
 import fp from 'fastify-plugin';
 import { FastifyInstance } from 'fastify';
 import {
-  createJobRefreshRunner,
-  type JobRefreshRunner,
+  createJobRefreshService,
   type JobRefreshService,
 } from '../services/jobHunt/jobRefreshService';
 
 declare module 'fastify' {
   interface FastifyInstance {
-    jobRefreshService: JobRefreshService & JobRefreshRunner;
+    jobRefreshService: JobRefreshService;
   }
 }
 
 /**
  * Wires the refresh pipeline to the data-access decorators.
  *
+ * No job fetcher, so the API never launches Chrome (see `refreshWorker.ts`).
+ *
  * Must be registered after the decorators it depends on; the plugin barrel
  * keeps it last.
  */
 async function jobRefreshServicePlugin(fastify: FastifyInstance) {
-  const service = createJobRefreshRunner({
-    jobFetchService: fastify.jobFetchService,
+  const service = createJobRefreshService({
     jobService: fastify.jobService,
     profileJobService: fastify.profileJobService,
     profileService: fastify.profileService,

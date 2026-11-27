@@ -1,16 +1,21 @@
 import 'dotenv/config';
 import pino from 'pino';
-import { createStandaloneJobRefreshService } from '../src/services/jobHunt/standalone';
+import { createRefreshQueueClient } from '../src/services/jobHunt/refreshQueueClient';
 import { reapStaleRefreshes } from '../src/services/jobHunt/staleRefreshReaper';
-import * as refreshStatusService from '../src/db/api/refreshStatus';
 import type { RefreshUpdateStatus } from '../src/db/schema/jobHunt';
 import { dropMigrationUrl, MIGRATION_URL_WARNING } from '../src/config/migrationUrl';
 
-// The refresh launches Chrome. The table owner's connection is for the migration scripts only:
-// `env -u` in the command keeps it out; this drop (after the hoisted imports) is a backstop.
+// Queues refreshes for the job worker, which runs them; this process launches no Chrome. The
+// table owner's connection is for the migration scripts only: `env -u` in the command keeps it
+// out; this drop (after the hoisted imports) is a backstop.
 if (dropMigrationUrl() && process.env.NODE_ENV === 'production') {
   process.stderr.write(`${MIGRATION_URL_WARNING}\n`);
 }
+
+/** How long --wait lets a refresh stay queued before saying no worker picked it up. */
+const NO_WORKER_MS = 2 * 60_000;
+/** How long --wait waits in all. */
+const WAIT_TIMEOUT_MS = 90 * 60_000;
 
 interface Args {
   profileIds: number[];
@@ -33,8 +38,8 @@ function parseArgs(argv: string[]): Args {
     if (arg === '--profile' || arg === '-p') {
       const value = argv[i + 1];
       const parsed = Number(value);
-      if (!value || Number.isNaN(parsed)) {
-        throw new Error(`--profile requires a numeric profile id, got "${value ?? ''}"`);
+      if (!value || !Number.isInteger(parsed) || parsed < 1) {
+        throw new Error(`--profile requires a positive integer profile id, got "${value ?? ''}"`);
       }
       profileIds.push(parsed);
       i += 1;
@@ -58,9 +63,7 @@ function parseArgs(argv: string[]): Args {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const service = createStandaloneJobRefreshService(
-    pino({ level: process.env.LOG_LEVEL ?? 'info' }),
-  );
+  const service = createRefreshQueueClient(pino({ level: process.env.LOG_LEVEL ?? 'info' }));
 
   const reaped = await reapStaleRefreshes();
   if (reaped > 0) {
@@ -71,34 +74,32 @@ async function main(): Promise<void> {
 
   for (const profileId of args.profileIds) {
     try {
-      const { refreshStatusId } = await service.start({ profileId });
+      const { refreshStatusId } = await service.enqueue({ profileId });
       refreshIds.push(refreshStatusId);
-      process.stdout.write(`Started refresh ${refreshStatusId} for profile ${profileId}.\n`);
+      process.stdout.write(`Queued refresh ${refreshStatusId} for profile ${profileId}.\n`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      process.stderr.write(`Failed to start refresh for profile ${profileId}: ${message}\n`);
+      process.stderr.write(`Failed to queue a refresh for profile ${profileId}: ${message}\n`);
       process.exitCode = 1;
     }
   }
 
-  if (refreshIds.length === 0) {
-    return;
-  }
-
   // Poll until every refresh reaches a terminal state, unless the caller
   // asked to fire and forget.
-  if (!args.wait) {
+  if (refreshIds.length === 0 || !args.wait) {
     return;
   }
 
   const terminal = new Set<RefreshUpdateStatus>(['COMPLETED', 'FAILED']);
   const pending = new Set(refreshIds);
+  const started = Date.now();
 
   while (pending.size > 0) {
     await new Promise((resolve) => setTimeout(resolve, 2000));
+    const elapsed = Date.now() - started;
 
     for (const id of pending) {
-      const status = await refreshStatusService.getRefreshStatus(id);
+      const status = await service.getStatus(id);
       if (!status) {
         pending.delete(id);
         continue;
@@ -108,16 +109,40 @@ async function main(): Promise<void> {
 
       if (status.status !== null && terminal.has(status.status)) {
         pending.delete(id);
-        if (status.status === 'FAILED') {
-          process.exitCode = 1;
-        }
+        if (status.status === 'FAILED') process.exitCode = 1;
+      } else if (status.claimedAt === null && elapsed > NO_WORKER_MS) {
+        process.stderr.write(
+          `No worker picked up refresh ${id}: is the job worker running (pnpm worker:dev)? ` +
+            'It stays queued for a worker.\n',
+        );
+        pending.delete(id);
+        process.exitCode = 1;
+      } else if (elapsed > WAIT_TIMEOUT_MS) {
+        process.stderr.write(`Stopped waiting for refresh ${id}; it is still running.\n`);
+        pending.delete(id);
+        process.exitCode = 1;
       }
     }
   }
 }
 
-main().catch((error: unknown) => {
+/**
+ * Exits once stdout and stderr have flushed: the database pool would keep the
+ * process alive, and a bare `process.exit()` can drop output written to a pipe.
+ */
+function exitAfterFlush(): void {
+  let pending = 2;
+  const done = () => {
+    pending -= 1;
+    if (pending === 0) process.exit();
+  };
+  process.stdout.write('', done);
+  process.stderr.write('', done);
+}
+
+main().then(exitAfterFlush, (error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
   process.stderr.write(`${message}\n`);
-  process.exit(1);
+  process.exitCode = 1;
+  exitAfterFlush();
 });

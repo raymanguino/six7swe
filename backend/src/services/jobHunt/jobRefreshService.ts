@@ -29,7 +29,7 @@ import {
   type JobForMatching,
 } from './profileContext';
 import {
-  knowledgeForAuthId,
+  knowledgeForProfile,
   type JobKnowledgeAccess,
   type JobKnowledgeSource,
 } from './knowledgeSource';
@@ -63,13 +63,8 @@ export interface JobRefreshService {
   rescore(input: { profileId: number }): Promise<{ refreshStatusId: number | null }>;
 }
 
-/** What a process that launches Chrome adds: running refreshes. */
+/** What the scraper worker adds: running refreshes. */
 export interface JobRefreshRunner {
-  /**
-   * Inserts a refresh already claimed by this process and runs it in the
-   * background; returns the id of the refresh row the caller can poll.
-   */
-  start(input: { profileId: number }): Promise<{ refreshStatusId: number }>;
   /**
    * Runs a refresh this process claimed from the queue (`claimNext`) on that
    * row, without inserting another, and resolves once the run has ended.
@@ -143,7 +138,7 @@ export interface JobRefreshServiceOptions {
 }
 
 export interface JobRefreshRunnerOptions extends JobRefreshServiceOptions {
-  /** Launches Chrome. */
+  /** Launches Chrome: only the worker passes one. */
   jobFetchService: JobFetchService;
 }
 
@@ -199,8 +194,9 @@ interface RunClaim {
  * with the job description as the query. The match row records the corpus
  * version the background came from, so a later upload marks it stale.
  *
- * {@link createJobRefreshService} has no job fetcher and so never launches
- * Chrome; {@link createJobRefreshRunner} also runs refreshes.
+ * The API builds it with {@link createJobRefreshService}, which has no job
+ * fetcher and so never launches Chrome; the worker builds it with
+ * {@link createJobRefreshRunner}, which also runs refreshes.
  */
 export function createJobRefreshService(options: JobRefreshServiceOptions): JobRefreshService {
   const { enqueue, rescore } = buildJobRefresh(options);
@@ -211,13 +207,8 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
 export function createJobRefreshRunner(
   options: JobRefreshRunnerOptions,
 ): JobRefreshService & JobRefreshRunner {
-  const { enqueue, rescore, start, runQueued } = buildJobRefresh(options);
-  return {
-    enqueue,
-    rescore,
-    start: (input) => start(input, options.jobFetchService),
-    runQueued: (refresh) => runQueued(refresh, options.jobFetchService),
-  };
+  const { enqueue, rescore, runQueued } = buildJobRefresh(options);
+  return { enqueue, rescore, runQueued: (refresh) => runQueued(refresh, options.jobFetchService) };
 }
 
 function buildJobRefresh(options: JobRefreshServiceOptions) {
@@ -242,16 +233,8 @@ function buildJobRefresh(options: JobRefreshServiceOptions) {
     return profile;
   }
 
-  /**
-   * The knowledge source a profile may be scored against: only the knowledge
-   * owner's own profiles get one. Decided from the profile's user row, since
-   * background and CLI runs have no request to read it from.
-   */
-  async function knowledgeFor(profile: Profile): Promise<JobKnowledgeSource | null> {
-    if (!knowledge.source) return null;
-    const authId = await profileService.getProfileOwnerAuthId(profile.id);
-    return knowledgeForAuthId(knowledge, authId);
-  }
+  const knowledgeFor = (profile: Profile): Promise<JobKnowledgeSource | null> =>
+    knowledgeForProfile(knowledge, profileService, profile.id);
 
   /**
    * The profile, if it can be refreshed. A refresh needs a numeric LinkedIn
@@ -271,27 +254,6 @@ function buildJobRefresh(options: JobRefreshServiceOptions) {
     await loadRefreshableProfile(profileId);
     const refresh = await queue.enqueue(profileId);
     return { refreshStatusId: refresh.id };
-  }
-
-  async function start(
-    input: { profileId: number },
-    fetcher: JobFetchService,
-  ): Promise<{ refreshStatusId: number }> {
-    const { profileId } = input;
-    const profile = await loadRefreshableProfile(profileId);
-
-    const refreshId = await claimRefresh(profileId);
-
-    // Runs in the background so the request returns straight away. runPipeline
-    // records failures on the refresh row; the catch is a last resort so no
-    // rejection is ever left unhandled.
-    runClaimed(refreshId, (claim) => runPipeline(claim, profile, fetcher)).catch(
-      (error: unknown) => {
-        logger.error({ err: error, refreshId, profileId }, 'Job refresh crashed');
-      },
-    );
-
-    return { refreshStatusId: refreshId };
   }
 
   async function runQueued(refresh: RefreshStatus, fetcher: JobFetchService): Promise<void> {
@@ -662,7 +624,7 @@ function buildJobRefresh(options: JobRefreshServiceOptions) {
     return { scored: rows.length, failed: evaluations.length - rows.length };
   }
 
-  return { enqueue, rescore, start, runQueued };
+  return { enqueue, rescore, runQueued };
 }
 
 function errorMessage(error: unknown): string {

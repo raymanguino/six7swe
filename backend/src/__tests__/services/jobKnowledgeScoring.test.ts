@@ -9,7 +9,7 @@ import {
 import type { JobKnowledgeSource } from '../../services/jobHunt/knowledgeSource';
 import type { InsertProfileJobInput, MatchKey } from '../../db/api/profileJob';
 import type { JobInput } from '../../db/api/job';
-import type { Job, Profile } from '../../db/schema/jobHunt';
+import type { Job, Profile, RefreshStatus } from '../../db/schema/jobHunt';
 import { matchJob } from '../../services/ai/jobMatch';
 
 jest.mock('../../services/ai/jobMatch', () => ({ matchJob: jest.fn() }));
@@ -42,6 +42,20 @@ const profile: Profile = {
   additionalContext: 'Remote only',
   createdAt: new Date(),
   updatedAt: new Date(),
+};
+
+/** The row the worker claimed for this profile. */
+const CLAIMED: RefreshStatus = {
+  id: 42,
+  profileId: 1,
+  status: 'PENDING',
+  step: 'PENDING',
+  description: '',
+  createdAt: new Date(),
+  updatedAt: new Date(),
+  claimedBy: 'worker-1',
+  claimedAt: new Date(),
+  heartbeatAt: new Date(),
 };
 
 function chunk(documentId: string, filename: string, content: string): RetrievedChunkDto {
@@ -177,6 +191,7 @@ function build(options: {
     } as never,
     knowledge: { source: options.knowledge, ownerAuthId: OWNER_SUB },
     logger,
+    claimant: 'worker-1',
   });
   return { service, inserted, done: status.done, newProfileRefreshStatus };
 }
@@ -205,7 +220,7 @@ describe('refresh scoring against the knowledge base', () => {
     const job = makeJob(1, 'h1');
     const { service, inserted, done } = build({ knowledge, fetched: [job] });
 
-    await service.start({ profileId: 1 });
+    await service.runQueued(CLAIMED);
     expect(await done).toMatch(/^COMPLETED/);
 
     expect(knowledge.retrieve).toHaveBeenCalledWith(
@@ -237,7 +252,7 @@ describe('refresh scoring against the knowledge base', () => {
       existing: [makeMatch(fresh, 8), makeMatch(stale, 7)],
     });
 
-    await service.start({ profileId: 1 });
+    await service.runQueued(CLAIMED);
     await done;
 
     expect(inserted.map((row) => row.job_id)).toEqual([2]);
@@ -248,7 +263,7 @@ describe('refresh scoring against the knowledge base', () => {
     knowledge.getVersion.mockRejectedValue(new Error('Knowledge service /version timed out'));
     const { service, inserted, done } = build({ knowledge, fetched: [makeJob(1, 'h1')] });
 
-    await service.start({ profileId: 1 });
+    await service.runQueued(CLAIMED);
 
     expect(await done).toBe('FAILED: Knowledge service /version timed out');
     expect(inserted).toEqual([]);
@@ -264,7 +279,7 @@ describe('refresh scoring against the knowledge base', () => {
       fetched: [makeJob(1, 'h1'), makeJob(2, 'h2')],
     });
 
-    await service.start({ profileId: 1 });
+    await service.runQueued(CLAIMED);
 
     expect(await done).toMatch(/Scored 1 job\(s\), 1 failed/);
     expect(inserted).toHaveLength(1);
@@ -273,7 +288,7 @@ describe('refresh scoring against the knowledge base', () => {
   it('scores without background when the knowledge service is not configured', async () => {
     const { service, inserted, done } = build({ knowledge: null, fetched: [makeJob(1, 'h1')] });
 
-    await service.start({ profileId: 1 });
+    await service.runQueued(CLAIMED);
     await done;
 
     expect(inserted[0]).toMatchObject({ knowledge_version: null, evidence: [] });
@@ -297,7 +312,7 @@ describe('owner-only knowledge', () => {
       profileAuthId: authId,
     });
 
-    await service.start({ profileId: 1 });
+    await service.runQueued(CLAIMED);
     expect(await done).toMatch(/^COMPLETED/);
 
     expect(knowledge.getVersion).not.toHaveBeenCalled();
@@ -314,7 +329,7 @@ describe('owner-only knowledge', () => {
       profileAuthId: 'someone-else',
     });
 
-    await service.start({ profileId: 1 });
+    await service.runQueued(CLAIMED);
     await done;
 
     expect(inserted).toHaveLength(1);
@@ -346,7 +361,7 @@ describe('degraded runs and failed status writes', () => {
     knowledge.getBackgroundSummary.mockRejectedValue(new Error('/retrieve answered 500'));
     const { service, inserted, done } = build({ knowledge, fetched: [makeJob(1, 'h1')] });
 
-    await service.start({ profileId: 1 });
+    await service.runQueued(CLAIMED);
     expect(await done).toMatch(/^COMPLETED/);
 
     // Scored, but left stale so a later run redoes it with the summary.
@@ -365,7 +380,7 @@ describe('degraded runs and failed status writes', () => {
     process.on('unhandledRejection', unhandled);
 
     try {
-      await service.start({ profileId: 1 });
+      await service.runQueued(CLAIMED);
       expect(await done).toBe('FAILED: version down');
       await settle();
 

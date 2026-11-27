@@ -1,4 +1,3 @@
-export * as jobFetch from './jobFetch';
 export * as jobKnowledge from './jobKnowledge';
 export * as jobService from './jobService';
 export * as profileJobService from './profileJobService';
