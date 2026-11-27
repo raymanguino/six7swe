@@ -4,14 +4,18 @@ import { useTheme } from './contexts/ThemeContext';
 import Header from './components/Header';
 import ChatAssistant from './components/ChatAssistant';
 import Landing from './pages/Landing';
+import AuthFragmentForwarder from './components/AuthFragmentForwarder';
+import ChunkErrorBoundary from './components/ChunkErrorBoundary';
 import NotFound from './pages/NotFound';
 import type { SectionId } from './pages/Landing';
 
 // The job hunter, and supabase-js with it, is a separate chunk loaded on /hunter/*.
 const HunterApp = lazy(() => import('./pages/hunter/HunterApp'));
-const HunterLayout = lazy(() => import('./pages/hunter/HunterLayout'));
+// The signed-in layout ships in the HunterApp chunk; only the pages load afterwards.
+const HunterShell = lazy(() =>
+  import('./pages/hunter/HunterApp').then((m) => ({ default: m.HunterShell })),
+);
 const Login = lazy(() => import('./pages/hunter/Login'));
-const RequireAuth = lazy(() => import('./pages/hunter/RequireAuth'));
 const ProfileList = lazy(() => import('./pages/hunter/ProfileList'));
 const ProfileDetail = lazy(() => import('./pages/hunter/ProfileDetail'));
 const ProfileEditor = lazy(() => import('./pages/hunter/ProfileEditor'));
@@ -21,6 +25,7 @@ const KnowledgePage = lazy(() => import('./pages/hunter/knowledge/KnowledgePage'
 function PublicShell({ activeSection }: { activeSection: SectionId }) {
   return (
     <>
+      <AuthFragmentForwarder />
       <Header activeSection={activeSection} />
       <main className="flex-1 pt-16">
         <Outlet />
@@ -44,13 +49,7 @@ function App() {
           */}
           <Route path="/hunter" element={<HunterAppBoundary />}>
             <Route path="login" element={<Login />} />
-            <Route
-              element={
-                <RequireAuth>
-                  <HunterLayout />
-                </RequireAuth>
-              }
-            >
+            <Route element={<HunterShell />}>
               <Route index element={<Navigate to="/hunter/profiles" replace />} />
               <Route path="profiles" element={<ProfileList />} />
               <Route path="profiles/:profileId" element={<ProfileDetail />} />
@@ -77,9 +76,11 @@ function App() {
 /** Suspense boundary for the lazy HunterApp chunk itself. */
 function HunterAppBoundary() {
   return (
-    <Suspense fallback={null}>
-      <HunterApp />
-    </Suspense>
+    <ChunkErrorBoundary>
+      <Suspense fallback={<div className="p-8 text-center text-gray-500">Loading...</div>}>
+        <HunterApp />
+      </Suspense>
+    </ChunkErrorBoundary>
   );
 }
 
