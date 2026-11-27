@@ -27,7 +27,7 @@ function setup(options: {
       }),
   );
   const deps: RefreshSchedulerDeps = {
-    service: { start: ({ profileId }) => start(profileId) },
+    service: { enqueue: ({ profileId }) => start(profileId) },
     getLatestRefreshStartedAt: async (id) => options.lastStarted?.[id] ?? null,
     getRefreshStatus: async (id) => {
       const status = statuses.get(id);
@@ -50,7 +50,7 @@ describe('createRefreshScheduler', () => {
     expect(start).not.toHaveBeenCalled();
   });
 
-  it('starts the first due profile, skipping one refreshed within the interval', async () => {
+  it('queues the first due profile, skipping one refreshed within the interval', async () => {
     const { scheduler, start } = setup({
       profileIds: [1, 2],
       lastStarted: { 1: new Date(NOW - 2 * HOUR), 2: new Date(NOW - 30 * HOUR) },
@@ -60,7 +60,7 @@ describe('createRefreshScheduler', () => {
     expect(start).toHaveBeenCalledWith(2);
   });
 
-  it('starts one refresh at a time and the next once it ends', async () => {
+  it('queues one refresh at a time and the next once it ends', async () => {
     const { scheduler, start, statuses } = setup({ profileIds: [1, 2] });
     await scheduler.tick();
     await expect(scheduler.tick()).resolves.toBeNull();

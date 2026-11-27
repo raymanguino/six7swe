@@ -38,6 +38,10 @@ describeWithDatabase('the worker role against a real database', () => {
         sql`insert into public.jobs (position) values ('dev') returning id`,
       ).resolves.toHaveLength(1);
       await expect(sql`update public.refresh_status set status = 'x'`).resolves.toBeDefined();
+      // The queue claim locks the row it takes.
+      await expect(
+        sql`select id from public.refresh_status for update skip locked`,
+      ).resolves.toBeDefined();
       await expect(sql`select id, auth_id from public.users`).resolves.toEqual([
         { id: 1, auth_id: 'sub-1' },
       ]);

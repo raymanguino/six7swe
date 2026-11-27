@@ -1,11 +1,12 @@
 import {
   createJobRefreshService,
+  createJobRefreshRunner,
   RefreshInProgressError,
   ProfileNotFoundError,
   InvalidProfileLocationError,
 } from '../../services/jobHunt/jobRefreshService';
 import { ActiveRefreshExistsError } from '../../domain/jobHunt';
-import type { Job, Profile } from '../../db/schema/jobHunt';
+import type { Job, Profile, RefreshStatus } from '../../db/schema/jobHunt';
 import type { JobInput } from '../../db/api/job';
 import type { FastifyBaseLogger } from 'fastify';
 import type { JobKnowledgeSource } from '../../services/jobHunt/knowledgeSource';
@@ -46,6 +47,22 @@ function makeProfile(overrides: Partial<Profile> = {}): Profile {
   };
 }
 
+/** A row the queue handed to `claimedBy`. */
+function claimedRow(claimedBy = 'worker-1'): RefreshStatus {
+  return {
+    id: 42,
+    profileId: 1,
+    status: 'PENDING',
+    step: 'PENDING',
+    description: '',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    claimedBy,
+    claimedAt: new Date(),
+    heartbeatAt: new Date(),
+  };
+}
+
 interface Stubs {
   getActiveRefreshForProfile: jest.Mock;
   newProfileRefreshStatus: jest.Mock;
@@ -53,7 +70,7 @@ interface Stubs {
 }
 
 function buildService(stubs: Stubs) {
-  return createJobRefreshService({
+  return createJobRefreshRunner({
     jobFetchService: {
       runJobFetch: async () => undefined,
     },
@@ -183,7 +200,7 @@ describe('job refresh heartbeat', () => {
     const updates: string[] = [];
     const newProfileRefreshStatus = jest.fn().mockResolvedValue({ id: 42 });
 
-    const service = createJobRefreshService({
+    const service = createJobRefreshRunner({
       // A long run that writes no status while it lasts, like a scoring phase.
       jobFetchService: { runJobFetch: () => fetchDone },
       jobService: {} as never,
@@ -230,7 +247,7 @@ describe('job refresh claim fencing', () => {
     const runEnded = new Promise<void>((resolve) => {
       ended = resolve;
     });
-    const service = createJobRefreshService({
+    const service = createJobRefreshRunner({
       jobFetchService: { runJobFetch: async () => ended() },
       jobService: {} as never,
       profileJobService: {} as never,
@@ -325,7 +342,7 @@ describe('job refresh claim loss', () => {
       })
       .mockResolvedValue(MATCH);
 
-    const service = createJobRefreshService({
+    const service = createJobRefreshRunner({
       jobFetchService: {
         runJobFetch: async (_keywords, _geo, onJobsFetched) => {
           await onJobsFetched(jobs as unknown as JobInput[]);
@@ -396,5 +413,120 @@ describe('job refresh claim loss', () => {
     expect(bulkInsertProfileJobs).not.toHaveBeenCalled();
     expect(statuses).not.toContain('FAILED');
     expect(statuses).not.toContain('COMPLETED');
+  });
+});
+
+describe('the API: enqueue only', () => {
+  function buildApiService(overrides: Record<string, jest.Mock> = {}) {
+    const stubs = {
+      getActiveRefreshForProfile: jest.fn().mockResolvedValue(null),
+      enqueueRefresh: jest.fn().mockResolvedValue({ id: 51, claimedBy: null }),
+      newProfileRefreshStatus: jest.fn(),
+      heartbeatRefresh: jest.fn(),
+      updateRefreshStatus: jest.fn(),
+      getProfileById: jest.fn().mockResolvedValue(makeProfile()),
+      ...overrides,
+    };
+    // No jobFetchService, as the API plugin builds it.
+    const service = createJobRefreshService({
+      jobService: {} as never,
+      profileJobService: {} as never,
+      profileService: { getProfileById: stubs.getProfileById } as never,
+      refreshStatusService: stubs as never,
+      knowledge: { source: null, ownerAuthId: null },
+      logger,
+      heartbeatMs: 5,
+    });
+    return { service, stubs };
+  }
+
+  it('queues an unclaimed refresh and runs nothing', async () => {
+    const { service, stubs } = buildApiService();
+
+    await expect(service.enqueue({ profileId: 1 })).resolves.toEqual({ refreshStatusId: 51 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(stubs.enqueueRefresh).toHaveBeenCalledWith(1);
+    expect(stubs.newProfileRefreshStatus).not.toHaveBeenCalled();
+    expect(stubs.heartbeatRefresh).not.toHaveBeenCalled();
+    expect(stubs.updateRefreshStatus).not.toHaveBeenCalled();
+    expect(service).not.toHaveProperty('start');
+    expect(service).not.toHaveProperty('runQueued');
+  });
+});
+
+describe('the worker: running a claimed refresh', () => {
+  const claimed = claimedRow('worker-1');
+
+  function buildRunner(profile: Profile | null = makeProfile()) {
+    const writes: Array<[number, string, { status?: string }]> = [];
+    const heartbeats: Array<[number, string]> = [];
+    const runJobFetch = jest.fn(async () => {
+      // Long enough for a heartbeat.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    const stubs = {
+      newProfileRefreshStatus: jest.fn(),
+      enqueueRefresh: jest.fn(),
+      updateRefreshStatus: async (id: number, by: string, options: { status?: string }) => {
+        writes.push([id, by, options]);
+        return true;
+      },
+      heartbeatRefresh: async (id: number, by: string) => {
+        heartbeats.push([id, by]);
+        return true;
+      },
+    };
+    const service = createJobRefreshRunner({
+      jobFetchService: { runJobFetch },
+      jobService: {} as never,
+      profileJobService: {} as never,
+      profileService: { getProfileById: async () => profile } as never,
+      refreshStatusService: stubs as never,
+      knowledge: { source: null, ownerAuthId: null },
+      logger,
+      claimant: 'worker-1',
+      heartbeatMs: 5,
+    });
+    return { service, stubs, writes, heartbeats, runJobFetch };
+  }
+
+  it('runs on the claimed row, fenced by its claim, inserting nothing', async () => {
+    const { service, stubs, writes, heartbeats, runJobFetch } = buildRunner();
+
+    await service.runQueued(claimed);
+
+    expect(runJobFetch).toHaveBeenCalledTimes(1);
+    expect(stubs.newProfileRefreshStatus).not.toHaveBeenCalled();
+    expect(stubs.enqueueRefresh).not.toHaveBeenCalled();
+    expect(writes.every(([id, by]) => id === 42 && by === 'worker-1')).toBe(true);
+    expect(writes.flatMap(([, , options]) => options.status ?? [])).toEqual([
+      'IN_PROGRESS',
+      'COMPLETED',
+    ]);
+    expect(heartbeats.length).toBeGreaterThan(0);
+    expect(heartbeats.every(([id, by]) => id === 42 && by === 'worker-1')).toBe(true);
+  });
+
+  it('fails the row, without fetching, when the profile changed since it was queued', async () => {
+    const { service, writes, runJobFetch } = buildRunner(makeProfile({ location: 'Toronto' }));
+
+    await service.runQueued(claimed);
+
+    expect(runJobFetch).not.toHaveBeenCalled();
+    expect(writes).toEqual([[42, 'worker-1', expect.objectContaining({ status: 'FAILED' })]]);
+  });
+
+  it('refuses a row that is still queued, or claimed by another process', async () => {
+    const { service, writes, runJobFetch } = buildRunner();
+
+    await expect(service.runQueued({ ...claimed, claimedBy: null })).rejects.toThrow(
+      /not claimed by this process/,
+    );
+    await expect(service.runQueued(claimedRow('worker-2'))).rejects.toThrow(
+      /not claimed by this process/,
+    );
+    expect(runJobFetch).not.toHaveBeenCalled();
+    expect(writes).toEqual([]);
   });
 });

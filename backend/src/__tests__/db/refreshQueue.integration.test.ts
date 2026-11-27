@@ -8,6 +8,8 @@ import path from 'node:path';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import { ActiveRefreshExistsError } from '../../domain/jobHunt';
+import { createRefreshQueue } from '../../services/jobHunt/refreshQueue';
+import { createRefreshWorker } from '../../services/jobHunt/refreshWorker';
 import { databaseUrl, describeWithDatabase, runSuffix, useTestDatabase } from './lockdownDatabase';
 
 type RefreshApi = typeof import('../../db/api/refreshStatus');
@@ -127,6 +129,47 @@ describeWithDatabase('the refresh queue against a real database', () => {
       select id, claimed_by from refresh_status where id in ${db.owner(queued)}`;
     expect(rows.every((row) => row.claimed_by !== null)).toBe(true);
     await expect(api.claimNextRefresh('none-left')).resolves.toBeNull();
+  }, 30_000);
+
+  it('runs each queued refresh on exactly one of two concurrent workers', async () => {
+    while (await api.claimNextRefresh('drain')) {
+      /* claimed */
+    }
+    const queued: number[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      queued.push((await api.enqueueRefresh(await newProfile())).id);
+    }
+
+    const runs: Array<{ worker: string; id: number; claimedBy: string | null }> = [];
+    const workerFor = (name: string) =>
+      createRefreshWorker({
+        queue: createRefreshQueue(api, name),
+        runner: {
+          runQueued: async (refresh) => {
+            runs.push({ worker: name, id: refresh.id, claimedBy: refresh.claimedBy });
+            await finish(refresh.id);
+          },
+        },
+        scheduler: { tick: async () => null },
+        failRun: async () => false,
+        scheduleEveryMs: 60_000,
+        logger: { info: () => undefined, error: () => undefined },
+      });
+    const workers = [workerFor('worker-a'), workerFor('worker-b')];
+
+    // Both workers tick at once until the queue is empty.
+    for (let round = 0; round < 4; round += 1) {
+      await Promise.all(workers.map((worker) => worker.tick()));
+    }
+
+    expect(runs.map((run) => run.id).sort()).toEqual([...queued].sort());
+    expect(runs.every((run) => run.claimedBy === run.worker)).toBe(true);
+    const rows = await db.owner<{ id: number; claimed_by: string; status: string }[]>`
+      select id, claimed_by, status from refresh_status where id in ${db.owner(queued)}`;
+    for (const stored of rows) {
+      expect(runs.find((run) => run.id === stored.id)?.worker).toBe(stored.claimed_by);
+      expect(stored.status).toBe('COMPLETED');
+    }
   }, 30_000);
 
   it('heartbeats only the claimant’s active claim', async () => {

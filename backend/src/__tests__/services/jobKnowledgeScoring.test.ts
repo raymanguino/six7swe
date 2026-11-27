@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
 import type { RetrieveResponse, RetrievedChunkDto } from '@six7swe/knowledge-types';
 import {
-  createJobRefreshService,
+  createJobRefreshRunner,
   KnowledgeNotConfiguredError,
   KnowledgeUnavailableError,
 } from '../../services/jobHunt/jobRefreshService';
@@ -147,7 +147,7 @@ function build(options: {
   const inserted: InsertProfileJobInput[] = [];
   const existing = options.existing ?? [];
   const jobsById = new Map(existing.map((match) => [match.job.id, match.job]));
-  const service = createJobRefreshService({
+  const service = createJobRefreshRunner({
     jobFetchService: {
       runJobFetch: async (_keywords, _geo, onJobsFetched) => {
         await onJobsFetched((options.fetched ?? []) as unknown as JobInput[]);
