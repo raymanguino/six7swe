@@ -262,7 +262,7 @@ profiles.
 - `PATCH /job-hunt/profiles/:profileId` - Update a profile
 - `DELETE /job-hunt/profiles/:profileId` - Delete a profile
 - `GET /job-hunt/profiles/:profileId/jobs` - Scored matches for a profile
-- `POST /job-hunt/profiles/:profileId/jobs/refresh` - Start a job refresh (returns `202` with `refreshStatusId`)
+- `POST /job-hunt/profiles/:profileId/jobs/refresh` - Queue a job refresh for the scraper worker (returns `202` with `refreshStatusId`)
 - `GET /job-hunt/profiles/:profileId/jobs/refresh/:refreshId` - Refresh status
 - `GET /job-hunt/users` - The caller's own user record
 - `GET /job-hunt/users/:id` - A user by ID (only the caller's own)
@@ -277,16 +277,18 @@ profiles.
 ### Job refresh
 
 ```bash
-# Start a refresh from the command line and wait for it to finish.
+# Queue a refresh from the command line and wait for the worker to finish it.
 pnpm run jobs:refresh -- --profile 1 --wait
 
 # Fire and forget.
 pnpm run jobs:refresh -- --profile 1
 ```
 
-The CLI uses the same pipeline as the HTTP trigger. Scheduled refreshes run on
-the scraper worker (`pnpm worker:dev`; DEPLOYMENT.md, section 6). Refreshes
-abandoned by a crashed process are marked failed on the next startup.
+The CLI and the HTTP trigger only queue a refresh: the scraper worker
+(`pnpm worker:dev`; DEPLOYMENT.md, section 6) runs it, along with the scheduled
+ones, so run the worker next to `pnpm dev`. `--wait` says so when no worker
+picks a refresh up within two minutes. Refreshes abandoned by a crashed process are marked failed
+by stale-claim recovery.
 
 ## Project Structure
 

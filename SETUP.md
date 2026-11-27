@@ -185,6 +185,9 @@ cd backend
 pnpm run jobs:refresh -- --profile 1 --wait
 ```
 
+The command and the UI only queue a refresh; the scraper worker runs it. Start the worker next
+to the dev servers with `cd backend && pnpm run worker:dev`.
+
 Refreshes scrape with a headless Chrome. Install it once per checkout, and again after
 a puppeteer upgrade:
 
