@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import pino from 'pino';
 import { createStandaloneJobRefreshService } from '../src/services/jobHunt/standalone';
 import { reapStaleRefreshes } from '../src/services/jobHunt/staleRefreshReaper';
 import * as refreshStatusService from '../src/db/api/refreshStatus';
@@ -57,7 +58,9 @@ function parseArgs(argv: string[]): Args {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const service = createStandaloneJobRefreshService();
+  const service = createStandaloneJobRefreshService(
+    pino({ level: process.env.LOG_LEVEL ?? 'info' }),
+  );
 
   const reaped = await reapStaleRefreshes();
   if (reaped > 0) {

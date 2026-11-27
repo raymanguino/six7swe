@@ -22,7 +22,17 @@ export const WORKER_FORBIDDEN_VARIABLES = [
 const WORKER_REQUIRED_VARIABLES = ['DATABASE_URL', 'MINIMAX_API_KEY'] as const;
 
 /** How often the worker checks whether a scheduled refresh is due. */
-export const WORKER_TICK_MS = 5 * 60_000;
+export const WORKER_SCHEDULE_MS = 5 * 60_000;
+
+/** How often an idle worker polls the refresh queue: a user-triggered refresh waits at most this. */
+export const WORKER_POLL_MS = 5_000;
+
+/**
+ * How long shutdown waits for the refresh in progress before failing it. Under
+ * the worker's Railway draining time (`drainingSeconds` in `.railway/railway.ts`,
+ * 30 s), which is how long Railway waits after SIGTERM before it kills the process.
+ */
+export const WORKER_SHUTDOWN_GRACE_MS = 20_000;
 
 const DEFAULT_INTERVAL_HOURS = 24;
 

@@ -4,7 +4,7 @@ import type { JobService, JobInput } from '../../db/api/job';
 import type { ProfileJobService, InsertProfileJobInput } from '../../db/api/profileJob';
 import type { ProfileService } from '../../db/api/profile';
 import type { RefreshStatusService } from '../../db/api/refreshStatus';
-import type { Job, Profile } from '../../db/schema/jobHunt';
+import type { Job, Profile, RefreshStatus } from '../../db/schema/jobHunt';
 import type { JobFetchService } from '../jobFetchers';
 // Imported directly rather than through the `../ai` barrel: the barrel also
 // exports the chat and fitcheck agents, which pull the portfolio database
@@ -35,6 +35,7 @@ import {
 } from './knowledgeSource';
 import {
   ClaimLostError,
+  createRefreshQueue,
   processClaimant,
   recordActiveRefresh,
   startHeartbeat,
@@ -46,19 +47,36 @@ export { RefreshInProgressError } from './refreshQueue';
 /** How many jobs are scored at the same time. */
 const DEFAULT_MATCH_CONCURRENCY = 3;
 
+/** What the API does with refreshes; neither launches Chrome (see `refreshWorker.ts`). */
 export interface JobRefreshService {
   /**
-   * Starts a refresh and returns immediately with the id of the refresh row
-   * the caller can poll.
+   * Queues a refresh for a worker to claim and returns the id of the refresh
+   * row the caller can poll. Nothing runs here.
    */
-  start(input: { profileId: number }): Promise<{ refreshStatusId: number }>;
+  enqueue(input: { profileId: number }): Promise<{ refreshStatusId: number }>;
   /**
    * Rescores the profile's stale matches (scored against another knowledge
    * version) without fetching new postings. Runs in the background and is
-   * tracked by a refresh row, like `start`. Returns a null id, and claims no
+   * tracked by a refresh row, like a refresh. Returns a null id, and claims no
    * row, when no match is stale.
    */
   rescore(input: { profileId: number }): Promise<{ refreshStatusId: number | null }>;
+}
+
+/** What a process that launches Chrome adds: running refreshes. */
+export interface JobRefreshRunner {
+  /**
+   * Inserts a refresh already claimed by this process and runs it in the
+   * background; returns the id of the refresh row the caller can poll.
+   */
+  start(input: { profileId: number }): Promise<{ refreshStatusId: number }>;
+  /**
+   * Runs a refresh this process claimed from the queue (`claimNext`) on that
+   * row, without inserting another, and resolves once the run has ended.
+   * Failures, including a profile that changed since it was queued, end the
+   * row as FAILED.
+   */
+  runQueued(refresh: RefreshStatus): Promise<void>;
 }
 
 /** Thrown when the profile does not exist. */
@@ -105,7 +123,6 @@ export class KnowledgeUnavailableError extends Error {
 }
 
 export interface JobRefreshServiceOptions {
-  jobFetchService: JobFetchService;
   jobService: JobService;
   profileJobService: ProfileJobService;
   profileService: ProfileService;
@@ -123,6 +140,11 @@ export interface JobRefreshServiceOptions {
   claimant?: string;
   /** How often a running refresh heartbeats (`REFRESH_HEARTBEAT_MS` by default). */
   heartbeatMs?: number;
+}
+
+export interface JobRefreshRunnerOptions extends JobRefreshServiceOptions {
+  /** Launches Chrome. */
+  jobFetchService: JobFetchService;
 }
 
 /** What every job in a run is scored against. */
@@ -176,10 +198,30 @@ interface RunClaim {
  * Each job is scored against background retrieved from the knowledge service
  * with the job description as the query. The match row records the corpus
  * version the background came from, so a later upload marks it stale.
+ *
+ * {@link createJobRefreshService} has no job fetcher and so never launches
+ * Chrome; {@link createJobRefreshRunner} also runs refreshes.
  */
 export function createJobRefreshService(options: JobRefreshServiceOptions): JobRefreshService {
+  const { enqueue, rescore } = buildJobRefresh(options);
+  return { enqueue, rescore };
+}
+
+/** {@link createJobRefreshService} plus running refreshes with `jobFetchService`. */
+export function createJobRefreshRunner(
+  options: JobRefreshRunnerOptions,
+): JobRefreshService & JobRefreshRunner {
+  const { enqueue, rescore, start, runQueued } = buildJobRefresh(options);
+  return {
+    enqueue,
+    rescore,
+    start: (input) => start(input, options.jobFetchService),
+    runQueued: (refresh) => runQueued(refresh, options.jobFetchService),
+  };
+}
+
+function buildJobRefresh(options: JobRefreshServiceOptions) {
   const {
-    jobFetchService,
     jobService,
     profileJobService,
     profileService,
@@ -190,6 +232,7 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
     claimant = processClaimant(),
     heartbeatMs = REFRESH_HEARTBEAT_MS,
   } = options;
+  const queue = createRefreshQueue(refreshStatusService, claimant);
 
   async function loadProfile(profileId: number): Promise<Profile> {
     const profile = await profileService.getProfileById(profileId);
@@ -210,26 +253,64 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
     return knowledgeForAuthId(knowledge, authId);
   }
 
-  async function start(input: { profileId: number }): Promise<{ refreshStatusId: number }> {
-    const { profileId } = input;
+  /**
+   * The profile, if it can be refreshed. A refresh needs a numeric LinkedIn
+   * geo id; checking before the row is recorded turns a background failure
+   * into an immediate, actionable error.
+   */
+  async function loadRefreshableProfile(profileId: number): Promise<Profile> {
     const profile = await loadProfile(profileId);
-
-    // A refresh needs a numeric LinkedIn geo id. Checking here turns a
-    // background failure into an immediate, actionable error.
     if (!isValidGeoId(profile.location)) {
       throw new InvalidProfileLocationError(profileId, profile.location);
     }
+    return profile;
+  }
+
+  async function enqueue(input: { profileId: number }): Promise<{ refreshStatusId: number }> {
+    const { profileId } = input;
+    await loadRefreshableProfile(profileId);
+    const refresh = await queue.enqueue(profileId);
+    return { refreshStatusId: refresh.id };
+  }
+
+  async function start(
+    input: { profileId: number },
+    fetcher: JobFetchService,
+  ): Promise<{ refreshStatusId: number }> {
+    const { profileId } = input;
+    const profile = await loadRefreshableProfile(profileId);
 
     const refreshId = await claimRefresh(profileId);
 
     // Runs in the background so the request returns straight away. runPipeline
     // records failures on the refresh row; the catch is a last resort so no
     // rejection is ever left unhandled.
-    runClaimed(refreshId, (claim) => runPipeline(claim, profile)).catch((error: unknown) => {
-      logger.error({ err: error, refreshId, profileId }, 'Job refresh crashed');
-    });
+    runClaimed(refreshId, (claim) => runPipeline(claim, profile, fetcher)).catch(
+      (error: unknown) => {
+        logger.error({ err: error, refreshId, profileId }, 'Job refresh crashed');
+      },
+    );
 
     return { refreshStatusId: refreshId };
+  }
+
+  async function runQueued(refresh: RefreshStatus, fetcher: JobFetchService): Promise<void> {
+    const { id: refreshId, profileId } = refresh;
+    if (refresh.claimedBy !== claimant) {
+      throw new Error(`Refresh ${refreshId} is not claimed by this process: claim it first`);
+    }
+    await runClaimed(refreshId, async (claim) => {
+      let profile: Profile;
+      try {
+        // Checked again: the profile may have changed since it was queued.
+        profile = await loadRefreshableProfile(profileId);
+      } catch (error) {
+        logger.error({ err: error, refreshId, profileId }, 'Job refresh failed');
+        await markFailed(makeTransition(claim), { refreshId, profileId }, error);
+        return;
+      }
+      await runPipeline(claim, profile, fetcher);
+    });
   }
 
   async function rescore(input: {
@@ -259,7 +340,7 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
 
     const refreshId = await claimRefresh(profileId);
 
-    // Like a refresh, failures land on the row; the catch is a last resort.
+    // Runs in the background. Failures land on the row; the catch is a last resort.
     runClaimed(refreshId, (claim) => runRescore(claim, profile, source)).catch((error: unknown) => {
       logger.error({ err: error, refreshId, profileId }, 'Job rescore crashed');
     });
@@ -375,7 +456,11 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
     }
   }
 
-  async function runPipeline(claim: RunClaim, profile: Profile): Promise<void> {
+  async function runPipeline(
+    claim: RunClaim,
+    profile: Profile,
+    fetcher: JobFetchService,
+  ): Promise<void> {
     const { refreshId } = claim;
     const transition = makeTransition(claim);
 
@@ -399,7 +484,7 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
       }
       const background = await loadBackground(source);
 
-      await jobFetchService.runJobFetch(
+      await fetcher.runJobFetch(
         query.keywords,
         query.geoId,
         async (fetchedJobs: Array<JobInput>) => {
@@ -449,7 +534,7 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
 
       // The current job rows: the posting text to score, and the hash the
       // row records for that text.
-      const staleJobs = await jobService.getJobsByIds(staleIds);
+      const staleJobs = staleIds.length > 0 ? await jobService.getJobsByIds(staleIds) : [];
       const result = await scoreJobs(claim, profile, background, staleJobs);
 
       if (result.scored === 0 && result.failed > 0) {
@@ -576,7 +661,7 @@ export function createJobRefreshService(options: JobRefreshServiceOptions): JobR
     return { scored: rows.length, failed: evaluations.length - rows.length };
   }
 
-  return { start, rescore };
+  return { enqueue, rescore, start, runQueued };
 }
 
 function errorMessage(error: unknown): string {

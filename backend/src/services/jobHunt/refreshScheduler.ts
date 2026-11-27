@@ -8,9 +8,10 @@ import {
 } from './jobRefreshService';
 
 /**
- * The worker's scheduled refresh: at most one per tick and never two Chromes.
- * A profile is due when its latest `refresh_status` row is older than the
- * interval. A permanent start error waits out the interval; others retry next tick.
+ * The worker's scheduled refresh: it queues at most one at a time, and the
+ * worker runs it from the queue like any other (`refreshWorker.ts`). A profile
+ * is due when its latest `refresh_status` row is older than the interval. A
+ * permanent queueing error waits out the interval; others retry next tick.
  */
 
 interface Logger {
@@ -19,7 +20,7 @@ interface Logger {
 }
 
 export interface RefreshSchedulerDeps {
-  service: Pick<JobRefreshService, 'start'>;
+  service: Pick<JobRefreshService, 'enqueue'>;
   getLatestRefreshStartedAt(profileId: number): Promise<Date | null>;
   getRefreshStatus(id: number): Promise<Pick<RefreshStatus, 'status'> | null>;
   logger: Logger;
@@ -27,7 +28,7 @@ export interface RefreshSchedulerDeps {
 }
 
 export interface RefreshScheduler {
-  /** Starts the next due refresh, if any. Returns the refresh id it started, or null. */
+  /** Queues the next due refresh, if any. Returns the refresh id it queued, or null. */
   tick(): Promise<number | null>;
 }
 
@@ -36,7 +37,7 @@ export function createRefreshScheduler(
   deps: RefreshSchedulerDeps,
 ): RefreshScheduler {
   const now = deps.now ?? Date.now;
-  /** The refresh this worker started last, while it may still be running. */
+  /** The refresh this worker queued last, while it may still be queued or running. */
   let running: number | null = null;
   /** When a refresh could not be started, by profile. */
   const attempted = new Map<number, number>();
@@ -61,9 +62,9 @@ export function createRefreshScheduler(
     for (const profileId of config.profileIds) {
       if (!(await isDue(profileId))) continue;
       try {
-        const { refreshStatusId } = await deps.service.start({ profileId });
+        const { refreshStatusId } = await deps.service.enqueue({ profileId });
         running = refreshStatusId;
-        deps.logger.info({ profileId, refreshStatusId }, 'Started scheduled refresh');
+        deps.logger.info({ profileId, refreshStatusId }, 'Queued scheduled refresh');
         return refreshStatusId;
       } catch (error) {
         // Another process holds the profile's refresh: it is not due, and its row resets the clock.
@@ -71,7 +72,7 @@ export function createRefreshScheduler(
         if (error instanceof ProfileNotFoundError || error instanceof InvalidProfileLocationError) {
           attempted.set(profileId, now());
         }
-        deps.logger.error({ err: error, profileId }, 'Could not start scheduled refresh');
+        deps.logger.error({ err: error, profileId }, 'Could not queue scheduled refresh');
       }
     }
     return null;

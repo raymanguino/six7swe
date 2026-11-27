@@ -145,8 +145,12 @@ export default defineRailway(() => {
   const jobWorker = service('@six7swe/job-worker', {
     source: repo,
     build: backendImage,
-    start: 'pnpm start:worker',
-    deploy: { ...restartPolicy },
+    // node itself, not `pnpm start:worker`: exec form makes it PID 1, so Railway's SIGTERM reaches
+    // the worker's shutdown handler directly. The image's working directory is /app/backend.
+    start: 'node dist/worker.js',
+    // Seconds between SIGTERM and SIGKILL: the worker waits up to 20 s for the run in progress,
+    // then fails it (WORKER_SHUTDOWN_GRACE_MS in backend/src/config/worker.ts).
+    deploy: { ...restartPolicy, drainingSeconds: 30 },
     replicas: { 'us-west2': 1 },
     env: {
       NODE_ENV: 'production',
