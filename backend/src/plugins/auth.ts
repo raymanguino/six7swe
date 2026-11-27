@@ -46,11 +46,19 @@ async function resolveDevUser(): Promise<ContextUser> {
  * Resolves the authenticated user for each request.
  *
  * The user is written into the request context, where the route guard reads
- * it. A missing or invalid token leaves the context unauthenticated rather
+ * it. Public routes skip verification entirely. A missing or invalid token leaves the context unauthenticated rather
  * than throwing, so public routes keep working for signed-out visitors.
  */
 async function authPlugin(fastify: FastifyInstance): Promise<void> {
   fastify.addHook('onRequest', async (req: FastifyRequest, _reply: FastifyReply) => {
+    // A public route never reads the user (checked for /chat, /fitcheck,
+    // /contact, /resume and /mcp/public), so a token sent to one is not
+    // verified and cannot create a local user row.
+    if (req.routeOptions.config?.public === true) {
+      requestContext.set('user', UnauthenticatedUser);
+      return;
+    }
+
     const config = getAuthConfig();
 
     if (config.devBypass) {
