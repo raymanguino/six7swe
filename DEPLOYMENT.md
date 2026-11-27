@@ -14,8 +14,11 @@ The knowledge service's setup, variables and first-deploy checklist are in
 `knowledge/README.md`, "Deploy".
 
 The backend uses a Dockerfile because the job scraper launches Chrome, which needs system
-libraries at runtime (see [Chrome for the job scraper](#chrome-for-the-job-scraper)). The frontend
-is a static SPA: Railpack builds it and serves `frontend/dist` with Caddy.
+libraries at runtime (see [Chrome for the job scraper](#chrome-for-the-job-scraper)). Only the
+scraper worker launches it (#254): the API never loads puppeteer, but it runs the same image, so
+the image still carries Chrome. A slimmer API image would need its own Dockerfile target or
+service build. The frontend is a static SPA: Railpack builds it and serves `frontend/dist` with
+Caddy.
 
 Before deploying, complete the local setup steps in `SETUP.md` (install dependencies and configure environment variables). The owner's background (resume and supporting documents) is uploaded on the Knowledge page once the knowledge service is deployed.
 
@@ -121,8 +124,9 @@ policy and the watch paths.
 
 #### Database roles
 
-Anything that compromises the `--no-sandbox` scraper Chrome can read the server's environment, so
-`DATABASE_URL` connects as a runtime role that reads and writes rows but owns nothing (no DDL, no
+The API no longer launches the `--no-sandbox` scraper Chrome (#254; the worker does, with its own
+role), but a compromised server process could still read its environment, so `DATABASE_URL`
+connects as a runtime role that reads and writes rows but owns nothing (no DDL, no
 `TRUNCATE`, no turning RLS off). The owner (`postgres`) connects only through
 `DATABASE_MIGRATION_URL`, for `db:migrate`, `db:secure` and `db:reset`. The fallback to
 `DATABASE_URL` is local only: with `--remote` or `NODE_ENV=production` the scripts fail without
@@ -332,13 +336,38 @@ The frontend downloads the resume from the backend via `GET /resume`, and shows 
 ### 6. Scraper Worker and Scheduled Refreshes
 
 `@six7swe/job-worker` (#243) is a long-lived service built from the backend image and started
-with `pnpm start:worker` (`backend/src/worker.ts`). It runs the scheduled refreshes; #254 moves
-user-triggered refreshes onto it. Until then those still run in the API process.
+with `node dist/worker.js` (`backend/src/worker.ts`, compiled; `pnpm start:worker` runs the same
+thing locally). It is the only process that runs refreshes
+(#254): the API's `POST /job-hunt/profiles/:id/jobs/refresh` only queues a `refresh_status` row,
+and the worker claims it (every 5 seconds while idle), runs it and writes its progress to the same
+row, which the frontend polls as before. Without a running worker, a queued refresh stays
+`PENDING`, described as waiting for the job worker, until stale-claim recovery fails it (after
+an hour, or twice `JOB_REFRESH_STALE_MINUTES` if longer). Rescores still run in the API: they
+only score.
 
-Every 5 minutes, unless its last refresh is still running, the worker starts one refresh for the
-first profile in `JOB_REFRESH_PROFILE_IDS` whose latest refresh (from any process) began more
-than `JOB_REFRESH_INTERVAL_HOURS` (default 24) ago. The schedule is read from `refresh_status`,
-so a restart does not reset it. It runs as exactly one replica.
+On SIGTERM (a deploy or restart) the worker claims nothing more and gives the refresh in progress
+20 seconds (`WORKER_SHUTDOWN_GRACE_MS`), then fails it under its own claim, so the profile can be
+refreshed again at once. Two settings in `.railway/railway.ts` make that work, and neither takes
+effect until it is applied by hand (`railway config plan`, then `railway config apply`; see
+[Changing Railway config](#changing-railway-config)):
+
+- The worker's start command is `node dist/worker.js`, not `pnpm start:worker`. Railway runs it in
+  exec form, so node is PID 1 and receives SIGTERM itself rather than relying on pnpm to pass it
+  on. The image's working directory is `/app/backend`, where `dist/` is.
+- The worker's `drainingSeconds` is 30, the time Railway waits between SIGTERM and SIGKILL.
+
+Until then, a refresh cut off by SIGKILL is failed by stale-claim recovery once its heartbeat is
+`JOB_REFRESH_STALE_MINUTES` old.
+
+Every 5 minutes, unless its last scheduled refresh is still queued or running, the worker queues
+one refresh for the first profile in `JOB_REFRESH_PROFILE_IDS` whose latest refresh (from any
+process) began more than `JOB_REFRESH_INTERVAL_HOURS` (default 24) ago, and runs it from the queue
+like the others. It runs one refresh at a time, so it never has two Chromes open. The schedule is
+read from `refresh_status`, so a restart does not reset it. It runs as exactly one replica.
+
+Neither role's grants nor any Railway variable changed: the API's runtime role already inserted
+and updated `refresh_status` rows, and the worker role's read and write on `refresh_status`
+covers the claim (`select ... for update skip locked`, then an update).
 
 Its `DATABASE_URL` is the worker role (`six7swe_worker`): read and write on `jobs`,
 `profile_jobs` and `refresh_status`, read on `profiles` and `users.id`/`users.auth_id`, nothing
@@ -367,7 +396,8 @@ Provisioning, in this order (the role has to exist before the worker can connect
 To rotate its password, change `DATABASE_WORKER_URL` and the worker's `DATABASE_URL`, deploy the
 backend, then the worker. Ship a schema change the refresh needs through the backend first.
 
-`pnpm jobs:refresh -- --profile <id>` still runs one by hand; on Railway, run it on the worker.
+`pnpm jobs:refresh -- --profile <id>` queues one by hand for the worker to run (`--wait` follows
+it, and says when no worker picked it up). It launches no Chrome itself.
 
 #### Chrome for the job scraper
 
@@ -403,10 +433,10 @@ refresh runs, not at boot.
 - Chrome's sandbox cannot start on Railway, which gives containers no user namespaces (or
   `SYS_ADMIN`), so `services/jobFetchers/browser.ts` launches Chrome with `--no-sandbox`.
   Non-root limits what a compromised page can change in the container, but it does not keep
-  backend secrets away from a compromised Chrome: the same user can read the Node process's
-  environment. That environment's `DATABASE_URL` connects as a role that owns no table
-  ([Database roles](#database-roles)), and the owner's `DATABASE_MIGRATION_URL` is stripped by
-  the start command. The rest of the scraper and secret isolation is tracked in #127.
+  secrets away from a compromised Chrome: the same user can read the Node process's
+  environment. Chrome runs only in the worker (#254), whose environment is the reduced set above
+  and whose `DATABASE_URL` is the worker role. The rest of the scraper and secret isolation is
+  tracked in #127.
 
 If a refresh fails with `Could not find Chrome`, check the build log for the `browsers:install`
 step. A failure that names a missing `.so` file is a library missing from the runtime stage; add

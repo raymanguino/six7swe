@@ -39,6 +39,7 @@ flowchart TB
   subgraph Hunter["Job Hunter product"]
     HRoutes["routes/jobHunt.ts"]
     HService["services/jobHunt/\njobRefreshService"]
+    HWorker["worker.ts\nscraper worker"]
     HFetcher["services/jobFetchers/\nPuppeteer"]
     HDomain["domain/jobHunt/\nscore, refresh, filtering, jobs"]
   end
@@ -63,7 +64,8 @@ flowchart TB
   PRoutes --> PSvc --> PContext --> Knowledge
   PSvc --> MiniMax
   HService --> HDomain
-  HService --> HFetcher
+  HWorker --> HService
+  HWorker -- "worker only" --> HFetcher
   HService --> PSvc
   HService --> Knowledge
   HService --> Drizzle --> DB
@@ -157,6 +159,8 @@ auth context has registered one.
 - Registers the auth plugin, then the service plugins, then the routes.
 - Registers a health check at `/` returning only allowlisted env values.
 - Marks abandoned refreshes as failed on startup, then listens.
+- Never loads puppeteer: it queues refreshes for the scraper worker (#254).
+  `src/__tests__/apiImportGraph.test.ts` walks its import graph to keep it so.
 
 **Route modules**
 
@@ -323,18 +327,22 @@ are no portfolio tables and no published profile. Full details are in
 
 ```mermaid
 sequenceDiagram
-  participant C as Client / CLI
+  participant C as Client
+  participant A as API (enqueue)
+  participant W as worker (runQueued)
   participant S as jobRefreshService
   participant F as jobFetchers (Puppeteer)
   participant M as canonical matcher
   participant K as knowledge service
   participant D as PostgreSQL
 
-  C->>S: start(profileId)
+  C->>A: POST /job-hunt/profiles/:id/jobs/refresh
+  A->>D: check for an existing active refresh
+  A->>D: queue refresh_status row (PENDING, unclaimed)
+  A-->>C: refreshStatusId (202)
+  W->>D: claimNext (for update skip locked)
+  W->>S: runQueued(claimed row), heartbeating
   S->>K: /version, then the overall background (cached by version)
-  S->>D: create refresh_status row (PENDING)
-  S->>D: check for an existing active refresh
-  S-->>C: refreshStatusId (202)
   S->>F: runJobFetch(keywords, geoId)
   F->>F: scrape search results, then each posting
   F->>S: onJobsFetched(batch)  (awaited)
@@ -347,7 +355,7 @@ sequenceDiagram
   S->>D: bulkInsertProfileJobs(rows)
   F-->>S: done
   S->>D: mark COMPLETED
-  C->>S: GET /job-hunt/profiles/:id/jobs/refresh/:refreshId
+  C->>A: GET /job-hunt/profiles/:id/jobs/refresh/:refreshId
 ```
 
 The fetch callback is **awaited**, so `COMPLETED` is only written once the
@@ -356,14 +364,37 @@ last batch has actually been scored and stored. Any failure marks the refresh
 
 `refresh_status` is also a queue (#253; `services/jobHunt/refreshQueue.ts`). A
 `PENDING` row with no claim is queued; a worker claims the oldest with
-`for update skip locked`, so two replicas never claim the same row. A run started
-in process (`start`/`rescore`) inserts its row already claimed. Every claimed run
+`for update skip locked`, so two replicas never claim the same row.
+
+- **Refreshes run only on the scraper worker** (#254). The API's refresh endpoint
+  only queues (`enqueue`: the profile and geo id checks, then one active refresh per
+  profile, 409 otherwise) and the API never loads puppeteer. The worker's loop
+  (`services/jobHunt/refreshWorker.ts`) asks its scheduler every 5 minutes whether a
+  scheduled refresh is due, and the scheduler queues it like the API does; then the
+  loop claims the oldest queued row and runs it on that row (`runQueued`, which
+  inserts nothing and re-checks the profile). Every refresh, scheduled or
+  user-triggered, comes from the queue, a tick runs at most one and awaits it, and
+  the loop awaits each tick, so a worker process never has two Chromes open. An idle
+  worker polls every 5 seconds. A queued row reads "Queued; waiting for the job worker
+  to start it." until a worker starts it. On SIGTERM the worker claims nothing more,
+  gives the run in progress 20 seconds, then fails it under its own claim, so a deploy
+  frees the profile at once instead of after the stale window.
+- **Rescores stay in the API.** They only score (no Chrome), and a queued row carries
+  no kind, so `rescore` inserts its row already claimed by the API process and runs
+  it there.
+- **`pnpm jobs:refresh` queues too.** It launches no Chrome; the worker runs what it
+  queues, one at a time, and `--wait` reports a row no worker picked up.
+
+Every claimed run
 records its claimant (`claimed_by`) and moves `heartbeat_at` every minute while
 it runs, and every write it makes is fenced by its claim. Stale-claim recovery
 (`reapStaleRefreshes`, at API and worker startup and every 5 minutes) fails
 claims whose heartbeat is older than `JOB_REFRESH_STALE_MINUTES`, so a long
-scoring phase is never reaped, whichever process runs it. Rows queued for over
-6 hours are failed too.
+scoring phase is never reaped, whichever process runs it. Rows left unclaimed for an
+hour (or twice the stale window, if longer) are failed too, with "No job worker started
+this refresh": a run takes a few minutes, about 40 at worst (every posting page and
+every score hitting its timeouts), so an hour covers waiting behind one worst-case run
+(`QUEUED_REFRESH_MAX_MS` in `staleRefreshReaper.ts`).
 
 Jobs are re-scored when their content hash changed, so an edited posting is not
 left with a stale score forever.
@@ -447,10 +478,12 @@ imports:
   static host or behind a reverse proxy; deploy the backend to Railway with
   `DATABASE_URL` pointing at Supabase's IPv4 connection string.
 - **Refreshes** — the scraper worker (`@six7swe/job-worker`, `backend/src/worker.ts`) runs
-  scheduled refreshes: a long-lived process built from the backend image, with only
+  every refresh: a long-lived process built from the backend image, with only
   `DATABASE_URL` (the worker role: read and write on `jobs`, `profile_jobs` and
   `refresh_status`, read on `profiles` and on `users.id`/`users.auth_id`, nothing else),
-  `MINIMAX_API_KEY*`, the knowledge retrieval variables and `OWNER_AUTH_ID`. It starts one
-  refresh at a time, for a profile in `JOB_REFRESH_PROFILE_IDS` whose last refresh is older than
-  the interval. `pnpm jobs:refresh -- --profile <id>` still runs one by hand, and the HTTP
-  trigger still runs in the API process until #254 moves it to the worker.
+  `MINIMAX_API_KEY*`, the knowledge retrieval variables and `OWNER_AUTH_ID`. It runs one
+  refresh at a time from the queue: the ones users trigger through the API, and a scheduled one
+  for a profile in `JOB_REFRESH_PROFILE_IDS` whose last refresh is older than the interval. With
+  no worker running, a queued refresh stays `PENDING` until stale-claim recovery fails it
+  after an hour. `pnpm jobs:refresh -- --profile <id>` queues one by hand. The API no longer needs Chrome,
+  but it still ships in the backend image the worker shares (see `DEPLOYMENT.md`).
