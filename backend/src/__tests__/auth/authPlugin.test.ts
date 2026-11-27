@@ -1,7 +1,7 @@
 import Fastify, { FastifyInstance } from 'fastify';
 import fastifyRequestContext, { requestContext } from '@fastify/request-context';
 import { UnauthenticatedUser } from '../../constants';
-import { PRIVATE_ROUTE, PUBLIC_ROUTE } from '../../routes/access';
+import { PRIVATE_ROUTE, PUBLIC_ROUTE, requireAuthenticatedUser } from '../../routes/access';
 
 const mockResolveUserFromToken = jest.fn();
 const mockFindOrCreateUserByAuthId = jest.fn();
@@ -47,6 +47,7 @@ describe('auth plugin token verification', () => {
       defaultStoreValues: { user: UnauthenticatedUser },
     });
     await app.register(authPlugin);
+    app.addHook('preHandler', requireAuthenticatedUser);
     app.get('/public-thing', PUBLIC_ROUTE, async () => ({ user: requestContext.get('user') }));
     app.get('/private-thing', PRIVATE_ROUTE, async () => ({ user: requestContext.get('user') }));
     await registerChatRoute(app, async () => ({ user: requestContext.get('user') }));
@@ -93,21 +94,43 @@ describe('auth plugin token verification', () => {
     expect(mockFindOrCreateUserByAuthId).not.toHaveBeenCalled();
   });
 
-  it('leaves the user unauthenticated when a private route token is rejected', async () => {
+  it('leaves the user unauthenticated and answers 401 when a private route token is rejected', async () => {
     mockResolveUserFromToken.mockRejectedValue(new AuthError('bad token'));
 
     const response = await app.inject({ method: 'GET', url: '/private-thing', headers });
 
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ user: UnauthenticatedUser });
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ error: 'Unauthorized' });
     expect(mockFindOrCreateUserByAuthId).not.toHaveBeenCalled();
   });
 
-  it('does no auth work for an unmatched URL', async () => {
-    const response = await app.inject({ method: 'GET', url: '/no-such-route', headers });
+  describe('unmatched URLs', () => {
+    it('answer 404 without a token', async () => {
+      const response = await app.inject({ method: 'GET', url: '/no-such-route' });
 
-    expect(response.statusCode).toBe(404);
-    expect(mockResolveUserFromToken).not.toHaveBeenCalled();
-    expect(mockFindOrCreateUserByAuthId).not.toHaveBeenCalled();
+      expect(response.statusCode).toBe(404);
+    });
+
+    it('answer 404 with an invalid token', async () => {
+      mockResolveUserFromToken.mockRejectedValue(new AuthError('bad token'));
+
+      const response = await app.inject({ method: 'GET', url: '/no-such-route', headers });
+
+      expect(response.statusCode).toBe(404);
+    });
+
+    it('answer 404 with a valid token, without verifying it', async () => {
+      const response = await app.inject({ method: 'GET', url: '/no-such-route', headers });
+
+      expect(response.statusCode).toBe(404);
+      expect(mockResolveUserFromToken).not.toHaveBeenCalled();
+      expect(mockFindOrCreateUserByAuthId).not.toHaveBeenCalled();
+    });
+  });
+
+  it('answers 401 on a matched private route without a token', async () => {
+    const response = await app.inject({ method: 'GET', url: '/private-thing' });
+
+    expect(response.statusCode).toBe(401);
   });
 });
