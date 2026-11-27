@@ -51,7 +51,7 @@ async function currentKnowledgeVersion(
 }
 
 /** The authenticated user's local id. Routes here are private, so it is set. */
-function currentUserId(): number {
+function currentUserId(_request: FastifyRequest): number {
   const user = requestContext.get('user');
   if (!user || user === UnauthenticatedUser) {
     throw new Error('Unauthenticated');
@@ -72,7 +72,7 @@ function currentUserId(): number {
 async function assertOwnsProfile(request: FastifyRequest, profileId: number): Promise<void> {
   const owns = await request.server.profileService.profileBelongsToUser(
     profileId,
-    currentUserId(),
+    currentUserId(request),
   );
   if (!owns) {
     throw new ProfileNotFoundError(profileId);
