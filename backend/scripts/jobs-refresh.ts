@@ -1,12 +1,7 @@
 import 'dotenv/config';
 import pino from 'pino';
-import { createJobRefreshService } from '../src/services/jobHunt/jobRefreshService';
-import { getDefaultJobKnowledgeAccess } from '../src/services/jobHunt/knowledgeSource';
+import { createRefreshQueueClient } from '../src/services/jobHunt/refreshQueueClient';
 import { reapStaleRefreshes } from '../src/services/jobHunt/staleRefreshReaper';
-import * as jobService from '../src/db/api/job';
-import * as profileJobService from '../src/db/api/profileJob';
-import * as profileService from '../src/db/api/profile';
-import * as refreshStatusService from '../src/db/api/refreshStatus';
 import type { RefreshUpdateStatus } from '../src/db/schema/jobHunt';
 import { dropMigrationUrl, MIGRATION_URL_WARNING } from '../src/config/migrationUrl';
 
@@ -68,14 +63,7 @@ function parseArgs(argv: string[]): Args {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const service = createJobRefreshService({
-    jobService,
-    profileJobService,
-    profileService,
-    refreshStatusService,
-    knowledge: getDefaultJobKnowledgeAccess(),
-    logger: pino({ level: process.env.LOG_LEVEL ?? 'info' }),
-  });
+  const service = createRefreshQueueClient(pino({ level: process.env.LOG_LEVEL ?? 'info' }));
 
   const reaped = await reapStaleRefreshes();
   if (reaped > 0) {
@@ -111,7 +99,7 @@ async function main(): Promise<void> {
     const elapsed = Date.now() - started;
 
     for (const id of pending) {
-      const status = await refreshStatusService.getRefreshStatus(id);
+      const status = await service.getStatus(id);
       if (!status) {
         pending.delete(id);
         continue;
@@ -138,11 +126,23 @@ async function main(): Promise<void> {
   }
 }
 
-main().then(
-  () => process.exit(),
-  (error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`${message}\n`);
-    process.exit(1);
-  },
-);
+/**
+ * Exits once stdout and stderr have flushed: the database pool would keep the
+ * process alive, and a bare `process.exit()` can drop output written to a pipe.
+ */
+function exitAfterFlush(): void {
+  let pending = 2;
+  const done = () => {
+    pending -= 1;
+    if (pending === 0) process.exit();
+  };
+  process.stdout.write('', done);
+  process.stderr.write('', done);
+}
+
+main().then(exitAfterFlush, (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`${message}\n`);
+  process.exitCode = 1;
+  exitAfterFlush();
+});
