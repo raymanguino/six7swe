@@ -1,11 +1,7 @@
 import 'dotenv/config';
 import pino from 'pino';
-<<<<<<< HEAD
 import { createJobRefreshService } from '../src/services/jobHunt/jobRefreshService';
 import { getDefaultJobKnowledgeAccess } from '../src/services/jobHunt/knowledgeSource';
-=======
-import { createStandaloneJobRefreshService } from '../src/services/jobHunt/standalone';
->>>>>>> origin/main
 import { reapStaleRefreshes } from '../src/services/jobHunt/staleRefreshReaper';
 import * as jobService from '../src/db/api/job';
 import * as profileJobService from '../src/db/api/profileJob';
@@ -72,7 +68,6 @@ function parseArgs(argv: string[]): Args {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-<<<<<<< HEAD
   const service = createJobRefreshService({
     jobService,
     profileJobService,
@@ -81,11 +76,6 @@ async function main(): Promise<void> {
     knowledge: getDefaultJobKnowledgeAccess(),
     logger: pino({ level: process.env.LOG_LEVEL ?? 'info' }),
   });
-=======
-  const service = createStandaloneJobRefreshService(
-    pino({ level: process.env.LOG_LEVEL ?? 'info' }),
-  );
->>>>>>> origin/main
 
   const reaped = await reapStaleRefreshes();
   if (reaped > 0) {

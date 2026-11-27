@@ -71,14 +71,7 @@ interface Stubs {
 
 /** The API's service: no job fetcher. */
 function buildService(stubs: Stubs) {
-<<<<<<< HEAD
   return createJobRefreshService({
-=======
-  return createJobRefreshRunner({
-    jobFetchService: {
-      runJobFetch: async () => undefined,
-    },
->>>>>>> origin/main
     jobService: {} as never,
     profileJobService: {} as never,
     profileService: { getProfileById: stubs.getProfileById } as never,
@@ -196,11 +189,6 @@ describe('job refresh heartbeat', () => {
       beat = resolve;
     });
     const updates: string[] = [];
-<<<<<<< HEAD
-=======
-    const newProfileRefreshStatus = jest.fn().mockResolvedValue({ id: 42 });
-
->>>>>>> origin/main
     const service = createJobRefreshRunner({
       // A long run that writes no status while it lasts, like a scoring phase.
       jobFetchService: { runJobFetch: () => fetchDone },

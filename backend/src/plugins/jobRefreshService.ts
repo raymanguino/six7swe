@@ -1,14 +1,13 @@
 import fp from 'fastify-plugin';
 import { FastifyInstance } from 'fastify';
 import {
-  createJobRefreshRunner,
-  type JobRefreshRunner,
+  createJobRefreshService,
   type JobRefreshService,
 } from '../services/jobHunt/jobRefreshService';
 
 declare module 'fastify' {
   interface FastifyInstance {
-    jobRefreshService: JobRefreshService & JobRefreshRunner;
+    jobRefreshService: JobRefreshService;
   }
 }
 
@@ -21,12 +20,7 @@ declare module 'fastify' {
  * keeps it last.
  */
 async function jobRefreshServicePlugin(fastify: FastifyInstance) {
-<<<<<<< HEAD
   const service = createJobRefreshService({
-=======
-  const service = createJobRefreshRunner({
-    jobFetchService: fastify.jobFetchService,
->>>>>>> origin/main
     jobService: fastify.jobService,
     profileJobService: fastify.profileJobService,
     profileService: fastify.profileService,
