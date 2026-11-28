@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-import fastifyRequestContext, { requestContext } from '@fastify/request-context';
+import fastifyRequestContext from '@fastify/request-context';
 import fastifyCors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import { FastifyReply, FastifyRequest } from 'fastify';
@@ -12,7 +12,7 @@ import { assertKnowledgeRetrievalConfigured } from './config/knowledgeRetrieval'
 import * as plugins from './plugins';
 import authPlugin from './plugins/auth';
 import routes from './routes';
-import { PUBLIC_ROUTE } from './routes/access';
+import { PUBLIC_ROUTE, requireAuthenticatedUser } from './routes/access';
 import { assertServerRoleIsSafe } from './services/databaseRole';
 import { startStaleRefreshReaper } from './services/jobHunt/staleRefreshReaper';
 import { setRetrievalLogger } from './services/knowledgeRetrieval';
@@ -81,20 +81,10 @@ for (const plugin of Object.values(plugins)) {
   fastify.register(plugin.default);
 }
 
-// Register service authentication preHandler
-// Routes are private by default and opt out via the `public` route config
-// (see src/routes/access.ts). Reading the flag from the registered route means
-// adding an endpoint can never accidentally expose it.
-fastify.addHook('preHandler', async (req: FastifyRequest, reply: FastifyReply) => {
-  const { public: isPublic } = req.routeOptions.config;
-  if (isPublic === true) return;
-
-  const user = requestContext.get('user');
-  if (!user || user === UnauthenticatedUser) {
-    reply.code(401);
-    return reply.send({ error: 'Unauthorized' });
-  }
-});
+// Register the route guard. Routes are private by default and opt out via the
+// `public` route config (see src/routes/access.ts); unmatched URLs are left to
+// the 404 handler.
+fastify.addHook('preHandler', requireAuthenticatedUser);
 
 // Register routes
 fastify.register(routes);
